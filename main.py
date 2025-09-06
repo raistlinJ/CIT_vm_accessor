@@ -1,0 +1,860 @@
+#!/usr/bin/env python3
+ 
+import os
+import json
+import urllib.parse
+import logging
+import traceback
+import uuid
+import requests
+import time
+from flask import Flask, request, redirect, session, make_response, render_template_string, url_for, g, jsonify
+from waitress import serve
+from jinja2 import DictLoader
+
+"""
+Quick start
+-----------
+1) pip install flask waitress requests
+2) Set environment variables (example):
+   export PROXMOX_HOST="pve.example.com"   # or 127.0.0.1 if running on the PVE host
+   export PROXMOX_REALM="pam"              # or 'pve' / 'ldap' / etc.
+   export VERIFY_SSL="false"               # 'true' if you have a valid cert
+   export FLASK_SECRET_KEY="$(python -c 'import os,base64; print(base64.b64encode(os.urandom(24)).decode())')"
+
+3) Run:
+   python proxmox_console_app.py
+   # or production:
+      <div style="display:flex; flex-direction:column; justify-content:flex-end;">
+        <label style="font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; font-weight:600; margin-bottom:.25rem;">Verify SSL</label>
+        <label for="verifyBox" style="display:flex; align-items:center; gap:.45rem; font-size:.75rem; cursor:pointer; margin:0; font-weight:500; padding:.15rem .3rem .15rem .1rem; background:#f8fafc; border:1px solid #cfd9e3; border-radius:6px;">
+          <input id="verifyBox" type="checkbox" name="verify_ssl" value="1" {% if verify_ssl %}checked{% endif %} style="transform:scale(1.05)"/>
+        </label>
+      </div>
+
+How it works
+------------
+- User logs into this Flask app with their Proxmox username/password.
+- We call /api2/json/access/ticket to get PVEAuthCookie + CSRFPreventionToken.
+- We set those as cookies for the Proxmox host, so the browser can access 8006.
+- We redirect the user to Proxmox’s built-in noVNC page for the VM they chose.
+"""
+
+PROXMOX_HOST = os.environ.get("PROXMOX_HOST", "127.0.0.1").strip()
+PROXMOX_REALM = os.environ.get("PROXMOX_REALM", "pam").strip()
+PROXMOX_PORT = os.environ.get("PROXMOX_PORT", "8006").strip()
+VERIFY_SSL = os.environ.get("VERIFY_SSL", "false").lower() in ("1", "true", "yes", "y")
+SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "change-me-now")
+
+# Logging/Debug configuration
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
+DEBUG_HTTP = os.environ.get("DEBUG_HTTP", "false").lower() in ("1", "true", "yes", "y")
+
+def configure_logging():
+  level = getattr(logging, LOG_LEVEL, logging.DEBUG)
+  logging.basicConfig(
+    level=level,
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+  )
+  # Be a bit more verbose for our app
+  logging.getLogger(__name__).setLevel(level)
+  # Quiet overly noisy loggers unless debugging HTTP
+  if not DEBUG_HTTP:
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+  else:
+    try:
+      import http.client as http_client
+      http_client.HTTPConnection.debuglevel = 1
+    except Exception:
+      pass
+    for name in (
+      "urllib3",
+      "urllib3.connection",
+      "urllib3.connectionpool",
+      "requests.packages.urllib3",
+    ):
+      logging.getLogger(name).setLevel(logging.DEBUG)
+      logging.getLogger(name).propagate = True
+  # Waitress logs
+  logging.getLogger("waitress").setLevel(logging.INFO)
+
+configure_logging()
+logger = logging.getLogger(__name__)
+
+BASE_API = f"https://{PROXMOX_HOST}:{PROXMOX_PORT}/api2/json"
+
+app = Flask(__name__)
+app.secret_key = SECRET_KEY
+
+# ---------- HTML (inline templates to keep it single-file) ----------
+
+TPL_BASE = """
+<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\" />
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+<title>{{ title or "CIT VM Accessor" }}</title>
+<style>
+  :root {
+    --bg: #f4f7fa;
+    --panel: #ffffffcc;
+    --border: #cfd9e3;
+    --accent: #07b36d;
+    --accent-glow: 0 0 0 3px #07b36d33;
+    --danger: #c62828;
+    --warn: #ef6c00;
+    --ok: #2e7d32;
+    --text: #0e2336;
+    --muted: #5c6f80;
+    --mono: 'SFMono-Regular', Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height:100%; }
+  body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; padding:0 1.25rem 0; background: radial-gradient(circle at 15% 20%, #ffffff, var(--bg)); color: var(--text); min-height:100vh; display:flex; flex-direction:column; }
+  .topbar { position:sticky; top:0; backdrop-filter: blur(6px); background:linear-gradient(90deg,#0d1e30,#14384f); padding:0.9rem 1rem; margin:0 -1.25rem 1rem; display:flex; justify-content:space-between; align-items:center; color:#e9f5ff; box-shadow:0 2px 6px -2px #002b4099; }
+  .topbar strong { letter-spacing:.5px; font-weight:600; }
+  .topbar a { color:#9feaf9; }
+  a { text-decoration:none; color: var(--accent); }
+  a:hover { text-decoration:underline; }
+  .card { width:100%; max-width:1100px; margin:0 auto 1.2rem; border:1px solid var(--border); background:var(--panel); backdrop-filter:blur(8px); border-radius:14px; padding:1.4rem 1.5rem 1.8rem; box-shadow:0 4px 18px -6px #001d2f33; flex:1; display:flex; flex-direction:column; }
+  h2,h3 { margin-top:0; font-weight:600; letter-spacing:.5px; }
+  input, select, button { font: inherit; line-height:1.2; }
+  input, select { width:100%; padding:.55rem .65rem; border:1px solid var(--border); border-radius:8px; background:#fff; margin-bottom:.7rem; }
+  input:focus { outline:2px solid var(--accent); box-shadow: var(--accent-glow); }
+  button { padding:.6rem 1.1rem; border:1px solid var(--accent); background:linear-gradient(180deg,var(--accent),#049158); color:#fff; border-radius:10px; font-weight:600; letter-spacing:.4px; display:inline-flex; gap:.35rem; align-items:center; box-shadow:0 2px 6px -2px #02603a90; }
+  button:hover { filter:brightness(1.05); }
+  button:active { transform:translateY(1px); }
+  .btn-danger { border-color:var(--danger); background:linear-gradient(180deg,#d84343,#b02121); box-shadow:0 2px 6px -2px #5d0f0f99; }
+  .btn-danger:hover { filter:brightness(1.07); }
+  .row { display:flex; gap:.75rem; }
+  .row > * { flex:1; }
+  .error { color: var(--danger); margin-bottom:.8rem; font-weight:500; }
+  .notice { background:#daf7eccc; border:1px solid #9be0c7; padding:.6rem .75rem; border-radius:8px; margin-bottom:1rem; font-size:.9rem; }
+  .vm-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:.65rem; margin:0 0 1rem; }
+  .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--border); border-radius:10px; padding:.55rem .6rem .55rem 2.2rem; background:#fff; min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
+  .vm-item:hover { border-color:var(--accent); box-shadow:0 0 0 2px #07b36d1f, 0 4px 10px -4px #022e2044; }
+  .vm-item input[type=checkbox] { position:absolute; left:.65rem; top:.75rem; width:1.05rem; height:1.05rem; margin:0; accent-color: var(--accent); cursor:pointer; }
+  .vm-item a { display:flex; flex-direction:column; gap:.25rem; color:inherit; flex:1; }
+  .vm-item a:hover { text-decoration:none; }
+  .vm-id-line { font:600 .85rem var(--mono); letter-spacing:.5px; color:#083f2d; text-shadow:0 0 1px #07b36d44; }
+  .vm-name { font-weight:600; font-size:.95rem; line-height:1.1; }
+  .vm-status { font-size:.72rem; font-weight:600; letter-spacing:1px; text-transform:uppercase; display:inline-block; padding:.17rem .45rem; border-radius:20px; background:#cbd5e1; color:#24323f; box-shadow:inset 0 0 0 1px #93a6b7; }
+  .vm-status.running { background:#d0f4e4; color:#055230; box-shadow:inset 0 0 0 1px #07b36d; }
+  .vm-status.stopped, .vm-status.paused { background:#ffe4d5; color:#7c2b00; box-shadow:inset 0 0 0 1px #ff924d; }
+  .vm-status.changed { outline:2px solid #07b36d; animation: pulse 1.1s ease-out; }
+  @keyframes pulse { 0% { transform:scale(.9); filter:brightness(1.4);} 70% { transform:scale(1.03);} 100% { transform:scale(1); filter:brightness(1);} }
+  .bulk-actions { display:flex; gap:.6rem; flex-wrap:wrap; }
+  .activity-dock { position:fixed; left:0; right:0; bottom:0; background:#0d1e30f2; color:#e2f2ff; font-size:.72rem; font-family:var(--mono); max-height:40vh; border-top:1px solid #12384f; box-shadow:0 -4px 12px -6px #000a; display:flex; flex-direction:column; backdrop-filter: blur(8px); }
+  .activity-dock.collapsed { height:34px !important; overflow:hidden; }
+  .activity-dock .dock-header { padding:.35rem .75rem; display:flex; justify-content:space-between; align-items:center; font-weight:600; letter-spacing:.5px; background:linear-gradient(90deg,#12384f,#0d1e30); }
+  .dock-last { flex:1; font-weight:400; font-size:.65rem; color:#9cc9d9; margin:0 .65rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .activity-dock .dock-toggle { background:transparent; color:#9feaf9; border:1px solid #255b76; padding:.15rem .55rem; border-radius:6px; font-size:.65rem; line-height:1; cursor:pointer; }
+  .activity-dock .dock-toggle:hover { background:#163c4f; }
+  .activity-dock .dock-clear { background:transparent; color:#b3f5d9; border:1px solid #216648; padding:.15rem .55rem; border-radius:6px; font-size:.65rem; line-height:1; cursor:pointer; margin-right:.35rem; }
+  .activity-dock .dock-clear:hover { background:#0f4530; }
+  .activity-dock .dock-body { padding:.4rem .6rem .7rem; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:.25rem; }
+  .log-line { padding:.15rem .4rem; border-radius:4px; background:#1c3140; box-shadow:inset 0 0 0 1px #284e63; }
+  .log-line.info { background:#173042; }
+  .log-line.success { background:#0d3b2a; box-shadow:inset 0 0 0 1px #0e6042; }
+  .log-line.warn { background:#452e09; box-shadow:inset 0 0 0 1px #6f460e; }
+  .log-line.error { background:#4d1c1c; box-shadow:inset 0 0 0 1px #7e2a2a; }
+  .muted { color:var(--muted); }
+  code { font-family:var(--mono); font-size:.85rem; background:#ecf2f6; padding:.15rem .4rem; border-radius:6px; }
+  footer { margin-top:1.5rem; text-align:center; font-size:.7rem; color:var(--muted); }
+  /* dynamic bottom padding applied inline via JS to avoid overlap */
+  .divider { height:1px; background:linear-gradient(90deg,transparent,#b8c9d6,transparent); margin:1.2rem 0; border-radius:2px; }
+  .inline-form { display:inline; }
+  .actions-row { margin-top:.4rem; }
+  .vm-item:focus-within { outline:2px solid var(--accent); }
+  @media (max-width:640px){ .vm-list { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); } }
+</style>
+</head>
+<body>
+  <div class=\"grid-overlay\"></div>
+  <div class=\"topbar\">
+  <div><strong>&#128274; CIT VM Accessor</strong></div>
+    <div>
+      {% if session.get('pve_user') %}
+        <span class="muted">{{ session.get('pve_user') }}</span> |
+        <a href="{{ url_for('logout') }}">Logout</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class=\"card\">
+    {% block content %}{% endblock %}
+  <!-- Footer removed per user request -->
+  </div>
+</body>
+</html>
+"""
+
+# Register in-memory base template for Jinja to resolve `{% extends "base.html" %}`
+app.jinja_loader = DictLoader({"base.html": TPL_BASE})
+
+TPL_LOGIN = """
+{% extends "base.html" %}
+{% block content %}
+<h2>Sign in to Proxmox</h2>
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+<form method="post" id="loginForm">
+  <label>Username</label>
+  <input id="usernameInput" name="username" placeholder="e.g. root or root@pam" value="{{ username or '' }}" required />
+  <label>Password</label>
+  <input name="password" type="password" required />
+  <details style="margin:.6rem 0 .2rem; border:1px solid #cfd9e3; padding:.6rem .75rem .75rem; border-radius:8px; background:#fff">
+    <summary style="cursor:pointer; font-weight:600; outline:none">Advanced</summary>
+    <div style="display:grid; gap:.55rem; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-top:.65rem">
+      <div>
+        <label style="font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; font-weight:600">Proxmox Host</label>
+        <input name="host" value="{{ host }}" placeholder="pve.example.com" />
+      </div>
+      <div>
+        <label style="font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; font-weight:600">Port</label>
+        <input name="port" value="{{ port }}" placeholder="443" />
+      </div>
+      <div>
+        <label style="font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; font-weight:600">Realm</label>
+  <input id="realmInput" name="realm" value="{{ realm }}" placeholder="pam" />
+      </div>
+      <div style="display:flex; flex-direction:column; justify-content:flex-start;">
+        <label style="font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; font-weight:600; margin:0 0 .42rem;">Verify SSL</label>
+        <div style="display:flex; align-items:center; padding:.48rem .55rem; border:1px solid #cfd9e3; border-radius:8px; background:#fff; height:38px; line-height:1;">
+          <input id="verifyBox" aria-label="Verify SSL" type="checkbox" name="verify_ssl" value="1" {% if verify_ssl %}checked{% endif %} style="margin:0; width:1.05rem; height:1.05rem; cursor:pointer;"/>
+          <span style="font-size:.62rem; margin-left:.55rem; color:#576b7a; font-weight:500;">Uncheck only for self‑signed certs</span>
+        </div>
+      </div>
+    </div>
+  </details>
+  <button type="submit">Sign in</button>
+</form>
+<script>
+ (function(){
+   const u=document.getElementById('usernameInput');
+   const r=document.getElementById('realmInput');
+   if(u && r){
+     function extract(){
+       const val=u.value.trim();
+       if(val.includes('@')){
+         const parts=val.split('@');
+         if(parts.length===2 && parts[0] && parts[1]){
+           u.value=parts[0];
+           r.value=parts[1];
+         }
+       }
+     }
+     u.addEventListener('blur', extract);
+     u.addEventListener('change', extract);
+     u.addEventListener('keyup', function(ev){ if(ev.key==='@' || ev.key==='Enter') extract(); });
+   }
+ })();
+</script>
+{% endblock %}
+"""
+
+TPL_HOME = """
+{% extends "base.html" %}
+{% block content %}
+<h2>Open a VM Console</h2>
+<p class="muted" style="margin-top:.1rem">Select VMs below. Click a VM card to open its console in a popup. Use bulk actions for management.</p>
+<div class="top-controls" style="margin:0 0 1rem; display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+  <div style="display:flex; gap:.6rem; align-items:center;">
+    <button id="selectAllBtn" type="button" title="Select all VMs">Select All</button>
+    <button id="deselectAllBtn" type="button" title="Deselect all VMs">Deselect All</button>
+  </div>
+  <div style="display:flex; gap:.5rem; align-items:center;">
+    <button type="button" id="refreshBtn" title="Refresh VM statuses" style="margin-left:auto;">Refresh Status</button>
+    <small class="muted" id="refreshMeta"></small>
+  </div>
+</div>
+ {% if request.args.get('bulk') %}
+ <div class="notice">
+   Bulk {{ request.args.get('bulk') }}: {{ request.args.get('done','0') }} success, {{ request.args.get('failed','0') }} failed.
+   {% if request.args.get('fail_list') or request.args.get('success_list') %}
+     <details style="margin-top:.4rem">
+       <summary style="cursor:pointer">Details</summary>
+       <ul style="margin:.4rem 0 0 .8rem; padding:0; list-style:disc">
+         {% if request.args.get('success_list') %}
+           {% for item in request.args.get('success_list').split(';') if item %}
+           <li style="color:#2e7d32">{{ item }}</li>
+           {% endfor %}
+         {% endif %}
+         {% if request.args.get('fail_list') %}
+           {% for item in request.args.get('fail_list').split(';') if item %}
+           <li style="color:#c62828">{{ item }}</li>
+           {% endfor %}
+         {% endif %}
+       </ul>
+     </details>
+   {% endif %}
+ </div>
+ {% endif %}
+{% if vms %}
+<h3>Visible VMs</h3>
+<form method="post" action="{{ url_for('bulk_action') }}" id="bulkForm">
+ <div class="vm-list" id="vmList">
+ {% for vm in vms %}
+   <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
+     <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
+  <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
+       <span class="vm-id-line">#{{ vm.get('vmid') }} · {{ vm.get('node') }}</span>
+       <span class="vm-name">{{ vm.get('name','') or '(no name)' }}</span>
+       <span class="vm-status {{ vm.get('status') }}" id="vm-status-{{ vm.get('node') }}-{{ vm.get('vmid') }}">{{ vm.get('status') }}</span>
+     </a>
+   </label>
+ {% endfor %}
+ </div>
+ <div class="bulk-actions" style="justify-content:center; width:100%; margin-top:.75rem;">
+  <button id="btnStart" type="submit" name="action" value="start" title="Start each selected VM (qemu/lxc)" disabled>Start Selected</button>
+  <button id="btnReboot" class="btn-danger" type="submit" name="action" value="reboot" title="Issue a graceful reboot request for each selected VM" disabled>Reboot Selected</button>
+ </div>
+</form>
+{% else %}
+<p class="muted">No VMs listed, or your account lacks VM.Audit permission.</p>
+{% endif %}
+{% if show_dock %}
+<div id="activityDock" class="activity-dock collapsed">
+ <div class="dock-header">Activity Log <span id="dockLastLine" class="dock-last"></span><div style="margin-left:auto; display:flex; gap:.35rem; align-items:center"><button type="button" id="dockClear" class="dock-clear" aria-label="Clear Activity Log">Clear</button><button type="button" id="dockToggle" class="dock-toggle" aria-label="Toggle Activity">▴</button></div></div>
+ <div id="dockBody" class="dock-body"></div>
+</div>
+{% endif %}
+<script>
+ (function(){
+   const bulkForm = document.getElementById('bulkForm');
+   const refreshBtn = document.getElementById('refreshBtn');
+   const refreshMeta = document.getElementById('refreshMeta');
+  const dockBody = document.getElementById('dockBody');
+   const dock = document.getElementById('activityDock');
+   const dockToggle = document.getElementById('dockToggle');
+   const dockClear = document.getElementById('dockClear');
+  // Fixed-height dock (no resize)
+    const btnStart = document.getElementById('btnStart');
+    const btnReboot = document.getElementById('btnReboot');
+   const LOG_KEY = 'activityLogLines';
+   function ts(){ return new Date().toISOString(); }
+   function addLog(msg,type){
+      if(!dockBody) return;
+      const div=document.createElement('div');
+      div.className='log-line'+(type?(' '+type):'');
+      div.textContent='['+ts()+'] '+msg;
+      dockBody.appendChild(div);
+      dockBody.scrollTop = dockBody.scrollHeight;
+  try { if(typeof console!== 'undefined' && console.debug){ console.debug('[dock]', div.textContent); } } catch(e){}
+      try {
+        const existing = JSON.parse(sessionStorage.getItem(LOG_KEY)||'[]');
+        existing.push(div.textContent);
+        if(existing.length>500) existing.splice(0, existing.length-500); // cap
+        sessionStorage.setItem(LOG_KEY, JSON.stringify(existing));
+      } catch(e){}
+   }
+   // Restore previous log entries
+   try {
+     const prev = JSON.parse(sessionStorage.getItem(LOG_KEY)||'[]');
+     prev.forEach(line=>{ const div=document.createElement('div'); div.className='log-line'; div.textContent=line; dockBody.appendChild(div); });
+     if(prev.length) dockBody.scrollTop = dockBody.scrollHeight;
+   } catch(e){}
+  // (Replaced by scroll-preserving toggle later after padding helper is defined)
+  // Original simple toggle removed to prevent scroll jump.
+  dockClear && dockClear.addEventListener('click',()=>{ if(dockBody){ dockBody.innerHTML=''; sessionStorage.removeItem(LOG_KEY); addLog('Activity log cleared','info'); }});
+    function updateBulkButtons(){
+      const any = !!document.querySelector('.vm-item input[type=checkbox]:checked');
+      if(btnStart) btnStart.disabled = !any;
+      if(btnReboot) btnReboot.disabled = !any;
+    }
+  const vmCheckboxes = document.querySelectorAll('.vm-item input[type=checkbox]');
+  vmCheckboxes.forEach(cb=>{ cb.addEventListener('change', updateBulkButtons); });
+  updateBulkButtons();
+  // Select / Deselect all controls
+  const selectAllBtn = document.getElementById('selectAllBtn');
+  const deselectAllBtn = document.getElementById('deselectAllBtn');
+  selectAllBtn && selectAllBtn.addEventListener('click', ()=>{ vmCheckboxes.forEach(cb=>cb.checked=true); updateBulkButtons(); addLog('All VMs selected','info'); });
+  deselectAllBtn && deselectAllBtn.addEventListener('click', ()=>{ vmCheckboxes.forEach(cb=>cb.checked=false); updateBulkButtons(); addLog('All VMs deselected','info'); });
+   function setBusy(flag, label){ const btns=document.querySelectorAll('button'); btns.forEach(b=>{ if(flag){ if(!b.dataset.originalText){ b.dataset.originalText=b.textContent; } b.disabled=true; if(label) b.textContent=label; } else { b.disabled=false; if(b.dataset.originalText){ b.textContent=b.dataset.originalText; delete b.dataset.originalText; } } }); }
+  if(bulkForm){ bulkForm.addEventListener('submit', function(ev){
+      const selected=[...document.querySelectorAll('.vm-item input[type=checkbox]:checked')].map(cb=>cb.value);
+      const actionBtn = (ev && ev.submitter && ev.submitter.value) || (document.activeElement && document.activeElement.value) || '(unknown)';
+      if(!selected.length){ ev.preventDefault(); addLog('No VMs selected; action aborted','warn'); return; }
+      // Confirmation dialog before submitting
+      const previewList = selected.slice(0,15).map(v=>v.split('|')[2]).join(', ')+(selected.length>15?' ...':'');
+      const confirmMsg = 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\nVMIDs: '+previewList; 
+      if(!window.confirm(confirmMsg)){
+        ev.preventDefault();
+        addLog('Bulk '+actionBtn+' canceled by user','warn');
+        return;
+      }
+      addLog('DEBUG bulk submit (pre) action_btn='+actionBtn+' total_selected='+selected.length+' values=['+selected.join(',')+'] formAction='+bulkForm.getAttribute('action'),'info');
+      setTimeout(()=>{ setBusy(true,'Working...'); addLog('Bulk action submitted (deferred disable)','info'); }, 25);
+    }); }
+   async function doRefresh(){ if(!refreshBtn) return; setBusy(true,'Refreshing...'); try { const r= await fetch('{{ url_for('api_vms') }}',{headers:{'Accept':'application/json'}}); if(!r.ok) throw new Error('HTTP '+r.status); const data= await r.json(); let updated=0; (data.vms||[]).forEach(vm=>{ const id='vm-status-'+vm.node+'-'+vm.vmid; const el=document.getElementById(id); if(el){ const old=el.textContent; if(old!==vm.status){ el.textContent=vm.status; el.className='vm-status '+vm.status+' changed'; setTimeout(()=>{ el.classList.remove('changed'); },1200); } updated++; } }); if(refreshMeta){ refreshMeta.textContent='Updated '+updated+' • '+(new Date()).toLocaleTimeString(); } addLog('Refresh completed ('+updated+' statuses)','info'); } catch(e){ addLog('Refresh failed: '+e.message,'error'); if(refreshMeta){ refreshMeta.textContent='Refresh failed'; } } finally { setBusy(false); } }
+   if(refreshBtn){ refreshBtn.addEventListener('click', doRefresh); }
+  const lastAction = {{ last_action_json|safe }}; if(lastAction && lastAction.action){ addLog('Bulk '+lastAction.action+' summary: '+(lastAction.done||0)+' ok, '+(lastAction.failed||0)+' failed'+(lastAction.skipped?(', '+lastAction.skipped+' skipped'):'') , (parseInt(lastAction.failed||0)>0)?'warn':'success'); }
+  const params = new URLSearchParams(window.location.search);
+  const failListRaw = params.get('fail_list');
+  const successListRaw = params.get('success_list');
+  const skipListRaw = params.get('skip_list');
+  if(successListRaw){ successListRaw.split(';').forEach(s=>{ if(s.trim()) addLog('✔ '+s.trim(),'success'); }); }
+  if(skipListRaw){ skipListRaw.split(';').forEach(s=>{ if(s.trim()) addLog('↷ '+s.trim(),'info'); }); }
+  if(failListRaw){ failListRaw.split(';').forEach(f=>{ if(f.trim()) addLog('✖ '+f.trim(),'error'); }); }
+  // Auto-refresh disabled per user request.
+
+  // Intercept VM card link clicks to open popup window instead of a new tab
+  const vmLinks = document.querySelectorAll('.vm-list .vm-item a');
+  vmLinks.forEach(a=>{
+    a.addEventListener('click', function(ev){
+      // Only left-click without modifier keys
+      if(ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return; // allow normal browser behavior if modified
+      ev.preventDefault();
+      const url = this.href;
+      const vmid = this.getAttribute('data-vmid') || 'vm';
+      const features = 'width=1100,height=760,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes';
+      const w = window.open(url, 'vm_console_'+vmid, features);
+      if(!w){
+        addLog('Popup blocked by browser; allow popups for console access','warn');
+        // Fallback: navigate current tab
+        window.location.href = url;
+        return;
+      }
+      try { w.focus(); } catch(e){}
+      addLog('Opened console popup for VM '+vmid,'info');
+    });
+  });
+
+  // Ensure body padding class applied if dock present
+  if(dock){
+    // Fixed overlay mode: constant body padding to avoid layout jump; no scroll adjustments
+    document.body.style.paddingBottom='40px';
+    if(dockToggle){
+      dockToggle.addEventListener('click', ()=>{
+        dock.classList.toggle('collapsed');
+        dockToggle.textContent = dock.classList.contains('collapsed') ? '▴' : '▾';
+        if(!dock.classList.contains('collapsed') && dockBody){
+          // auto-scroll log content only
+          dockBody.scrollTop = dockBody.scrollHeight;
+        }
+      });
+    }
+  }
+ })();
+</script>
+{% endblock %}
+"""
+
+# ---------- Helpers ----------
+
+def _mask(value: str, keep_end: int = 4):
+  if not value:
+    return value
+  return ("*" * max(0, len(value) - keep_end)) + value[-keep_end:]
+
+def _sanitize_headers(h):
+  if not h:
+    return {}
+  masked = dict(h)
+  for k in list(masked.keys()):
+    lk = k.lower()
+    if lk in ("authorization", "cookie", "set-cookie"):
+      masked[k] = "<redacted>"
+  return masked
+
+def _sanitize_form(d):
+  if not d:
+    return {}
+  out = {}
+  for k, v in d.items():
+    if k.lower() in ("password", "passwd"):
+      out[k] = _mask(v)
+    else:
+      out[k] = v
+  return out
+
+# ---- Helper functions restored ----
+def req_id():
+  return getattr(g, "request_id", "-")
+
+def cookie_host():
+  return session.get("pve_host", PROXMOX_HOST)
+
+def proxmox_request(method: str, path: str, **kwargs):
+  h = session.get("pve_host", PROXMOX_HOST)
+  p = session.get("pve_port", PROXMOX_PORT)
+  base = f"https://{h}:{p}/api2/json"
+  url = base + path if not path.startswith("http") else path
+  headers = kwargs.get("headers") or {}
+  form = kwargs.get("data") or kwargs.get("json") or {}
+  logger.info(
+    f"[{req_id()}] OUTBOUND {method.upper()} {url} params={_sanitize_form(kwargs.get('params'))} form={_sanitize_form(form)} headers={_sanitize_headers(headers)} verify={session.get('pve_verify_ssl', VERIFY_SSL)}"
+  )
+  verify_flag = session.get("pve_verify_ssl")
+  if verify_flag is None:
+    verify_flag = VERIFY_SSL
+  start_time = time.time()
+  resp = requests.request(method.upper(), url, verify=verify_flag, **kwargs)
+  elapsed = (time.time() - start_time) * 1000.0
+  preview = resp.text[:160].replace('\n',' ').replace('\r',' ')
+  logger.info(
+    f"[{req_id()}] INBOUND {method.upper()} {url} status={resp.status_code} elapsed_ms={elapsed:.1f} body_preview={preview!r}"
+  )
+  return resp
+
+def proxmox_get(path, **kwargs):
+  return proxmox_request("GET", path, **kwargs)
+
+def proxmox_post(path, **kwargs):
+  return proxmox_request("POST", path, **kwargs)
+
+@app.before_request
+def assign_request_id():
+  g.request_id = uuid.uuid4().hex[:8]
+
+# ---------- Routes ----------
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+  if request.method == "GET":
+    return render_template_string(
+      TPL_LOGIN,
+      host=session.get("pve_host", PROXMOX_HOST),
+  port=session.get("pve_port", PROXMOX_PORT),
+      realm=session.get("pve_realm", PROXMOX_REALM),
+  verify_ssl=session.get("pve_verify_ssl", VERIFY_SSL),
+      username="",
+      error=None,
+    )
+
+  username_input = (request.form.get("username") or "").strip()
+  # Allow user to supply realm inline as user@realm; if present, split and override realm
+  if "@" in username_input and not username_input.startswith("@"):  # basic guard
+    parts = username_input.split("@", 1)
+    username = parts[0].strip()
+    inline_realm = parts[1].strip()
+  else:
+    username = username_input
+    inline_realm = None
+  password = request.form.get("password") or ""
+  host_override = (request.form.get("host") or "").strip() or PROXMOX_HOST
+  # Use provided port or default to configured PROXMOX_PORT (do not auto-switch 8006->443)
+  port_override = (request.form.get("port") or "").strip() or PROXMOX_PORT
+  realm_field = (request.form.get("realm") or "").strip() or PROXMOX_REALM
+  # If inline realm specified in username, it takes precedence
+  realm_override = inline_realm or realm_field
+  verify_override = request.form.get("verify_ssl") == "1"
+  session["pve_host"] = host_override
+  session["pve_port"] = port_override
+  session["pve_realm"] = realm_override
+  session["pve_verify_ssl"] = verify_override
+
+  if not username or not password:
+    return render_template_string(
+      TPL_LOGIN,
+      host=PROXMOX_HOST,
+      realm=PROXMOX_REALM,
+      api=BASE_API,
+      error="Username and password are required.",
+    )
+
+  # Compose full user with realm
+  user_with_realm = f"{username}@{realm_override}"
+  try:
+    logger.debug(
+      f"[{req_id()}] Attempting login for user={username!r} realm={PROXMOX_REALM}"
+    )
+    r = proxmox_post(
+      "/access/ticket", data={"username": user_with_realm, "password": password}
+    )
+    logger.debug(f"[{req_id()}] /access/ticket status={r.status_code}")
+    r.raise_for_status()
+    payload = r.json()
+    data = payload.get("data", {})
+    ticket = data.get("ticket")
+    csrf = data.get("CSRFPreventionToken")
+
+    if not ticket or not csrf:
+      raise ValueError("Missing ticket or CSRF token in response.")
+
+    # Persist minimal session state
+    session["pve_user"] = user_with_realm
+    session["pve_ticket"] = ticket
+    session["pve_csrf"] = csrf
+
+    resp = make_response(redirect(url_for("home")))
+    # Set the same cookies that the Proxmox GUI would set, so the browser can access :8006
+    # NOTE: Cookies are host-wide (not port-specific), so setting for the host allows 8006 to receive them.
+    domain = cookie_host()
+
+    # Safer defaults: HttpOnly; SameSite=Lax (works for same-site 8006)
+    # If you run this app behind HTTPS, you can set "secure=True".
+    secure_flag = request.is_secure or (
+      request.headers.get("X-Forwarded-Proto", "").lower() == "https"
+    )
+
+    resp.set_cookie(
+      "PVEAuthCookie",
+      ticket,
+      domain=domain,
+      path="/",
+      httponly=True,
+      samesite="Lax",
+      secure=secure_flag,
+    )
+    resp.set_cookie(
+      "CSRFPreventionToken",
+      csrf,
+      domain=domain,
+      path="/",
+      samesite="Lax",
+      secure=secure_flag,
+    )
+    logger.info(f"[{req_id()}] Login successful for {user_with_realm}")
+    return resp
+  except Exception as e:
+    logger.exception(f"[{req_id()}] Login failed for {user_with_realm}")
+    return render_template_string(
+  TPL_LOGIN,
+  host=host_override,
+  port=port_override,
+  realm=realm_override,
+  verify_ssl=verify_override,
+  username=username,
+  error=f"Login failed (Request ID: {req_id()}): {e}",
+    )
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    resp = make_response(redirect(url_for("login")))
+    domain = cookie_host()
+    for cname in ("PVEAuthCookie", "CSRFPreventionToken"):
+        resp.set_cookie(cname, "", domain=domain, path="/", expires=0)
+    return resp
+
+@app.route("/")
+def home():
+  if not session.get("pve_ticket"):
+    return redirect(url_for("login"))
+
+  # Show user's visible non-template VMs
+  vms = []
+  try:
+    cookies = {"PVEAuthCookie": session["pve_ticket"]}
+    headers = {"CSRFPreventionToken": session["pve_csrf"]}
+    r = proxmox_get(
+      "/cluster/resources",
+      params={"type": "vm"},
+      cookies=cookies,
+      headers=headers,
+    )
+    if r.ok:
+      vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+    else:
+      logger.warning(
+        f"[{req_id()}] Failed to list VMs: status={r.status_code} body={r.text[:300]!r}"
+      )
+  except Exception:
+    logger.exception(f"[{req_id()}] Exception while listing VMs")
+
+  # Provide last action result to JS dock
+  last_action = {
+    "action": request.args.get("bulk"),
+    "done": request.args.get("done"),
+    "failed": request.args.get("failed"),
+    "skipped": request.args.get("skipped"),
+  }
+  last_action_json = json.dumps(last_action)
+
+  # Build bulk notice (for legacy notice region if any)
+  bulk = request.args.get("bulk")
+  done = request.args.get("done")
+  failed = request.args.get("failed")
+  skipped = request.args.get("skipped")
+  fail_list = request.args.get("fail_list")
+  success_list = request.args.get("success_list")
+  skip_list = request.args.get("skip_list")
+  notice = None
+  if bulk:
+    parts = [f"Bulk {bulk} complete: {done} ok"]
+    if skipped and skipped != "0":
+      parts.append(f"{skipped} skipped")
+    if failed and failed != "0":
+      parts.append(f"{failed} failed")
+    notice = ", ".join(parts)
+    if skip_list:
+      notice += f" | Skipped: {skip_list}"
+    if fail_list:
+      notice += f" | Failures: {fail_list}"
+    if success_list:
+      notice += f" | Successes: {success_list}"
+
+  return render_template_string(
+    TPL_HOME,
+    vms=vms,
+    last_action_json=last_action_json,
+    show_dock=True,
+    bulk_notice=notice,
+  )
+
+@app.route("/open", methods=["GET", "POST"])
+def open_console():
+  if not session.get("pve_ticket"):
+    return redirect(url_for("login"))
+
+  if request.method == "POST":
+    node = (request.form.get("node") or "").strip()
+    vmid = (request.form.get("vmid") or "").strip()
+  else:
+    node = (request.args.get("node") or "").strip()
+    vmid = (request.args.get("vmid") or "").strip()
+
+  if not node or not vmid.isdigit():
+    return redirect(url_for("home"))
+
+  h = session.get("pve_host", PROXMOX_HOST)
+  p = session.get("pve_port", PROXMOX_PORT)
+  console_url = f"https://{h}:{p}/?console=kvm&novnc=1&node={urllib.parse.quote(node)}&vmid={vmid}&resize=scale"
+  logger.info(f"[{req_id()}] Redirecting to console vmid={vmid} node={node} -> {console_url}")
+  return redirect(console_url, code=302)
+
+@app.route("/bulk", methods=["POST"])
+def bulk_action():
+  if not session.get("pve_ticket"):
+    return redirect(url_for("login"))
+  action = (request.form.get("action") or "").lower().strip()
+  selections = request.form.getlist("vms")
+  if not action or not selections:
+    return redirect(url_for("home"))
+  done = 0
+  failed = 0
+  skipped = 0
+  failure_details = []  # collect strings "node/vmid action failed (reason)"
+  success_details = []  # collect strings "node/vmid action ok"
+  skip_details = []     # collect strings "node/vmid skipped (reason)"
+  cookies = {"PVEAuthCookie": session.get("pve_ticket")}
+  headers = {"CSRFPreventionToken": session.get("pve_csrf")}
+  # Fetch current statuses to allow intelligent skipping
+  status_map = {}
+  try:
+    rs = proxmox_get(
+      "/cluster/resources",
+      params={"type": "vm"},
+      cookies=cookies,
+      headers=headers,
+    )
+    if rs.ok:
+      for row in rs.json().get("data", []):
+        status_map[(row.get("node"), str(row.get("vmid")))] = row.get("status")
+  except Exception:
+    logger.warning(f"[{req_id()}] Could not prefetch VM statuses for skip logic")
+  for item in selections:
+    try:
+      node, vtype, vmid = item.split("|")
+      current_status = status_map.get((node, vmid))
+      logger.info(f"[{req_id()}] Bulk item action={action} node={node} vmid={vmid} type={vtype} current_status={current_status}")
+      if action == "reboot":
+        if current_status and current_status != "running":
+          skipped += 1
+          skip_details.append(f"{node}/{vmid} skipped (not running)")
+          continue
+        if vtype == "qemu":
+          path = f"/nodes/{node}/qemu/{vmid}/status/reboot"
+        elif vtype == "lxc":
+          path = f"/nodes/{node}/lxc/{vmid}/status/reboot"
+        else:
+          logger.warning(f"[{req_id()}] Unsupported VM type for reboot: {vtype} ({item})")
+          failed += 1
+          continue
+        logger.info(f"[{req_id()}] Sending reboot request path={path}")
+        r = proxmox_post(path, data={}, cookies=cookies, headers=headers)
+        if r.ok:
+          done += 1
+          success_details.append(f"{node}/{vmid} reboot ok")
+        else:
+          failed += 1
+          reason = f"HTTP {r.status_code}"
+          failure_details.append(f"{node}/{vmid} reboot failed ({reason})")
+          logger.warning(f"[{req_id()}] Reboot failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
+      elif action == "start":
+        if current_status and current_status == "running":
+          skipped += 1
+          skip_details.append(f"{node}/{vmid} skipped (already running)")
+          continue
+        if vtype == "qemu":
+          path = f"/nodes/{node}/qemu/{vmid}/status/start"
+        elif vtype == "lxc":
+          path = f"/nodes/{node}/lxc/{vmid}/status/start"
+        else:
+          logger.warning(f"[{req_id()}] Unsupported VM type for start: {vtype} ({item})")
+          failed += 1
+          continue
+        logger.info(f"[{req_id()}] Sending start request path={path}")
+        r = proxmox_post(path, data={}, cookies=cookies, headers=headers)
+        if r.ok:
+          done += 1
+          success_details.append(f"{node}/{vmid} start ok")
+        else:
+          failed += 1
+          reason = f"HTTP {r.status_code}"
+          failure_details.append(f"{node}/{vmid} start failed ({reason})")
+          logger.warning(f"[{req_id()}] Start failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
+      else:
+        logger.warning(f"[{req_id()}] Unsupported bulk action: {action}")
+        failed += 1
+    except Exception:
+      failed += 1
+      failure_details.append(f"{item} exception")
+      logger.exception(f"[{req_id()}] Bulk action exception processing {item}")
+  fail_list = ";".join(failure_details) if failure_details else None
+  success_list = ";".join(success_details) if success_details else None
+  skip_list = ";".join(skip_details) if skip_details else None
+  return redirect(url_for("home", bulk=action, done=done, failed=failed, skipped=skipped, fail_list=fail_list, success_list=success_list, skip_list=skip_list))
+
+# Lightweight API endpoint returning current non-template VM statuses (used by JS refresh)
+@app.route("/api/vms", methods=["GET"])
+def api_vms():
+  if not session.get("pve_ticket"):
+    return jsonify({"error": "unauthorized"}), 401
+  cookies = {"PVEAuthCookie": session.get("pve_ticket")}
+  headers = {"CSRFPreventionToken": session.get("pve_csrf")}
+  try:
+    r = proxmox_get(
+      "/cluster/resources",
+      params={"type": "vm"},
+      cookies=cookies,
+      headers=headers,
+    )
+    if not r.ok:
+      return jsonify({"error": "upstream", "status": r.status_code}), 502
+    data = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+    # Only fields needed by UI
+    slim = [
+      {
+        "node": row.get("node"),
+        "vmid": row.get("vmid"),
+        "status": row.get("status"),
+        "name": row.get("name"),
+        "type": row.get("type"),
+      }
+      for row in data
+    ]
+    return jsonify({"vms": slim})
+  except Exception:
+    logger.exception(f"[{req_id()}] /api/vms exception")
+    return jsonify({"error": "exception"}), 500
+
+# ---------- App runner ----------
+
+@app.route("/healthz")
+def healthz():
+  return {"ok": True, "host": PROXMOX_HOST, "realm": PROXMOX_REALM, "verify_ssl": VERIFY_SSL}
+
+def run():
+  port = int(os.environ.get("PORT", "8080"))
+  https_cert = os.environ.get("HTTPS_CERT_FILE")
+  https_key = os.environ.get("HTTPS_KEY_FILE")
+  if https_cert or https_key:
+    logger.warning("HTTPS_CERT_FILE/HTTPS_KEY_FILE provided but waitress does not terminate TLS. Deploy behind a reverse proxy (e.g. nginx) for HTTPS.")
+  logger.info(
+    f"Starting waitress on http://0.0.0.0:{port} (Proxmox host: {PROXMOX_HOST}, realm: {PROXMOX_REALM}, verify_ssl={VERIFY_SSL}, log_level={LOG_LEVEL}, debug_http={DEBUG_HTTP})"
+  )
+  serve(app, host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+  run()

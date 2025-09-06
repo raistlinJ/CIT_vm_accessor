@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  certs:
+    image: alpine:3
+    container_name: proxclient-certs
+    command: >-
+      sh -c "set -euo pipefail;
+      apk add --no-cache openssl >/dev/null;
+      mkdir -p /out;
+      if [ ! -f /out/cert.pem ] || [ ! -f /out/key.pem ]; then
+        echo 'Generating self-signed certificate...';
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout /out/key.pem -out /out/cert.pem -days 365 -subj '/CN=localhost';
+      else
+        echo 'Existing certs found in volume, skipping generation.';
+      fi"
+    volumes:
+      - certs:/out
+    restart: "no"
+
+  proxclient:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: proxclient:local
+    container_name: proxclient
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    environment:
+      - PORT=8443
+      - PROXMOX_HOST=${PROXMOX_HOST:-acostanet.ddns.net}
+      - PROXMOX_PORT=${PROXMOX_PORT:-64646}
+      - PROXMOX_REALM=${PROXMOX_REALM:-pam}
+      - VERIFY_SSL=${VERIFY_SSL:-false}
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-now}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEBUG_HTTP=${DEBUG_HTTP:-false}
+      - HTTPS_CERT_FILE=/certs/cert.pem
+      - HTTPS_KEY_FILE=/certs/key.pem
+    extra_hosts:
+      # Force PROXMOX_HOST name to resolve to the Docker host's gateway IP (Linux)
+      # Ensure PROXMOX_HOST is set to your actual Proxmox FQDN so browser redirects and cookies match
+      - "${PROXMOX_HOST:-host.docker.internal}:${DOCKER_HOST_GATEWAY:-host-gateway}"
+    ports:
+      # HTTPS exposed by default
+      - "8443:8443"
+      # Optionally expose HTTP if you disable HTTPS envs
+      # - "8080:8080"
+    volumes:
+      - certs:/certs:ro
+    restart: unless-stopped
+  # If Proxmox is only bound to 127.0.0.1 or a host-only interface, consider host networking instead:
+  # network_mode: host
+  # (remove ports when using host networking)
+
+  nginx-proxmox:
+    image: nginx:stable-alpine
+    container_name: proxclient-nginx-proxmox
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    volumes:
+      - certs:/etc/nginx/certs:ro
+      # Mount only the server snippet (default nginx.conf in image stays intact)
+      - ./deploy/proxmox.conf:/etc/nginx/conf.d/proxmox.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "443:443"
+    restart: unless-stopped
+
+volumes:
+  certs:
