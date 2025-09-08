@@ -296,7 +296,7 @@ TPL_HOME = """
  {% for vm in vms %}
    <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
      <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
-  <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
+  <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
        <span class="vm-id-line">#{{ vm.get('vmid') }} · {{ vm.get('node') }}</span>
        <span class="vm-name">{{ vm.get('name','') or '(no name)' }}</span>
        <span class="vm-status {{ vm.get('status') }}" id="vm-status-{{ vm.get('node') }}-{{ vm.get('vmid') }}">{{ vm.get('status') }}</span>
@@ -375,8 +375,9 @@ TPL_HOME = """
       const actionBtn = (ev && ev.submitter && ev.submitter.value) || (document.activeElement && document.activeElement.value) || '(unknown)';
       if(!selected.length){ ev.preventDefault(); addLog('No VMs selected; action aborted','warn'); return; }
       // Confirmation dialog before submitting
-      const previewList = selected.slice(0,15).map(v=>v.split('|')[2]).join(', ')+(selected.length>15?' ...':'');
-      const confirmMsg = 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\nVMIDs: '+previewList; 
+  const previewList = selected.slice(0,15).map(v=>v.split('|')[2]).join(', ')+(selected.length>15?' ...':'');
+  // Use an escaped \\n for readability in the confirm dialog
+  const confirmMsg = 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\\nVMIDs: '+previewList; 
       if(!window.confirm(confirmMsg)){
         ev.preventDefault();
         addLog('Bulk '+actionBtn+' canceled by user','warn');
@@ -401,21 +402,25 @@ TPL_HOME = """
   const vmLinks = document.querySelectorAll('.vm-list .vm-item a');
   vmLinks.forEach(a=>{
     a.addEventListener('click', function(ev){
-      // Only left-click without modifier keys
-      if(ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return; // allow normal browser behavior if modified
+      // Only intercept simple left click (no modifiers). Otherwise let browser handle (incl. Ctrl/Cmd+click new tab).
+      if(ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
       ev.preventDefault();
       const url = this.href;
       const vmid = this.getAttribute('data-vmid') || 'vm';
       const features = 'width=1100,height=760,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes';
-      const w = window.open(url, 'vm_console_'+vmid, features);
-      if(!w){
-        addLog('Popup blocked by browser; allow popups for console access','warn');
-        // Fallback: navigate current tab
+      let win = null;
+      try { win = window.open(url, 'vm_console_'+vmid, features); } catch(e) { /* ignore */ }
+      if(!win){
+        // Try a plain new tab
+        try { win = window.open(url, '_blank'); } catch(e) { /* ignore */ }
+      }
+      if(!win){
+        addLog('Popup blocked; falling back to same-tab navigation','warn');
         window.location.href = url;
         return;
       }
-      try { w.focus(); } catch(e){}
-      addLog('Opened console popup for VM '+vmid,'info');
+      try { win.focus(); } catch(e){}
+      addLog('Opened console '+(win===window?'(same tab) ':'')+'for VM '+vmid,'info');
     });
   });
 

@@ -24,10 +24,8 @@ services:
       dockerfile: Dockerfile
     image: proxclient:local
     container_name: proxclient
-    depends_on:
-      certs:
-        condition: service_completed_successfully
     environment:
+      # Override default app port to 8443 (still plain HTTP inside container)
       - PORT=8443
       - PROXMOX_HOST=${PROXMOX_HOST:-acostanet.ddns.net}
       - PROXMOX_PORT=${PROXMOX_PORT:-64646}
@@ -36,19 +34,14 @@ services:
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-now}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEBUG_HTTP=${DEBUG_HTTP:-false}
-      - HTTPS_CERT_FILE=/certs/cert.pem
-      - HTTPS_KEY_FILE=/certs/key.pem
     extra_hosts:
       # Force PROXMOX_HOST name to resolve to the Docker host's gateway IP (Linux)
       # Ensure PROXMOX_HOST is set to your actual Proxmox FQDN so browser redirects and cookies match
       - "${PROXMOX_HOST:-host.docker.internal}:${DOCKER_HOST_GATEWAY:-host-gateway}"
     ports:
-      # HTTPS exposed by default
+      # Map host 8443 -> container 8443
       - "8443:8443"
-      # Optionally expose HTTP if you disable HTTPS envs
-      # - "8080:8080"
-    volumes:
-      - certs:/certs:ro
+    # Note: TLS termination should be handled by a reverse proxy (e.g. nginx) — waitress doesn't serve HTTPS.
     restart: unless-stopped
   # If Proxmox is only bound to 127.0.0.1 or a host-only interface, consider host networking instead:
   # network_mode: host
