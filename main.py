@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Author: Jaime Acosta
  
 import os
 import json
@@ -45,6 +46,8 @@ PROXMOX_REALM = os.environ.get("PROXMOX_REALM", "pam").strip()
 PROXMOX_PORT = os.environ.get("PROXMOX_PORT", "8006").strip()
 VERIFY_SSL = os.environ.get("VERIFY_SSL", "false").lower() in ("1", "true", "yes", "y")
 SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "change-me-now")
+EMBED_ALLOW = os.environ.get("EMBED_ALLOW", "true").lower() in ("1","true","yes","y")
+EMBED_ALLOW_ORIGINS = os.environ.get("EMBED_ALLOW_ORIGINS", "*")  # space or comma separated
 
 # Logging/Debug configuration
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
@@ -94,7 +97,7 @@ TPL_BASE = """
 <head>
 <meta charset=\"utf-8\" />
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-<title>{{ title or "CIT VM Accessor" }}</title>
+<title>{{ title or "Acosta VM Accessor" }}</title>
 <style>
   :root {
     --bg: #f4f7fa;
@@ -191,7 +194,7 @@ TPL_BASE = """
 <body>
   <div class=\"grid-overlay\"></div>
   <div class=\"topbar\">
-  <div><strong>&#128274; CIT VM Accessor</strong></div>
+  <div><strong>&#128274; Acosta VM Accessor</strong></div>
     <div>
       {% if session.get('pve_user') %}
         <span class="muted">{{ session.get('pve_user') }}</span> |
@@ -209,6 +212,25 @@ TPL_BASE = """
 
 # Register in-memory base template for Jinja to resolve `{% extends "base.html" %}`
 app.jinja_loader = DictLoader({"base.html": TPL_BASE})
+
+@app.after_request
+def _allow_iframe(resp):
+  if EMBED_ALLOW:
+    # Normalize origins list
+    origins_raw = [o.strip() for o in EMBED_ALLOW_ORIGINS.replace(',', ' ').split() if o.strip()]
+    # X-Frame-Options: if specific single origin, set ALLOW-FROM (legacy); otherwise omit to rely on CSP frame-ancestors
+    if 'X-Frame-Options' in resp.headers:
+      del resp.headers['X-Frame-Options']
+    # Construct CSP frame-ancestors directive
+    if origins_raw:
+      fa = ' '.join(origins_raw) if origins_raw[0] != '*' else "*"
+    else:
+      fa = "*"
+    existing_csp = resp.headers.get('Content-Security-Policy','')
+    if 'frame-ancestors' not in existing_csp:
+      csp_prefix = existing_csp + ('; ' if existing_csp else '')
+      resp.headers['Content-Security-Policy'] = f"{csp_prefix}frame-ancestors {fa}"
+  return resp
 
 TPL_LOGIN = """
 {% extends "base.html" %}

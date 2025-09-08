@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Jaime Acosta
 set -euo pipefail
 
 # Redeploy the docker compose stack:
