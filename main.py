@@ -448,15 +448,8 @@ TPL_HOME = """
         return;
       }
       addLog('DEBUG bulk submit (pre) action_btn='+actionBtn+' total_selected='+selected.length+' values=['+selected.join(',')+'] formAction='+bulkForm.getAttribute('action'),'info');
-      // Disable buttons but keep their labels unchanged; auto re-enable after timeout if still on page
-      setTimeout(()=>{ 
-        setBusy(true); 
-        addLog('Bulk action submitted (deferred disable)','info'); 
-        const AUTO_ENABLE_MS = 8000; // re-enable after 8s if not navigated
-        setTimeout(()=>{ 
-          try { setBusy(false); updateBulkButtons(); addLog('Bulk action buttons re-enabled (timeout)','info'); } catch(e){}
-        }, AUTO_ENABLE_MS);
-      }, 25);
+  // Disable buttons but keep their labels unchanged
+  setTimeout(()=>{ setBusy(true); addLog('Bulk action submitted (deferred disable)','info'); }, 25);
     }); }
    async function doRefresh(){ if(!refreshBtn) return; setBusy(true,'Refreshing...'); try { const r= await fetch('{{ url_for('api_vms') }}',{headers:{'Accept':'application/json'}}); if(!r.ok) throw new Error('HTTP '+r.status); const data= await r.json(); let updated=0; (data.vms||[]).forEach(vm=>{ const id='vm-status-'+vm.node+'-'+vm.vmid; const el=document.getElementById(id); if(el){ const old=el.textContent; if(old!==vm.status){ el.textContent=vm.status; el.className='vm-status '+vm.status+' changed'; setTimeout(()=>{ el.classList.remove('changed'); },1200); } updated++; } }); if(refreshMeta){ refreshMeta.textContent='Updated '+updated+' • '+(new Date()).toLocaleTimeString(); } addLog('Refresh completed ('+updated+' statuses)','info'); } catch(e){ addLog('Refresh failed: '+e.message,'error'); if(refreshMeta){ refreshMeta.textContent='Refresh failed'; } } finally { setBusy(false); } }
    if(refreshBtn){ refreshBtn.addEventListener('click', doRefresh); }
