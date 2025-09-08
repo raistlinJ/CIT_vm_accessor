@@ -145,8 +145,26 @@ TPL_BASE = """
   .vm-status.changed { outline:2px solid #07b36d; animation: pulse 1.1s ease-out; }
   @keyframes pulse { 0% { transform:scale(.9); filter:brightness(1.4);} 70% { transform:scale(1.03);} 100% { transform:scale(1); filter:brightness(1);} }
   .bulk-actions { display:flex; gap:.6rem; flex-wrap:wrap; }
+  /* Simplified single-column layout */
+  .with-side { display:block; }
+  .vm-action-layout { display:grid; grid-template-columns: 1fr 210px; gap:1.25rem; align-items:start; }
+  @media (max-width:1050px){ .vm-action-layout { grid-template-columns:1fr; } .action-frame { position:relative; top:auto; } }
+  .action-frame { position:sticky; top:68px; display:flex; flex-direction:column; gap:.65rem; background:#0d1e30f2; backdrop-filter:blur(8px); padding:.9rem .95rem 1.1rem; border:1px solid #12384f; border-radius:14px; box-shadow:0 4px 18px -6px #001d2f66, 0 0 0 1px #12425c inset; min-height:140px; }
+  .action-frame h4 { margin:0 0 .4rem; font-size:.68rem; letter-spacing:.55px; font-weight:600; text-transform:uppercase; color:#9feaf9; text-align:center; }
+  .action-frame .btn-group { display:flex; flex-direction:column; gap:.45rem; }
+  .action-frame button { width:100%; justify-content:center; min-height:38px; }
+  .action-frame .small-group { display:flex; gap:.4rem; }
+  .action-frame .small-group button { flex:1; min-height:32px; font-size:.65rem; }
+  .activity-frame { margin:1.2rem 0 0; border:1px solid #12384f; background:#0d1e30f2; backdrop-filter:blur(8px); border-radius:14px; box-shadow:0 4px 18px -6px #001d2f66, 0 0 0 1px #12425c inset; padding:.4rem 0 .2rem; display:flex; flex-direction:column; }
+  .activity-frame h4 { margin:.2rem .9rem .4rem; font-size:.7rem; letter-spacing:.6px; text-transform:uppercase; font-weight:600; color:#9feaf9; display:flex; justify-content:center; gap:.75rem; align-items:center; }
+  .activity-frame h4 button { position:static; width:auto; }
+  .activity-dock { position:relative; background:transparent; border:0; border-radius:0; box-shadow:none; width:100%; max-width:none; }
   .activity-dock { position:fixed; left:0; right:0; bottom:0; background:#0d1e30f2; color:#e2f2ff; font-size:.72rem; font-family:var(--mono); max-height:40vh; border-top:1px solid #12384f; box-shadow:0 -4px 12px -6px #000a; display:flex; flex-direction:column; backdrop-filter: blur(8px); }
-  .activity-dock.collapsed { height:34px !important; overflow:hidden; }
+  /* Reworked dock: becomes an inline frame (not fixed) and can resize */
+  .activity-dock { position:relative; background:#0d1e30f2; color:#e2f2ff; font-size:.72rem; font-family:var(--mono); height:28vh; max-height:60vh; min-height:34px; border:1px solid #12384f; border-radius:10px 10px 0 0; box-shadow:0 -4px 12px -6px #000a, 0 2px 4px -2px #001923 inset; margin:0 auto; width:100%; max-width:1100px; overflow:hidden; }
+  .activity-dock.collapsed { height:34px !important; min-height:34px; }
+  .dock-resize-handle { position:absolute; top:0; left:0; right:0; height:6px; cursor:ns-resize; background:linear-gradient(90deg,#16455d,#102c3d); opacity:.6; }
+  .activity-dock.resizing { user-select:none; }
   .activity-dock .dock-header { padding:.35rem .75rem; display:flex; justify-content:space-between; align-items:center; font-weight:600; letter-spacing:.5px; background:linear-gradient(90deg,#12384f,#0d1e30); }
   .dock-last { flex:1; font-weight:400; font-size:.65rem; color:#9cc9d9; margin:0 .65rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .activity-dock .dock-toggle { background:transparent; color:#9feaf9; border:1px solid #255b76; padding:.15rem .55rem; border-radius:6px; font-size:.65rem; line-height:1; cursor:pointer; }
@@ -257,13 +275,9 @@ TPL_HOME = """
 {% block content %}
 <h2>Open a VM Console</h2>
 <p class="muted" style="margin-top:.1rem">Select VMs below. Click a VM card to open its console in a popup. Use bulk actions for management.</p>
-<div class="top-controls" style="margin:0 0 1rem; display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
-  <div style="display:flex; gap:.6rem; align-items:center;">
-    <button id="selectAllBtn" type="button" title="Select all VMs">Select All</button>
-    <button id="deselectAllBtn" type="button" title="Deselect all VMs">Deselect All</button>
-  </div>
+<div class="top-controls" style="margin:0 0 1rem; display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; justify-content:flex-end;">
   <div style="display:flex; gap:.5rem; align-items:center;">
-    <button type="button" id="refreshBtn" title="Refresh VM statuses" style="margin-left:auto;">Refresh Status</button>
+    <button type="button" id="refreshBtn" title="Refresh VM statuses">Refresh Status</button>
     <small class="muted" id="refreshMeta"></small>
   </div>
 </div>
@@ -290,32 +304,53 @@ TPL_HOME = """
  </div>
  {% endif %}
 {% if vms %}
-<h3>Visible VMs</h3>
-<form method="post" action="{{ url_for('bulk_action') }}" id="bulkForm">
- <div class="vm-list" id="vmList">
- {% for vm in vms %}
-   <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
-     <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
-  <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
-       <span class="vm-id-line">#{{ vm.get('vmid') }} · {{ vm.get('node') }}</span>
-       <span class="vm-name">{{ vm.get('name','') or '(no name)' }}</span>
-       <span class="vm-status {{ vm.get('status') }}" id="vm-status-{{ vm.get('node') }}-{{ vm.get('vmid') }}">{{ vm.get('status') }}</span>
-     </a>
-   </label>
- {% endfor %}
- </div>
- <div class="bulk-actions" style="justify-content:center; width:100%; margin-top:.75rem;">
-  <button id="btnStart" type="submit" name="action" value="start" title="Start each selected VM (qemu/lxc)" disabled>Start Selected</button>
-  <button id="btnReboot" class="btn-danger" type="submit" name="action" value="reboot" title="Issue a graceful reboot request for each selected VM" disabled>Reboot Selected</button>
- </div>
-</form>
+<div class="vm-action-layout">
+  <div>
+    <h3>Visible VMs</h3>
+    <form method="post" action="{{ url_for('bulk_action') }}" id="bulkForm">
+      <div class="vm-list" id="vmList">
+      {% for vm in vms %}
+        <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
+          <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
+          <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
+            <span class="vm-id-line">#{{ vm.get('vmid') }} · {{ vm.get('node') }}</span>
+            <span class="vm-name">{{ vm.get('name','') or '(no name)' }}</span>
+            <span class="vm-status {{ vm.get('status') }}" id="vm-status-{{ vm.get('node') }}-{{ vm.get('vmid') }}">{{ vm.get('status') }}</span>
+          </a>
+        </label>
+      {% endfor %}
+      </div>
+      <input type="hidden" name="action" value="" id="hiddenBulkAction" />
+    </form>
+  </div>
+  <div class="action-frame" aria-label="Bulk VM Actions">
+    <h4>Bulk Actions</h4>
+    <div class="btn-group">
+      <button id="btnStart" type="button" disabled title="Start each selected VM">Start Selected</button>
+      <button id="btnReboot" type="button" class="btn-danger" disabled title="Graceful reboot each selected VM">Reboot Selected</button>
+    </div>
+    <div class="small-group">
+      <button id="selectAllBtn" type="button" title="Select all visible VMs">Select</button>
+      <button id="deselectAllBtn" type="button" title="Clear all selections">Clear</button>
+    </div>
+  </div>
+</div>
 {% else %}
 <p class="muted">No VMs listed, or your account lacks VM.Audit permission.</p>
 {% endif %}
 {% if show_dock %}
-<div id="activityDock" class="activity-dock collapsed">
- <div class="dock-header">Activity Log <span id="dockLastLine" class="dock-last"></span><div style="margin-left:auto; display:flex; gap:.35rem; align-items:center"><button type="button" id="dockClear" class="dock-clear" aria-label="Clear Activity Log">Clear</button><button type="button" id="dockToggle" class="dock-toggle" aria-label="Toggle Activity">▴</button></div></div>
- <div id="dockBody" class="dock-body"></div>
+<div class="activity-frame" aria-label="Activity Console Frame">
+  <h4>Activity Console</h4>
+<div id="activityDock" class="activity-dock collapsed" aria-label="Activity Log Panel">
+  <div class="dock-resize-handle" title="Drag to resize"></div>
+  <div class="dock-header">Activity Log <span id="dockLastLine" class="dock-last"></span>
+    <div style="margin-left:auto; display:flex; gap:.35rem; align-items:center">
+      <button type="button" id="dockClear" class="dock-clear" aria-label="Clear Activity Log">Clear</button>
+      <button type="button" id="dockToggle" class="dock-toggle" aria-expanded="false" aria-controls="dockBody" aria-label="Toggle Activity">▴</button>
+    </div>
+  </div>
+  <div id="dockBody" class="dock-body" role="log" aria-live="polite"></div>
+</div>
 </div>
 {% endif %}
 <script>
@@ -328,8 +363,9 @@ TPL_HOME = """
    const dockToggle = document.getElementById('dockToggle');
    const dockClear = document.getElementById('dockClear');
   // Fixed-height dock (no resize)
-    const btnStart = document.getElementById('btnStart');
-    const btnReboot = document.getElementById('btnReboot');
+  const btnStart = document.getElementById('btnStart');
+  const btnReboot = document.getElementById('btnReboot');
+  const hiddenAction = document.getElementById('hiddenBulkAction');
    const LOG_KEY = 'activityLogLines';
    function ts(){ return new Date().toISOString(); }
    function addLog(msg,type){
@@ -356,6 +392,7 @@ TPL_HOME = """
   // (Replaced by scroll-preserving toggle later after padding helper is defined)
   // Original simple toggle removed to prevent scroll jump.
   dockClear && dockClear.addEventListener('click',()=>{ if(dockBody){ dockBody.innerHTML=''; sessionStorage.removeItem(LOG_KEY); addLog('Activity log cleared','info'); }});
+    // Update enabled/disabled state for central bulk buttons
     function updateBulkButtons(){
       const any = !!document.querySelector('.vm-item input[type=checkbox]:checked');
       if(btnStart) btnStart.disabled = !any;
@@ -372,7 +409,9 @@ TPL_HOME = """
    function setBusy(flag, label){ const btns=document.querySelectorAll('button'); btns.forEach(b=>{ if(flag){ if(!b.dataset.originalText){ b.dataset.originalText=b.textContent; } b.disabled=true; if(label) b.textContent=label; } else { b.disabled=false; if(b.dataset.originalText){ b.textContent=b.dataset.originalText; delete b.dataset.originalText; } } }); }
   if(bulkForm){ bulkForm.addEventListener('submit', function(ev){
       const selected=[...document.querySelectorAll('.vm-item input[type=checkbox]:checked')].map(cb=>cb.value);
-      const actionBtn = (ev && ev.submitter && ev.submitter.value) || (document.activeElement && document.activeElement.value) || '(unknown)';
+      // Determine action from submitter OR hidden action field (for floating panel submission)
+      const hiddenActionInput = bulkForm.querySelector('input[name=action]');
+      const actionBtn = (ev && ev.submitter && ev.submitter.value) || (document.activeElement && document.activeElement.value) || (hiddenActionInput && hiddenActionInput.value) || '(unknown)';
       if(!selected.length){ ev.preventDefault(); addLog('No VMs selected; action aborted','warn'); return; }
       // Confirmation dialog before submitting
   const previewList = selected.slice(0,15).map(v=>v.split('|')[2]).join(', ')+(selected.length>15?' ...':'');
@@ -381,6 +420,8 @@ TPL_HOME = """
       if(!window.confirm(confirmMsg)){
         ev.preventDefault();
         addLog('Bulk '+actionBtn+' canceled by user','warn');
+        // clear hidden action so future attempts can set it again
+        if(hiddenActionInput) hiddenActionInput.value='';
         return;
       }
       addLog('DEBUG bulk submit (pre) action_btn='+actionBtn+' total_selected='+selected.length+' values=['+selected.join(',')+'] formAction='+bulkForm.getAttribute('action'),'info');
@@ -424,20 +465,50 @@ TPL_HOME = """
     });
   });
 
-  // Ensure body padding class applied if dock present
+  // Reworked dock: inline frame with resize + collapse
   if(dock){
-    // Fixed overlay mode: constant body padding to avoid layout jump; no scroll adjustments
-    document.body.style.paddingBottom='40px';
+    const resizeHandle = dock.querySelector('.dock-resize-handle');
+    let isResizing=false; let startY=0; let startH=0;
+    function applyHeight(h){
+      const min=34; const max = Math.min(window.innerHeight*0.75, 600);
+      h=Math.max(min, Math.min(max, h));
+      dock.style.height = h+"px";
+    }
+    if(resizeHandle){
+      resizeHandle.addEventListener('mousedown', (e)=>{
+        if(dock.classList.contains('collapsed')) return;
+        isResizing=true; startY=e.clientY; startH=dock.getBoundingClientRect().height; dock.classList.add('resizing');
+        e.preventDefault();
+      });
+      window.addEventListener('mousemove', (e)=>{ if(!isResizing) return; const delta = startY - e.clientY; applyHeight(startH + delta); });
+      window.addEventListener('mouseup', ()=>{ if(isResizing){ isResizing=false; dock.classList.remove('resizing'); }});
+    }
     if(dockToggle){
       dockToggle.addEventListener('click', ()=>{
-        dock.classList.toggle('collapsed');
-        dockToggle.textContent = dock.classList.contains('collapsed') ? '▴' : '▾';
-        if(!dock.classList.contains('collapsed') && dockBody){
-          // auto-scroll log content only
-          dockBody.scrollTop = dockBody.scrollHeight;
+        const collapsed = dock.classList.toggle('collapsed');
+        dockToggle.textContent = collapsed ? '▴' : '▾';
+        dockToggle.setAttribute('aria-expanded', String(!collapsed));
+        if(!collapsed){
+          // Expand to previous or default height
+          if(!dock.style.height || parseInt(dock.style.height,10) < 120){
+            applyHeight(Math.round(window.innerHeight * 0.28));
+          }
+          if(dockBody){ dockBody.scrollTop = dockBody.scrollHeight; }
         }
       });
     }
+    updateBulkButtons();
+    function triggerAction(action){
+      if(!bulkForm) return;
+      hiddenAction.value = action;
+      bulkForm.dispatchEvent(new Event('submit', {cancelable:true}));
+      // If not prevented default inside listener, actually submit
+      if(hiddenAction.value === action){
+        // We rely on listener to confirm; if user canceled it prevents default and we skip
+      }
+    }
+    btnStart && btnStart.addEventListener('click', ()=>triggerAction('start'));
+    btnReboot && btnReboot.addEventListener('click', ()=>triggerAction('reboot'));
   }
  })();
 </script>
