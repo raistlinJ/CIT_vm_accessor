@@ -48,6 +48,7 @@ VERIFY_SSL = os.environ.get("VERIFY_SSL", "false").lower() in ("1", "true", "yes
 SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "change-me-now")
 EMBED_ALLOW = os.environ.get("EMBED_ALLOW", "true").lower() in ("1","true","yes","y")
 EMBED_ALLOW_ORIGINS = os.environ.get("EMBED_ALLOW_ORIGINS", "*")  # space or comma separated
+EMBED_COOKIES = os.environ.get("EMBED_COOKIES", "true").lower() in ("1","true","yes","y")
 
 # Logging/Debug configuration
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
@@ -348,11 +349,11 @@ TPL_HOME = """
   <div class="action-frame" aria-label="Bulk VM Actions">
     <h4>Bulk Actions</h4>
     <div class="btn-group">
-      <button id="btnStart" type="button" disabled title="Start each selected VM">Start Selected</button>
-      <button id="btnReboot" type="button" class="btn-danger" disabled title="Graceful reboot each selected VM">Reboot Selected</button>
+  <button id="btnStart" type="button" disabled title="Start each selected VM">Start</button>
+  <button id="btnReboot" type="button" class="btn-danger" disabled title="Graceful reboot each selected VM">Reboot</button>
     </div>
     <div class="small-group">
-      <button id="selectAllBtn" type="button" title="Select all visible VMs">Select</button>
+  <button id="selectAllBtn" type="button" title="Select all visible VMs">Select All</button>
       <button id="deselectAllBtn" type="button" title="Clear all selections">Clear</button>
     </div>
   </div>
@@ -447,7 +448,15 @@ TPL_HOME = """
         return;
       }
       addLog('DEBUG bulk submit (pre) action_btn='+actionBtn+' total_selected='+selected.length+' values=['+selected.join(',')+'] formAction='+bulkForm.getAttribute('action'),'info');
-      setTimeout(()=>{ setBusy(true,'Working...'); addLog('Bulk action submitted (deferred disable)','info'); }, 25);
+      // Disable buttons but keep their labels unchanged; auto re-enable after timeout if still on page
+      setTimeout(()=>{ 
+        setBusy(true); 
+        addLog('Bulk action submitted (deferred disable)','info'); 
+        const AUTO_ENABLE_MS = 8000; // re-enable after 8s if not navigated
+        setTimeout(()=>{ 
+          try { setBusy(false); updateBulkButtons(); addLog('Bulk action buttons re-enabled (timeout)','info'); } catch(e){}
+        }, AUTO_ENABLE_MS);
+      }, 25);
     }); }
    async function doRefresh(){ if(!refreshBtn) return; setBusy(true,'Refreshing...'); try { const r= await fetch('{{ url_for('api_vms') }}',{headers:{'Accept':'application/json'}}); if(!r.ok) throw new Error('HTTP '+r.status); const data= await r.json(); let updated=0; (data.vms||[]).forEach(vm=>{ const id='vm-status-'+vm.node+'-'+vm.vmid; const el=document.getElementById(id); if(el){ const old=el.textContent; if(old!==vm.status){ el.textContent=vm.status; el.className='vm-status '+vm.status+' changed'; setTimeout(()=>{ el.classList.remove('changed'); },1200); } updated++; } }); if(refreshMeta){ refreshMeta.textContent='Updated '+updated+' • '+(new Date()).toLocaleTimeString(); } addLog('Refresh completed ('+updated+' statuses)','info'); } catch(e){ addLog('Refresh failed: '+e.message,'error'); if(refreshMeta){ refreshMeta.textContent='Refresh failed'; } } finally { setBusy(false); } }
    if(refreshBtn){ refreshBtn.addEventListener('click', doRefresh); }
@@ -519,19 +528,24 @@ TPL_HOME = """
         }
       });
     }
-    updateBulkButtons();
-    function triggerAction(action){
-      if(!bulkForm) return;
-      hiddenAction.value = action;
-      bulkForm.dispatchEvent(new Event('submit', {cancelable:true}));
-      // If not prevented default inside listener, actually submit
-      if(hiddenAction.value === action){
-        // We rely on listener to confirm; if user canceled it prevents default and we skip
-      }
-    }
-    btnStart && btnStart.addEventListener('click', ()=>triggerAction('start'));
-    btnReboot && btnReboot.addEventListener('click', ()=>triggerAction('reboot'));
   }
+  // Bulk action triggers (outside dock conditional so they work even if dock hidden)
+  updateBulkButtons();
+  function triggerAction(action){
+    if(!bulkForm) return;
+    hiddenAction.value = action;
+    let canceled = false;
+    const preValue = hiddenAction.value;
+    const evt = new Event('submit', {cancelable:true});
+    if(!bulkForm.dispatchEvent(evt)) canceled = true; // if any listener called preventDefault via legacy path
+    // If listener prevented default, canceled stays true (bulkForm listener uses preventDefault on cancel)
+    if(hiddenAction.value != preValue) canceled = true; // listener cleared hidden action when canceled
+    if(!canceled){
+      try { bulkForm.submit(); } catch(e){ addLog('Submit error: '+e.message,'error'); }
+    }
+  }
+  btnStart && btnStart.addEventListener('click', ()=>triggerAction('start'));
+  btnReboot && btnReboot.addEventListener('click', ()=>triggerAction('reboot'));
  })();
 </script>
 {% endblock %}
@@ -685,22 +699,23 @@ def login():
       request.headers.get("X-Forwarded-Proto", "").lower() == "https"
     )
 
+    same_site_mode = "None" if EMBED_COOKIES else "Lax"
     resp.set_cookie(
       "PVEAuthCookie",
       ticket,
       domain=domain,
       path="/",
       httponly=True,
-      samesite="Lax",
-      secure=secure_flag,
+      samesite=same_site_mode,
+      secure=True if same_site_mode == "None" else secure_flag,
     )
     resp.set_cookie(
       "CSRFPreventionToken",
       csrf,
       domain=domain,
       path="/",
-      samesite="Lax",
-      secure=secure_flag,
+      samesite=same_site_mode,
+      secure=True if same_site_mode == "None" else secure_flag,
     )
     logger.info(f"[{req_id()}] Login successful for {user_with_realm}")
     return resp
