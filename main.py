@@ -350,7 +350,7 @@ TPL_HOME = """
     <h4>Bulk Actions</h4>
     <div class="btn-group">
   <button id="btnStart" type="button" disabled title="Start each selected VM">Start</button>
-  <button id="btnReboot" type="button" class="btn-danger" disabled title="Graceful reboot each selected VM">Reboot</button>
+  <button id="btnPoweroff" type="button" class="btn-danger" disabled title="Power off (stop) each selected VM">Poweroff</button>
     </div>
     <div class="small-group">
   <button id="selectAllBtn" type="button" title="Select all visible VMs">Select All</button>
@@ -387,7 +387,7 @@ TPL_HOME = """
    const dockClear = document.getElementById('dockClear');
   // Fixed-height dock (no resize)
   const btnStart = document.getElementById('btnStart');
-  const btnReboot = document.getElementById('btnReboot');
+  const btnPoweroff = document.getElementById('btnPoweroff');
   const hiddenAction = document.getElementById('hiddenBulkAction');
    const LOG_KEY = 'activityLogLines';
    function ts(){ return new Date().toISOString(); }
@@ -419,7 +419,7 @@ TPL_HOME = """
     function updateBulkButtons(){
       const any = !!document.querySelector('.vm-item input[type=checkbox]:checked');
       if(btnStart) btnStart.disabled = !any;
-      if(btnReboot) btnReboot.disabled = !any;
+  if(btnPoweroff) btnPoweroff.disabled = !any;
     }
   const vmCheckboxes = document.querySelectorAll('.vm-item input[type=checkbox]');
   vmCheckboxes.forEach(cb=>{ cb.addEventListener('change', updateBulkButtons); });
@@ -538,7 +538,7 @@ TPL_HOME = """
     }
   }
   btnStart && btnStart.addEventListener('click', ()=>triggerAction('start'));
-  btnReboot && btnReboot.addEventListener('click', ()=>triggerAction('reboot'));
+  btnPoweroff && btnPoweroff.addEventListener('click', ()=>triggerAction('poweroff'));
  })();
 </script>
 {% endblock %}
@@ -854,29 +854,30 @@ def bulk_action():
       node, vtype, vmid = item.split("|")
       current_status = status_map.get((node, vmid))
       logger.info(f"[{req_id()}] Bulk item action={action} node={node} vmid={vmid} type={vtype} current_status={current_status}")
-      if action == "reboot":
+      if action in ("poweroff", "reboot"):
+        # Only attempt stop if currently running. Note: QEMU 'stop' is immediate poweroff; use 'shutdown' for graceful ACPI.
         if current_status and current_status != "running":
           skipped += 1
           skip_details.append(f"{node}/{vmid} skipped (not running)")
           continue
         if vtype == "qemu":
-          path = f"/nodes/{node}/qemu/{vmid}/status/reboot"
+          path = f"/nodes/{node}/qemu/{vmid}/status/stop"
         elif vtype == "lxc":
-          path = f"/nodes/{node}/lxc/{vmid}/status/reboot"
+          path = f"/nodes/{node}/lxc/{vmid}/status/stop"
         else:
-          logger.warning(f"[{req_id()}] Unsupported VM type for reboot: {vtype} ({item})")
+          logger.warning(f"[{req_id()}] Unsupported VM type for poweroff: {vtype} ({item})")
           failed += 1
           continue
-        logger.info(f"[{req_id()}] Sending reboot request path={path}")
+        logger.info(f"[{req_id()}] Sending poweroff request path={path}")
         r = proxmox_post(path, data={}, cookies=cookies, headers=headers)
         if r.ok:
           done += 1
-          success_details.append(f"{node}/{vmid} reboot ok")
+          success_details.append(f"{node}/{vmid} poweroff ok")
         else:
           failed += 1
           reason = f"HTTP {r.status_code}"
-          failure_details.append(f"{node}/{vmid} reboot failed ({reason})")
-          logger.warning(f"[{req_id()}] Reboot failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
+          failure_details.append(f"{node}/{vmid} poweroff failed ({reason})")
+          logger.warning(f"[{req_id()}] Poweroff failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
       elif action == "start":
         if current_status and current_status == "running":
           skipped += 1

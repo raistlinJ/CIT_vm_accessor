@@ -34,10 +34,12 @@ services:
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-now}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEBUG_HTTP=${DEBUG_HTTP:-false}
-    extra_hosts:
-      # Force PROXMOX_HOST name to resolve to the Docker host's gateway IP (Linux)
-      # Ensure PROXMOX_HOST is set to your actual Proxmox FQDN so browser redirects and cookies match
-      - "${PROXMOX_HOST:-host.docker.internal}:${DOCKER_HOST_GATEWAY:-host-gateway}"
+  # NOTE: Removed extra_hosts override that mapped PROXMOX_HOST to "host-gateway".
+  # On Docker Desktop (macOS/Windows) the special token 'host-gateway' may not resolve,
+  # producing "Temporary failure in name resolution" when Python tries to resolve the host.
+  # If you actually need to override DNS (e.g. internal LAN name), uncomment and set an IP:
+  # extra_hosts:
+  #   - "${PROXMOX_HOST}:192.168.1.10"   # Replace with real Proxmox IP
     ports:
       # Map host 8080 -> container 8080 (application HTTP)
       - "8080:8080"
