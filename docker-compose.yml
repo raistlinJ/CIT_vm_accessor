@@ -27,8 +27,8 @@ services:
     environment:
       # App listens on plain HTTP 8080 inside container
       - PORT=8080
-      - PROXMOX_HOST=${PROXMOX_HOST:-acostanet.ddns.net}
-      - PROXMOX_PORT=${PROXMOX_PORT:-64646}
+      - PROXMOX_HOST=${PROXMOX_HOST:-arlsouth4.utep.edu}
+      - PROXMOX_PORT=${PROXMOX_PORT:-8006}
       - PROXMOX_REALM=${PROXMOX_REALM:-pam}
       - VERIFY_SSL=${VERIFY_SSL:-false}
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-now}
@@ -40,9 +40,9 @@ services:
   # If you actually need to override DNS (e.g. internal LAN name), uncomment and set an IP:
   # extra_hosts:
   #   - "${PROXMOX_HOST}:192.168.1.10"   # Replace with real Proxmox IP
+    # Bind app only on loopback so nginx (host network) can reach it, not exposed externally
     ports:
-      # Map host 8080 -> container 8080 (application HTTP)
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     # Note: TLS termination should be handled by a reverse proxy (e.g. nginx) — waitress doesn't serve HTTPS.
     restart: unless-stopped
   # If Proxmox is only bound to 127.0.0.1 or a host-only interface, consider host networking instead:
@@ -59,11 +59,8 @@ services:
       - certs:/etc/nginx/certs:ro
       # Mount only the server snippet (default nginx.conf in image stays intact)
       - ./deploy/proxmox.conf:/etc/nginx/conf.d/proxmox.conf:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      # Expose TLS proxy on host 8443
-      - "8443:443"
+    # Use host networking so proxy can reach localhost:8006 and localhost:8080 reliably
+    network_mode: host
     restart: unless-stopped
 
 volumes:

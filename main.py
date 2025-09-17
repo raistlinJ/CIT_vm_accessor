@@ -813,10 +813,17 @@ def open_console():
   if not node or not vmid.isdigit():
     return redirect(url_for("home"))
 
-  h = session.get("pve_host", PROXMOX_HOST)
-  p = session.get("pve_port", PROXMOX_PORT)
-  console_url = f"https://{h}:{p}/?console=kvm&novnc=1&node={urllib.parse.quote(node)}&vmid={vmid}&resize=scale"
-  logger.info(f"[{req_id()}] Redirecting to console vmid={vmid} node={node} -> {console_url}")
+  # Route the console through our nginx proxy on this same origin using /proxmox/
+  # This avoids the browser needing to reach host.docker.internal or non-443 ports.
+  qs = urllib.parse.urlencode({
+    "console": "kvm",
+    "novnc": "1",
+    "node": node,
+    "vmid": vmid,
+    "resize": "scale",
+  })
+  console_url = f"/proxmox/?{qs}"
+  logger.info(f"[{req_id()}] Redirecting to console via proxy vmid={vmid} node={node} -> {console_url}")
   return redirect(console_url, code=302)
 
 @app.route("/bulk", methods=["POST"])
