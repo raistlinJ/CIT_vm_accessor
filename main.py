@@ -682,34 +682,52 @@ def login():
     session["pve_csrf"] = csrf
 
     resp = make_response(redirect(url_for("home")))
-    # Set the same cookies that the Proxmox GUI would set, so the browser can access :8006
-    # NOTE: Cookies are host-wide (not port-specific), so setting for the host allows 8006 to receive them.
-    domain = cookie_host()
+    # Set cookies so the browser will send them back to our proxy paths on the same origin (host-only cookies).
+    # Also, optionally set domain cookies for the Proxmox host to support direct access scenarios.
+    proxmox_domain = cookie_host()
+    forwarded_host = (request.headers.get("X-Forwarded-Host") or request.host or "").split(",")[0].strip()
+    app_host = forwarded_host.split(":")[0]
 
-    # Safer defaults: HttpOnly; SameSite=Lax (works for same-site 8006)
-    # If you run this app behind HTTPS, you can set "secure=True".
-    secure_flag = request.is_secure or (
-      request.headers.get("X-Forwarded-Proto", "").lower() == "https"
-    )
-
+    secure_flag = request.is_secure or (request.headers.get("X-Forwarded-Proto", "").lower() == "https")
     same_site_mode = "None" if EMBED_COOKIES else "Lax"
+    secure_effective = True if same_site_mode == "None" else secure_flag
+
+    # 1) Host-only cookies for the current app origin (no domain parameter)
     resp.set_cookie(
       "PVEAuthCookie",
       ticket,
-      domain=domain,
       path="/",
       httponly=True,
       samesite=same_site_mode,
-      secure=True if same_site_mode == "None" else secure_flag,
+      secure=secure_effective,
     )
     resp.set_cookie(
       "CSRFPreventionToken",
       csrf,
-      domain=domain,
       path="/",
       samesite=same_site_mode,
-      secure=True if same_site_mode == "None" else secure_flag,
+      secure=secure_effective,
     )
+
+    # 2) Additionally set cookies scoped to the Proxmox host domain (if different), for flexibility
+    if proxmox_domain and proxmox_domain != app_host:
+      resp.set_cookie(
+        "PVEAuthCookie",
+        ticket,
+        domain=proxmox_domain,
+        path="/",
+        httponly=True,
+        samesite=same_site_mode,
+        secure=secure_effective,
+      )
+      resp.set_cookie(
+        "CSRFPreventionToken",
+        csrf,
+        domain=proxmox_domain,
+        path="/",
+        samesite=same_site_mode,
+        secure=secure_effective,
+      )
     logger.info(f"[{req_id()}] Login successful for {user_with_realm}")
     return resp
   except Exception as e:
@@ -728,9 +746,13 @@ def login():
 def logout():
     session.clear()
     resp = make_response(redirect(url_for("login")))
-    domain = cookie_host()
+    proxmox_domain = cookie_host()
     for cname in ("PVEAuthCookie", "CSRFPreventionToken"):
-        resp.set_cookie(cname, "", domain=domain, path="/", expires=0)
+        # Clear host-only cookie
+        resp.set_cookie(cname, "", path="/", expires=0)
+        # Clear domain cookie (if any)
+        if proxmox_domain:
+            resp.set_cookie(cname, "", domain=proxmox_domain, path="/", expires=0)
     return resp
 
 @app.route("/")
