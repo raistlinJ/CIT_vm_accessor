@@ -2,6 +2,7 @@
 # Author: Jaime Acosta
  
 import os
+import functools
 import json
 import urllib.parse
 import logging
@@ -613,15 +614,52 @@ def assign_request_id():
 
 # ---------- Routes ----------
 
+def require_session(api: bool = False):
+  """Decorator to ensure an active (and not soft-expired) Proxmox session.
+  If api=True, returns JSON errors; otherwise redirects to login (with force on soft expiry).
+  Soft expiry set to 110 minutes to preempt default Proxmox ticket timeout (~120m)."""
+  def deco(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+      ticket = session.get("pve_ticket")
+      if not ticket:
+        if api:
+          return jsonify({"error": "unauthorized"}), 401
+        return redirect(url_for("login"))
+      issued = session.get("pve_login_time")
+      if issued and (time.time() - issued) > (110*60):
+        if api:
+          return jsonify({"error": "expired"}), 401
+        return redirect(url_for("login", force=1))
+      return fn(*args, **kwargs)
+    return wrapper
+  return deco
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
   if request.method == "GET":
+    force = request.args.get("force") == "1"
+    if force:
+      # Clear session & cookies to avoid stale ticket collisions
+      old_domain = session.get("pve_host") or PROXMOX_HOST
+      session.clear()
+      resp = make_response(render_template_string(
+        TPL_LOGIN,
+        host=PROXMOX_HOST,
+        realm=PROXMOX_REALM,
+        api=BASE_API,
+        notice="Session reset. Please log in again.",
+      ))
+      for cname in ("PVEAuthCookie", "CSRFPreventionToken"):
+        resp.set_cookie(cname, "", path="/", expires=0)
+        resp.set_cookie(cname, "", domain=old_domain, path="/", expires=0)
+      return resp
     return render_template_string(
       TPL_LOGIN,
       host=session.get("pve_host", PROXMOX_HOST),
-  port=session.get("pve_port", PROXMOX_PORT),
+      port=session.get("pve_port", PROXMOX_PORT),
       realm=session.get("pve_realm", PROXMOX_REALM),
-  verify_ssl=session.get("pve_verify_ssl", VERIFY_SSL),
+      verify_ssl=session.get("pve_verify_ssl", VERIFY_SSL),
       username="",
       error=None,
     )
@@ -660,27 +698,23 @@ def login():
   # Compose full user with realm
   user_with_realm = f"{username}@{realm_override}"
   try:
-    logger.debug(
-      f"[{req_id()}] Attempting login for user={username!r} realm={PROXMOX_REALM}"
-    )
-    r = proxmox_post(
-      "/access/ticket", data={"username": user_with_realm, "password": password}
-    )
+    logger.debug(f"[{req_id()}] Attempting login for user={username!r} realm={PROXMOX_REALM}")
+    r = proxmox_post("/access/ticket", data={"username": user_with_realm, "password": password})
     logger.debug(f"[{req_id()}] /access/ticket status={r.status_code}")
     r.raise_for_status()
     payload = r.json()
     data = payload.get("data", {})
     ticket = data.get("ticket")
     csrf = data.get("CSRFPreventionToken")
-
     if not ticket or not csrf:
       raise ValueError("Missing ticket or CSRF token in response.")
-
     # Persist minimal session state
     session["pve_user"] = user_with_realm
     session["pve_ticket"] = ticket
     session["pve_csrf"] = csrf
-
+    session["pve_login_time"] = time.time()
+    session["pve_host"] = host_override
+    session["pve_port"] = port_override
     resp = make_response(redirect(url_for("home")))
     # Set cookies so the browser will send them back to our proxy paths on the same origin (host-only cookies).
     # Also, optionally set domain cookies for the Proxmox host to support direct access scenarios.
@@ -691,6 +725,12 @@ def login():
     secure_flag = request.is_secure or (request.headers.get("X-Forwarded-Proto", "").lower() == "https")
     same_site_mode = "None" if EMBED_COOKIES else "Lax"
     secure_effective = True if same_site_mode == "None" else secure_flag
+
+    # Purge old cookies (host + domain) to prevent stale ordering issues
+    for cname in ("PVEAuthCookie", "CSRFPreventionToken"):
+      resp.set_cookie(cname, "", path="/", expires=0)
+      if proxmox_domain and proxmox_domain != app_host:
+        resp.set_cookie(cname, "", domain=proxmox_domain, path="/", expires=0)
 
     # 1) Host-only cookies for the current app origin (no domain parameter)
     resp.set_cookie(
@@ -729,17 +769,48 @@ def login():
         secure=secure_effective,
       )
     logger.info(f"[{req_id()}] Login successful for {user_with_realm}")
+    # Post-login validation: ensure ticket actually works
+    try:
+      vr = proxmox_get("/version", cookies={"PVEAuthCookie": ticket}, headers={"CSRFPreventionToken": csrf})
+      if not vr.ok:
+        logger.warning(f"[{req_id()}] Post-login validation failed status={vr.status_code}")
+        session.clear()
+        for cname in ("PVEAuthCookie", "CSRFPreventionToken"):
+          resp.set_cookie(cname, "", path="/", expires=0)
+        return render_template_string(
+          TPL_LOGIN,
+          host=host_override,
+          port=port_override,
+          realm=realm_override,
+          verify_ssl=verify_override,
+          username=username,
+          error=f"Ticket validation failed (HTTP {vr.status_code}). Please retry.",
+        )
+    except Exception:
+      logger.exception(f"[{req_id()}] Post-login validation exception")
+      session.clear()
+      for cname in ("PVEAuthCookie", "CSRFPreventionToken"):
+        resp.set_cookie(cname, "", path="/", expires=0)
+      return render_template_string(
+        TPL_LOGIN,
+        host=host_override,
+        port=port_override,
+        realm=realm_override,
+        verify_ssl=verify_override,
+        username=username,
+        error="Ticket validation exception; please login again.",
+      )
     return resp
   except Exception as e:
     logger.exception(f"[{req_id()}] Login failed for {user_with_realm}")
     return render_template_string(
-  TPL_LOGIN,
-  host=host_override,
-  port=port_override,
-  realm=realm_override,
-  verify_ssl=verify_override,
-  username=username,
-  error=f"Login failed (Request ID: {req_id()}): {e}",
+      TPL_LOGIN,
+      host=host_override,
+      port=port_override,
+      realm=realm_override,
+      verify_ssl=verify_override,
+      username=username,
+      error=f"Login failed (Request ID: {req_id()}): {e}",
     )
 
 @app.route("/logout")
@@ -756,21 +827,24 @@ def logout():
     return resp
 
 @app.route("/")
+@require_session()
 def home():
-  if not session.get("pve_ticket"):
-    return redirect(url_for("login"))
 
   # Show user's visible non-template VMs
   vms = []
   try:
-    cookies = {"PVEAuthCookie": session["pve_ticket"]}
-    headers = {"CSRFPreventionToken": session["pve_csrf"]}
+    cookies = {"PVEAuthCookie": session.get("pve_ticket")}
+    headers = {"CSRFPreventionToken": session.get("pve_csrf")}
     r = proxmox_get(
       "/cluster/resources",
       params={"type": "vm"},
       cookies=cookies,
       headers=headers,
     )
+    if r.status_code == 401:
+      logger.info(f"[{req_id()}] Upstream 401 listing VMs; forcing relogin")
+      session.clear()
+      return redirect(url_for("login", force=1))
     if r.ok:
       vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
     else:
@@ -821,9 +895,8 @@ def home():
   )
 
 @app.route("/open", methods=["GET", "POST"])
+@require_session()
 def open_console():
-  if not session.get("pve_ticket"):
-    return redirect(url_for("login"))
 
   if request.method == "POST":
     node = (request.form.get("node") or "").strip()
@@ -849,9 +922,8 @@ def open_console():
   return redirect(console_url, code=302)
 
 @app.route("/bulk", methods=["POST"])
+@require_session()
 def bulk_action():
-  if not session.get("pve_ticket"):
-    return redirect(url_for("login"))
   action = (request.form.get("action") or "").lower().strip()
   selections = request.form.getlist("vms")
   if not action or not selections:
@@ -944,9 +1016,8 @@ def bulk_action():
 
 # Lightweight API endpoint returning current non-template VM statuses (used by JS refresh)
 @app.route("/api/vms", methods=["GET"])
+@require_session(api=True)
 def api_vms():
-  if not session.get("pve_ticket"):
-    return jsonify({"error": "unauthorized"}), 401
   cookies = {"PVEAuthCookie": session.get("pve_ticket")}
   headers = {"CSRFPreventionToken": session.get("pve_csrf")}
   try:
