@@ -294,6 +294,32 @@ TPL_LOGIN = """
 {% endblock %}
 """
 
+TPL_SESSION_RESET = """
+{% extends "base.html" %}
+{% block content %}
+<h2>{{ title or "Session Reset" }}</h2>
+<p class="muted" style="margin:.4rem 0 1rem">{{ message }}</p>
+<div class="notice" style="max-width:420px">
+  You will be redirected to the sign-in page in <strong><span id="redirectCountdown">5</span> seconds</strong>.
+  <br/>If nothing happens, <a href="{{ login_url }}">click here</a>.
+</div>
+<script>
+(function(){
+  var remaining = 5;
+  var el = document.getElementById('redirectCountdown');
+  var timer = setInterval(function(){
+    remaining -= 1;
+    if(el && remaining >= 0){ el.textContent = remaining; }
+    if(remaining <= 0){
+      clearInterval(timer);
+      window.location.href = {{ login_url|tojson }};
+    }
+  }, 1000);
+})();
+</script>
+{% endblock %}
+"""
+
 TPL_HOME = """
 {% extends "base.html" %}
 {% block content %}
@@ -452,7 +478,47 @@ TPL_HOME = """
   // Disable buttons but keep their labels unchanged
   setTimeout(()=>{ setBusy(true); addLog('Bulk action submitted (deferred disable)','info'); }, 25);
     }); }
-   async function doRefresh(){ if(!refreshBtn) return; setBusy(true,'Refreshing...'); try { const r= await fetch('{{ url_for('api_vms') }}',{headers:{'Accept':'application/json'}}); if(!r.ok) throw new Error('HTTP '+r.status); const data= await r.json(); let updated=0; (data.vms||[]).forEach(vm=>{ const id='vm-status-'+vm.node+'-'+vm.vmid; const el=document.getElementById(id); if(el){ const old=el.textContent; if(old!==vm.status){ el.textContent=vm.status; el.className='vm-status '+vm.status+' changed'; setTimeout(()=>{ el.classList.remove('changed'); },1200); } updated++; } }); if(refreshMeta){ refreshMeta.textContent='Updated '+updated+' • '+(new Date()).toLocaleTimeString(); } addLog('Refresh completed ('+updated+' statuses)','info'); } catch(e){ addLog('Refresh failed: '+e.message,'error'); if(refreshMeta){ refreshMeta.textContent='Refresh failed'; } } finally { setBusy(false); } }
+   async function doRefresh(){
+     if(!refreshBtn) return;
+     setBusy(true,'Refreshing...');
+     try {
+       const r = await fetch('{{ url_for('api_vms') }}',{headers:{'Accept':'application/json'}});
+       if(r.status === 401){
+         let redirectTarget = '{{ url_for('session_reset', reason='invalid') }}';
+         try {
+           const data = await r.json();
+           if(data && data.redirect){ redirectTarget = data.redirect; }
+         } catch(ignore){}
+         addLog('Session expired; redirecting to sign-in','warn');
+         if(refreshMeta){ refreshMeta.textContent='Session expired'; }
+         setTimeout(()=>{ window.location.href = redirectTarget; }, 250);
+         return;
+       }
+       if(!r.ok) throw new Error('HTTP '+r.status);
+       const data = await r.json();
+       let updated=0;
+       (data.vms||[]).forEach(vm=>{
+         const id='vm-status-'+vm.node+'-'+vm.vmid;
+         const el=document.getElementById(id);
+         if(el){
+           const old=el.textContent;
+           if(old!==vm.status){
+             el.textContent=vm.status;
+             el.className='vm-status '+vm.status+' changed';
+             setTimeout(()=>{ el.classList.remove('changed'); },1200);
+           }
+           updated++;
+         }
+       });
+       if(refreshMeta){ refreshMeta.textContent='Updated '+updated+' • '+(new Date()).toLocaleTimeString(); }
+       addLog('Refresh completed ('+updated+' statuses)','info');
+     } catch(e){
+       addLog('Refresh failed: '+e.message,'error');
+       if(refreshMeta){ refreshMeta.textContent='Refresh failed'; }
+     } finally {
+       setBusy(false);
+     }
+   }
    if(refreshBtn){ refreshBtn.addEventListener('click', doRefresh); }
   const lastAction = {{ last_action_json|safe }}; if(lastAction && lastAction.action){ addLog('Bulk '+lastAction.action+' summary: '+(lastAction.done||0)+' ok, '+(lastAction.failed||0)+' failed'+(lastAction.skipped?(', '+lastAction.skipped+' skipped'):'') , (parseInt(lastAction.failed||0)>0)?'warn':'success'); }
   const params = new URLSearchParams(window.location.search);
@@ -625,12 +691,14 @@ def require_session(api: bool = False):
       if not ticket:
         if api:
           return jsonify({"error": "unauthorized"}), 401
-        return redirect(url_for("login"))
+        session.clear()
+        return redirect(url_for("session_reset", reason="missing"))
       issued = session.get("pve_login_time")
       if issued and (time.time() - issued) > (110*60):
         if api:
           return jsonify({"error": "expired"}), 401
-        return redirect(url_for("login", force=1))
+        session.clear()
+        return redirect(url_for("session_reset", reason="expired"))
       return fn(*args, **kwargs)
     return wrapper
   return deco
@@ -826,6 +894,34 @@ def logout():
             resp.set_cookie(cname, "", domain=proxmox_domain, path="/", expires=0)
     return resp
 
+@app.route("/session-reset")
+def session_reset():
+    reason = request.args.get("reason", "expired")
+    title_map = {
+      "missing": "Session Required",
+      "expired": "Session Expired",
+      "invalid": "Session Invalid",
+    }
+    message_map = {
+      "missing": "We couldn't find an active session. Please sign in again to continue.",
+      "expired": "Your login session has timed out. Please sign in again to continue.",
+      "invalid": "Your Proxmox token is no longer valid. Please sign in again to continue.",
+    }
+    login_url = url_for("login", force=1)
+    proxmox_domain = cookie_host()
+    session.clear()
+    resp = make_response(render_template_string(
+      TPL_SESSION_RESET,
+      title=title_map.get(reason, "Session Reset"),
+      message=message_map.get(reason, "Please sign in again."),
+      login_url=login_url,
+    ))
+    for cname in ("PVEAuthCookie", "CSRFPreventionToken"):
+      resp.set_cookie(cname, "", path="/", expires=0)
+      if proxmox_domain:
+        resp.set_cookie(cname, "", domain=proxmox_domain, path="/", expires=0)
+    return resp
+
 @app.route("/")
 @require_session()
 def home():
@@ -842,9 +938,9 @@ def home():
       headers=headers,
     )
     if r.status_code == 401:
-      logger.info(f"[{req_id()}] Upstream 401 listing VMs; forcing relogin")
+      logger.info(f"[{req_id()}] Upstream 401 listing VMs; forcing session reset")
       session.clear()
-      return redirect(url_for("login", force=1))
+      return redirect(url_for("session_reset", reason="invalid"))
     if r.ok:
       vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
     else:
@@ -945,6 +1041,10 @@ def bulk_action():
       cookies=cookies,
       headers=headers,
     )
+    if rs.status_code == 401:
+      logger.info(f"[{req_id()}] Upstream 401 while preparing bulk action; forcing session reset")
+      session.clear()
+      return redirect(url_for("session_reset", reason="invalid"))
     if rs.ok:
       for row in rs.json().get("data", []):
         status_map[(row.get("node"), str(row.get("vmid")))] = row.get("status")
@@ -971,6 +1071,10 @@ def bulk_action():
           continue
         logger.info(f"[{req_id()}] Sending poweroff request path={path}")
         r = proxmox_post(path, data={}, cookies=cookies, headers=headers)
+        if r.status_code == 401:
+          logger.info(f"[{req_id()}] Poweroff unauthorized vmid={vmid} node={node}; forcing session reset")
+          session.clear()
+          return redirect(url_for("session_reset", reason="invalid"))
         if r.ok:
           done += 1
           success_details.append(f"{node}/{vmid} poweroff ok")
@@ -994,6 +1098,10 @@ def bulk_action():
           continue
         logger.info(f"[{req_id()}] Sending start request path={path}")
         r = proxmox_post(path, data={}, cookies=cookies, headers=headers)
+        if r.status_code == 401:
+          logger.info(f"[{req_id()}] Start unauthorized vmid={vmid} node={node}; forcing session reset")
+          session.clear()
+          return redirect(url_for("session_reset", reason="invalid"))
         if r.ok:
           done += 1
           success_details.append(f"{node}/{vmid} start ok")
@@ -1027,6 +1135,9 @@ def api_vms():
       cookies=cookies,
       headers=headers,
     )
+    if r.status_code == 401:
+      session.clear()
+      return jsonify({"error": "unauthorized", "redirect": url_for("session_reset", reason="invalid")}), 401
     if not r.ok:
       return jsonify({"error": "upstream", "status": r.status_code}), 502
     data = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
