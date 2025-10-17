@@ -326,9 +326,9 @@ TPL_HOME = """
 <h2>Open a VM Console</h2>
 <p class="muted" style="margin-top:.1rem">Select VMs below. Click a VM card to open its console in a popup. Use bulk actions for management.</p>
 <div class="top-controls" style="margin:0 0 1rem; display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; justify-content:flex-end;">
-  <div style="display:flex; gap:.5rem; align-items:center;">
+  <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
+    <small class="muted" id="refreshMeta" aria-live="polite">Last refresh: never</small>
     <button type="button" id="refreshBtn" title="Refresh VM statuses">Refresh Status</button>
-    <small class="muted" id="refreshMeta"></small>
   </div>
 </div>
  {% if request.args.get('bulk') %}
@@ -480,7 +480,7 @@ TPL_HOME = """
     }); }
    async function doRefresh(){
      if(!refreshBtn) return;
-     setBusy(true,'Refreshing...');
+  setBusy(true);
      try {
        const r = await fetch('{{ url_for('api_vms') }}',{headers:{'Accept':'application/json'}});
        if(r.status === 401){
@@ -490,13 +490,13 @@ TPL_HOME = """
            if(data && data.redirect){ redirectTarget = data.redirect; }
          } catch(ignore){}
          addLog('Session expired; redirecting to sign-in','warn');
-         if(refreshMeta){ refreshMeta.textContent='Session expired'; }
+         if(refreshMeta){ refreshMeta.textContent='Session expired; redirecting…'; }
          setTimeout(()=>{ window.location.href = redirectTarget; }, 250);
          return;
        }
-       if(!r.ok) throw new Error('HTTP '+r.status);
-       const data = await r.json();
-       let updated=0;
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const data = await r.json();
+  let updated=0;
        (data.vms||[]).forEach(vm=>{
          const id='vm-status-'+vm.node+'-'+vm.vmid;
          const el=document.getElementById(id);
@@ -510,11 +510,15 @@ TPL_HOME = """
            updated++;
          }
        });
-       if(refreshMeta){ refreshMeta.textContent='Updated '+updated+' • '+(new Date()).toLocaleTimeString(); }
+       if(refreshMeta){
+         const stamp = (new Date()).toLocaleTimeString();
+         const label = updated === 1 ? 'status' : 'statuses';
+         refreshMeta.textContent='Last refresh: '+stamp+' • '+updated+' '+label+' updated';
+       }
        addLog('Refresh completed ('+updated+' statuses)','info');
      } catch(e){
-       addLog('Refresh failed: '+e.message,'error');
-       if(refreshMeta){ refreshMeta.textContent='Refresh failed'; }
+  addLog('Refresh failed: '+e.message,'error');
+  if(refreshMeta){ refreshMeta.textContent='Last refresh failed'; }
      } finally {
        setBusy(false);
      }
