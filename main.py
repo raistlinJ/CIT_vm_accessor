@@ -377,6 +377,7 @@ TPL_HOME = """
       {% endfor %}
       </div>
       <input type="hidden" name="action" value="" id="hiddenBulkAction" />
+      <input type="hidden" name="snapshot" value="" id="hiddenSnapshot" />
     </form>
   </div>
   <div class="action-frame" aria-label="Bulk VM Actions">
@@ -384,6 +385,11 @@ TPL_HOME = """
     <div class="btn-group">
   <button id="btnStart" type="button" disabled title="Start each selected VM">Start</button>
   <button id="btnPoweroff" type="button" class="btn-danger" disabled title="Power off (stop) each selected VM">Poweroff</button>
+  <button id="btnRestore" type="button" class="btn-danger" disabled title="Rollback each selected VM to its newest snapshot">Factory-Reset</button>
+    </div>
+    <div style="margin:.4rem 0 .2rem; display:grid; gap:.35rem;">
+      <label style="font-size:.62rem; letter-spacing:.5px; text-transform:uppercase; font-weight:600; color:#b9d7e8;">Snapshot name (optional)</label>
+      <input id="snapshotInput" type="text" placeholder="Leave blank to use newest snapshot" style="margin:0; padding:.45rem .55rem; border-radius:8px; border:1px solid #1e4a62; background:#0f2a3b; color:#e7f6ff;" />
     </div>
     <div class="small-group">
   <button id="selectAllBtn" type="button" title="Select all visible VMs">Select All</button>
@@ -409,6 +415,7 @@ TPL_HOME = """
 </div>
 </div>
 {% endif %}
+<div id="appConfig" data-api-vms="{{ url_for('api_vms') }}" data-session-reset="{{ url_for('session_reset', reason='invalid') }}" style="display:none"></div>
 <script id="lastActionJson" type="application/json">{{ last_action|tojson }}</script>
 <div id="progressOverlay" class="progress-overlay" role="dialog" aria-modal="true" aria-live="polite" aria-hidden="true">
   <div class="progress-card">
@@ -428,10 +435,16 @@ TPL_HOME = """
    const dockClear = document.getElementById('dockClear');
   const progressOverlay = document.getElementById('progressOverlay');
   const progressMessage = document.getElementById('progressMessage');
+  const appConfig = document.getElementById('appConfig');
+  const apiVmsUrl = (appConfig && appConfig.dataset && appConfig.dataset.apiVms) ? appConfig.dataset.apiVms : '/api/vms';
+  const sessionResetUrl = (appConfig && appConfig.dataset && appConfig.dataset.sessionReset) ? appConfig.dataset.sessionReset : '/session-reset?reason=invalid';
   // Fixed-height dock (no resize)
   const btnStart = document.getElementById('btnStart');
   const btnPoweroff = document.getElementById('btnPoweroff');
+  const btnRestore = document.getElementById('btnRestore');
   const hiddenAction = document.getElementById('hiddenBulkAction');
+  const hiddenSnapshot = document.getElementById('hiddenSnapshot');
+  const snapshotInput = document.getElementById('snapshotInput');
    const LOG_KEY = 'activityLogLines';
    function ts(){ return new Date().toISOString(); }
    function addLog(msg,type){
@@ -463,9 +476,16 @@ TPL_HOME = """
       const any = !!document.querySelector('.vm-item input[type=checkbox]:checked');
       if(btnStart) btnStart.disabled = !any;
   if(btnPoweroff) btnPoweroff.disabled = !any;
+      if(btnRestore){
+        btnRestore.disabled = !any;
+      }
     }
+        const confirmMsg = (actionBtn === 'restore-all')
+          ? 'RESTORE WARNING: This will revert selected VMs to a snapshot and all current data will be removed.\nProceed with RESTORE on '+selected.length+' VM(s)?\nVMIDs: '+previewList
+          : 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\nVMIDs: '+previewList; 
   const vmCheckboxes = document.querySelectorAll('.vm-item input[type=checkbox]');
   vmCheckboxes.forEach(cb=>{ cb.addEventListener('change', updateBulkButtons); });
+  if(snapshotInput){ snapshotInput.addEventListener('input', updateBulkButtons); }
   updateBulkButtons();
   // Select / Deselect all controls
   const selectAllBtn = document.getElementById('selectAllBtn');
@@ -514,9 +534,9 @@ TPL_HOME = """
   setBusy(true);
   showProgress('Refreshing VM status…');
      try {
-       const r = await fetch('{{ url_for('api_vms') }}',{headers:{'Accept':'application/json'}});
+       const r = await fetch(apiVmsUrl,{headers:{'Accept':'application/json'}});
        if(r.status === 401){
-         let redirectTarget = '{{ url_for('session_reset', reason='invalid') }}';
+         let redirectTarget = sessionResetUrl;
          try {
            const data = await r.json();
            if(data && data.redirect){ redirectTarget = data.redirect; }
@@ -635,6 +655,12 @@ TPL_HOME = """
   updateBulkButtons();
   function triggerAction(action){
     if(!bulkForm) return;
+    if(action === 'restore-all'){
+      const snap = snapshotInput ? snapshotInput.value.trim() : '';
+      if(hiddenSnapshot) hiddenSnapshot.value = snap;
+    } else {
+      if(hiddenSnapshot) hiddenSnapshot.value = '';
+    }
     hiddenAction.value = action;
     showProgress('Submitting '+action+' request…');
     let canceled = false;
@@ -651,6 +677,7 @@ TPL_HOME = """
   }
   btnStart && btnStart.addEventListener('click', ()=>triggerAction('start'));
   btnPoweroff && btnPoweroff.addEventListener('click', ()=>triggerAction('poweroff'));
+  btnRestore && btnRestore.addEventListener('click', ()=>triggerAction('restore-all'));
  })();
 </script>
 {% endblock %}
@@ -1066,6 +1093,7 @@ def open_console():
 def bulk_action():
   action = (request.form.get("action") or "").lower().strip()
   selections = request.form.getlist("vms")
+  snapshot = (request.form.get("snapshot") or "").strip()
   if not action or not selections:
     return redirect(url_for("home"))
   done = 0
@@ -1094,6 +1122,38 @@ def bulk_action():
         status_map[(row.get("node"), str(row.get("vmid")))] = row.get("status")
   except Exception:
     logger.warning(f"[{req_id()}] Could not prefetch VM statuses for skip logic")
+
+  def _get_newest_snapshot(node: str, vtype: str, vmid: str):
+    if vtype == "qemu":
+      path = f"/nodes/{node}/qemu/{vmid}/snapshot"
+    elif vtype == "lxc":
+      path = f"/nodes/{node}/lxc/{vmid}/snapshot"
+    else:
+      return None
+    try:
+      rsn = proxmox_get(path, cookies=cookies, headers=headers)
+      if rsn.status_code == 401:
+        logger.info(f"[{req_id()}] Snapshot list unauthorized vmid={vmid} node={node}; forcing session reset")
+        session.clear()
+        return "__unauthorized__"
+      if not rsn.ok:
+        logger.warning(f"[{req_id()}] Snapshot list failed vmid={vmid} node={node} status={rsn.status_code} body={rsn.text[:180]!r}")
+        return None
+      data = rsn.json().get("data", [])
+      # Exclude the implicit 'current' marker
+      snaps = [s for s in data if s.get("name") and s.get("name") != "current"]
+      if not snaps:
+        return None
+      # Prefer newest by snaptime if available
+      snaps_sorted = sorted(
+        snaps,
+        key=lambda s: s.get("snaptime") or 0,
+        reverse=True,
+      )
+      return snaps_sorted[0].get("name")
+    except Exception:
+      logger.exception(f"[{req_id()}] Snapshot list exception vmid={vmid} node={node}")
+      return None
   for item in selections:
     try:
       node, vtype, vmid = item.split("|")
@@ -1154,6 +1214,40 @@ def bulk_action():
           reason = f"HTTP {r.status_code}"
           failure_details.append(f"{node}/{vmid} start failed ({reason})")
           logger.warning(f"[{req_id()}] Start failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
+      elif action == "restore-all":
+        # Roll back to a named snapshot or auto-pick newest
+        snap_name = snapshot
+        if not snap_name:
+          snap_name = _get_newest_snapshot(node, vtype, vmid)
+          if snap_name == "__unauthorized__":
+            return redirect(url_for("session_reset", reason="invalid"))
+        if not snap_name:
+          skipped += 1
+          skip_details.append(f"{node}/{vmid} skipped (no snapshots)")
+          continue
+        if vtype == "qemu":
+          path = f"/nodes/{node}/qemu/{vmid}/snapshot/{snap_name}/rollback"
+        elif vtype == "lxc":
+          path = f"/nodes/{node}/lxc/{vmid}/snapshot/{snap_name}/rollback"
+        else:
+          logger.warning(f"[{req_id()}] Unsupported VM type for restore: {vtype} ({item})")
+          failed += 1
+          continue
+        logger.info(f"[{req_id()}] Sending restore request path={path}")
+        start_flag = 1 if current_status == "running" else 0
+        r = proxmox_post(path, data={"start": start_flag}, cookies=cookies, headers=headers)
+        if r.status_code == 401:
+          logger.info(f"[{req_id()}] Restore unauthorized vmid={vmid} node={node}; forcing session reset")
+          session.clear()
+          return redirect(url_for("session_reset", reason="invalid"))
+        if r.ok:
+          done += 1
+          success_details.append(f"{node}/{vmid} restore ok")
+        else:
+          failed += 1
+          reason = f"HTTP {r.status_code}"
+          failure_details.append(f"{node}/{vmid} restore failed ({reason})")
+          logger.warning(f"[{req_id()}] Restore failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
       else:
         logger.warning(f"[{req_id()}] Unsupported bulk action: {action}")
         failed += 1
