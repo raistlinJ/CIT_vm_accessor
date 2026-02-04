@@ -409,6 +409,7 @@ TPL_HOME = """
 </div>
 </div>
 {% endif %}
+<script id="lastActionJson" type="application/json">{{ last_action|tojson }}</script>
 <div id="progressOverlay" class="progress-overlay" role="dialog" aria-modal="true" aria-live="polite" aria-hidden="true">
   <div class="progress-card">
     <div class="progress-title">Working…</div>
@@ -556,7 +557,12 @@ TPL_HOME = """
      }
    }
    if(refreshBtn){ refreshBtn.addEventListener('click', doRefresh); }
-  const lastAction = {{ last_action|tojson }}; if(lastAction && lastAction.action){ addLog('Bulk '+lastAction.action+' summary: '+(lastAction.done||0)+' ok, '+(lastAction.failed||0)+' failed'+(lastAction.skipped?(', '+lastAction.skipped+' skipped'):'') , (parseInt(lastAction.failed||0)>0)?'warn':'success'); }
+  let lastAction = null;
+  try {
+    const lastActionEl = document.getElementById('lastActionJson');
+    if(lastActionEl && lastActionEl.textContent){ lastAction = JSON.parse(lastActionEl.textContent); }
+  } catch(e){}
+  if(lastAction && lastAction.action){ addLog('Bulk '+lastAction.action+' summary: '+(lastAction.done||0)+' ok, '+(lastAction.failed||0)+' failed'+(lastAction.skipped?(', '+lastAction.skipped+' skipped'):'') , (parseInt(lastAction.failed||0)>0)?'warn':'success'); }
   const params = new URLSearchParams(window.location.search);
   const failListRaw = params.get('fail_list');
   const successListRaw = params.get('success_list');
