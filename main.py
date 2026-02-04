@@ -419,7 +419,7 @@ TPL_HOME = """
 <script id="lastActionJson" type="application/json">{{ last_action|tojson }}</script>
 <div id="progressOverlay" class="progress-overlay" role="dialog" aria-modal="true" aria-live="polite" aria-hidden="true">
   <div class="progress-card">
-    <div class="progress-title">Working…</div>
+    <div class="progress-title">Working...</div>
     <div id="progressMessage" class="progress-msg">Please wait.</div>
     <div class="progress-bar" aria-hidden="true"><span></span></div>
   </div>
@@ -524,14 +524,14 @@ TPL_HOME = """
         return;
       }
       addLog('DEBUG bulk submit (pre) action_btn='+actionBtn+' total_selected='+selected.length+' values=['+selected.join(',')+'] formAction='+bulkForm.getAttribute('action'),'info');
-      showProgress('Submitting '+actionBtn+' for '+selected.length+' VM(s)…');
+      showProgress('Submitting '+actionBtn+' for '+selected.length+' VM(s)...');
   // Disable buttons but keep their labels unchanged
   setTimeout(()=>{ setBusy(true); addLog('Bulk action submitted (deferred disable)','info'); }, 25);
     }); }
    async function doRefresh(){
      if(!refreshBtn) return;
   setBusy(true);
-  showProgress('Refreshing VM status…');
+  showProgress('Refreshing VM status...');
      try {
        const r = await fetch(apiVmsUrl,{headers:{'Accept':'application/json'}});
        if(r.status === 401){
@@ -541,7 +541,7 @@ TPL_HOME = """
            if(data && data.redirect){ redirectTarget = data.redirect; }
          } catch(ignore){}
          addLog('Session expired; redirecting to sign-in','warn');
-         if(refreshMeta){ refreshMeta.textContent='Session expired; redirecting…'; }
+         if(refreshMeta){ refreshMeta.textContent='Session expired; redirecting...'; }
          setTimeout(()=>{ window.location.href = redirectTarget; }, 250);
          return;
        }
@@ -586,9 +586,9 @@ TPL_HOME = """
   const failListRaw = params.get('fail_list');
   const successListRaw = params.get('success_list');
   const skipListRaw = params.get('skip_list');
-  if(successListRaw){ successListRaw.split(';').forEach(s=>{ if(s.trim()) addLog('✔ '+s.trim(),'success'); }); }
-  if(skipListRaw){ skipListRaw.split(';').forEach(s=>{ if(s.trim()) addLog('↷ '+s.trim(),'info'); }); }
-  if(failListRaw){ failListRaw.split(';').forEach(f=>{ if(f.trim()) addLog('✖ '+f.trim(),'error'); }); }
+  if(successListRaw){ successListRaw.split(';').forEach(s=>{ if(s.trim()) addLog('OK '+s.trim(),'success'); }); }
+  if(skipListRaw){ skipListRaw.split(';').forEach(s=>{ if(s.trim()) addLog('SKIP '+s.trim(),'info'); }); }
+  if(failListRaw){ failListRaw.split(';').forEach(f=>{ if(f.trim()) addLog('FAIL '+f.trim(),'error'); }); }
   // Auto-refresh disabled per user request.
 
   // Intercept VM card link clicks to open popup window instead of a new tab
@@ -661,7 +661,7 @@ TPL_HOME = """
       if(hiddenSnapshot) hiddenSnapshot.value = '';
     }
     hiddenAction.value = action;
-    showProgress('Submitting '+action+' request…');
+    showProgress('Submitting '+action+' request...');
     let canceled = false;
     const preValue = hiddenAction.value;
     const evt = new Event('submit', {cancelable:true});
