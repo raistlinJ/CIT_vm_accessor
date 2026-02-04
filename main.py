@@ -480,9 +480,6 @@ TPL_HOME = """
         btnRestore.disabled = !any;
       }
     }
-        const confirmMsg = (actionBtn === 'restore-all')
-          ? 'RESTORE WARNING: This will revert selected VMs to a snapshot and all current data will be removed.\nProceed with RESTORE on '+selected.length+' VM(s)?\nVMIDs: '+previewList
-          : 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\nVMIDs: '+previewList; 
   const vmCheckboxes = document.querySelectorAll('.vm-item input[type=checkbox]');
   vmCheckboxes.forEach(cb=>{ cb.addEventListener('change', updateBulkButtons); });
   if(snapshotInput){ snapshotInput.addEventListener('input', updateBulkButtons); }
@@ -515,7 +512,9 @@ TPL_HOME = """
       // Confirmation dialog before submitting
   const previewList = selected.slice(0,15).map(v=>v.split('|')[2]).join(', ')+(selected.length>15?' ...':'');
   // Use an escaped \\n for readability in the confirm dialog
-  const confirmMsg = 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\\nVMIDs: '+previewList; 
+  const confirmMsg = (actionBtn === 'restore-all')
+    ? 'RESTORE WARNING: This will revert selected VMs to a snapshot and all current data will be removed.\\nProceed with RESTORE on '+selected.length+' VM(s)?\\nVMIDs: '+previewList
+    : 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\\nVMIDs: '+previewList; 
       if(!window.confirm(confirmMsg)){
         ev.preventDefault();
         addLog('Bulk '+actionBtn+' canceled by user','warn');
