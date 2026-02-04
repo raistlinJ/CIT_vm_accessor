@@ -3,7 +3,6 @@
  
 import os
 import functools
-import json
 import urllib.parse
 import logging
 import traceback
@@ -191,6 +190,13 @@ TPL_BASE = """
   .actions-row { margin-top:.4rem; }
   .vm-item:focus-within { outline:2px solid var(--accent); }
   @media (max-width:640px){ .vm-list { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); } }
+  .progress-overlay { position:fixed; inset:0; background:rgba(10,20,30,.45); display:none; align-items:center; justify-content:center; z-index:9999; }
+  .progress-card { background:#0f2434; color:#e7f6ff; border:1px solid #1f4b63; border-radius:12px; padding:1.1rem 1.2rem; min-width:260px; max-width:90vw; box-shadow:0 8px 24px -10px #000a; display:flex; flex-direction:column; gap:.6rem; }
+  .progress-title { font-weight:700; letter-spacing:.4px; font-size:.9rem; }
+  .progress-msg { font-size:.78rem; color:#b6d7e6; }
+  .progress-bar { height:6px; border-radius:6px; background:#12384f; overflow:hidden; }
+  .progress-bar span { display:block; height:100%; width:40%; background:linear-gradient(90deg,#07b36d,#30d08c); animation: progress-indef 1.1s ease-in-out infinite; }
+  @keyframes progress-indef { 0%{ transform:translateX(-60%);} 100%{ transform:translateX(220%);} }
 </style>
 </head>
 <body>
@@ -403,6 +409,13 @@ TPL_HOME = """
 </div>
 </div>
 {% endif %}
+<div id="progressOverlay" class="progress-overlay" role="dialog" aria-modal="true" aria-live="polite" aria-hidden="true">
+  <div class="progress-card">
+    <div class="progress-title">Working…</div>
+    <div id="progressMessage" class="progress-msg">Please wait.</div>
+    <div class="progress-bar" aria-hidden="true"><span></span></div>
+  </div>
+</div>
 <script>
  (function(){
    const bulkForm = document.getElementById('bulkForm');
@@ -412,6 +425,8 @@ TPL_HOME = """
    const dock = document.getElementById('activityDock');
    const dockToggle = document.getElementById('dockToggle');
    const dockClear = document.getElementById('dockClear');
+  const progressOverlay = document.getElementById('progressOverlay');
+  const progressMessage = document.getElementById('progressMessage');
   // Fixed-height dock (no resize)
   const btnStart = document.getElementById('btnStart');
   const btnPoweroff = document.getElementById('btnPoweroff');
@@ -457,6 +472,19 @@ TPL_HOME = """
   selectAllBtn && selectAllBtn.addEventListener('click', ()=>{ vmCheckboxes.forEach(cb=>cb.checked=true); updateBulkButtons(); addLog('All VMs selected','info'); });
   deselectAllBtn && deselectAllBtn.addEventListener('click', ()=>{ vmCheckboxes.forEach(cb=>cb.checked=false); updateBulkButtons(); addLog('All VMs deselected','info'); });
    function setBusy(flag, label){ const btns=document.querySelectorAll('button'); btns.forEach(b=>{ if(flag){ if(!b.dataset.originalText){ b.dataset.originalText=b.textContent; } b.disabled=true; if(label) b.textContent=label; } else { b.disabled=false; if(b.dataset.originalText){ b.textContent=b.dataset.originalText; delete b.dataset.originalText; } } }); }
+   function showProgress(msg){
+     if(progressOverlay){
+       if(progressMessage){ progressMessage.textContent = msg || 'Please wait.'; }
+       progressOverlay.style.display='flex';
+       progressOverlay.setAttribute('aria-hidden','false');
+     }
+   }
+   function hideProgress(){
+     if(progressOverlay){
+       progressOverlay.style.display='none';
+       progressOverlay.setAttribute('aria-hidden','true');
+     }
+   }
   if(bulkForm){ bulkForm.addEventListener('submit', function(ev){
       const selected=[...document.querySelectorAll('.vm-item input[type=checkbox]:checked')].map(cb=>cb.value);
       // Determine action from submitter OR hidden action field (for floating panel submission)
@@ -472,15 +500,18 @@ TPL_HOME = """
         addLog('Bulk '+actionBtn+' canceled by user','warn');
         // clear hidden action so future attempts can set it again
         if(hiddenActionInput) hiddenActionInput.value='';
+        hideProgress();
         return;
       }
       addLog('DEBUG bulk submit (pre) action_btn='+actionBtn+' total_selected='+selected.length+' values=['+selected.join(',')+'] formAction='+bulkForm.getAttribute('action'),'info');
+      showProgress('Submitting '+actionBtn+' for '+selected.length+' VM(s)…');
   // Disable buttons but keep their labels unchanged
   setTimeout(()=>{ setBusy(true); addLog('Bulk action submitted (deferred disable)','info'); }, 25);
     }); }
    async function doRefresh(){
      if(!refreshBtn) return;
   setBusy(true);
+  showProgress('Refreshing VM status…');
      try {
        const r = await fetch('{{ url_for('api_vms') }}',{headers:{'Accept':'application/json'}});
        if(r.status === 401){
@@ -521,10 +552,11 @@ TPL_HOME = """
   if(refreshMeta){ refreshMeta.textContent='Last refresh failed'; }
      } finally {
        setBusy(false);
+       hideProgress();
      }
    }
    if(refreshBtn){ refreshBtn.addEventListener('click', doRefresh); }
-  const lastAction = {{ last_action_json|safe }}; if(lastAction && lastAction.action){ addLog('Bulk '+lastAction.action+' summary: '+(lastAction.done||0)+' ok, '+(lastAction.failed||0)+' failed'+(lastAction.skipped?(', '+lastAction.skipped+' skipped'):'') , (parseInt(lastAction.failed||0)>0)?'warn':'success'); }
+  const lastAction = {{ last_action|tojson }}; if(lastAction && lastAction.action){ addLog('Bulk '+lastAction.action+' summary: '+(lastAction.done||0)+' ok, '+(lastAction.failed||0)+' failed'+(lastAction.skipped?(', '+lastAction.skipped+' skipped'):'') , (parseInt(lastAction.failed||0)>0)?'warn':'success'); }
   const params = new URLSearchParams(window.location.search);
   const failListRaw = params.get('fail_list');
   const successListRaw = params.get('success_list');
@@ -598,6 +630,7 @@ TPL_HOME = """
   function triggerAction(action){
     if(!bulkForm) return;
     hiddenAction.value = action;
+    showProgress('Submitting '+action+' request…');
     let canceled = false;
     const preValue = hiddenAction.value;
     const evt = new Event('submit', {cancelable:true});
@@ -606,6 +639,8 @@ TPL_HOME = """
     if(hiddenAction.value != preValue) canceled = true; // listener cleared hidden action when canceled
     if(!canceled){
       try { bulkForm.submit(); } catch(e){ addLog('Submit error: '+e.message,'error'); }
+    } else {
+      hideProgress();
     }
   }
   btnStart && btnStart.addEventListener('click', ()=>triggerAction('start'));
@@ -961,7 +996,6 @@ def home():
     "failed": request.args.get("failed"),
     "skipped": request.args.get("skipped"),
   }
-  last_action_json = json.dumps(last_action)
 
   # Build bulk notice (for legacy notice region if any)
   bulk = request.args.get("bulk")
@@ -989,7 +1023,7 @@ def home():
   return render_template_string(
     TPL_HOME,
     vms=vms,
-    last_action_json=last_action_json,
+    last_action=last_action,
     show_dock=True,
     bulk_notice=notice,
   )
