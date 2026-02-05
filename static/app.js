@@ -12,6 +12,7 @@
   const apiVmsUrl = (appConfig && appConfig.dataset && appConfig.dataset.apiVms) ? appConfig.dataset.apiVms : '/api/vms';
   const sessionResetUrl = (appConfig && appConfig.dataset && appConfig.dataset.sessionReset) ? appConfig.dataset.sessionReset : '/session-reset?reason=invalid';
   const jobsStatusUrl = (appConfig && appConfig.dataset && appConfig.dataset.jobsStatus) ? appConfig.dataset.jobsStatus : '/api/jobs';
+  const notesUrl = (appConfig && appConfig.dataset && appConfig.dataset.notesUrl) ? appConfig.dataset.notesUrl : '/api/vm-notes';
   // Fixed-height dock (no resize)
   const btnStart = document.getElementById('btnStart');
   const btnPoweroff = document.getElementById('btnPoweroff');
@@ -75,6 +76,50 @@
       progressOverlay.setAttribute('aria-hidden','true');
     }
   }
+  let notesPop = null;
+  function ensureNotesPop(){
+    if(notesPop) return notesPop;
+    notesPop = document.createElement('div');
+    notesPop.className = 'vm-notes-pop';
+    notesPop.innerHTML = '<h5>VM Notes <button type="button" class="vm-notes-close" aria-label="Close notes">Close</button></h5><pre id="vmNotesBody">Loading...</pre>';
+    document.body.appendChild(notesPop);
+    const closeBtn = notesPop.querySelector('.vm-notes-close');
+    closeBtn && closeBtn.addEventListener('click', ()=>hideNotes());
+    return notesPop;
+  }
+  function showNotesPopup(btn, content){
+    const pop = ensureNotesPop();
+    const body = pop.querySelector('#vmNotesBody');
+    if(body){ body.textContent = content || 'No notes.'; }
+    pop.classList.add('visible');
+    requestAnimationFrame(()=>{
+      const rect = btn.getBoundingClientRect();
+      const popRect = pop.getBoundingClientRect();
+      let top = rect.bottom + 8;
+      let left = rect.left;
+      if(top + popRect.height > window.innerHeight - 8){
+        top = rect.top - popRect.height - 8;
+      }
+      if(top < 8) top = 8;
+      if(left + popRect.width > window.innerWidth - 8){
+        left = window.innerWidth - popRect.width - 8;
+      }
+      if(left < 8) left = 8;
+      pop.style.top = top + 'px';
+      pop.style.left = left + 'px';
+    });
+  }
+  function hideNotes(){
+    if(notesPop){ notesPop.classList.remove('visible'); }
+  }
+  document.addEventListener('click', (ev)=>{
+    if(!notesPop || !notesPop.classList.contains('visible')) return;
+    const target = ev.target;
+    if(notesPop.contains(target)) return;
+    if(target && target.classList && target.classList.contains('vm-info-btn')) return;
+    hideNotes();
+  });
+  document.addEventListener('keydown', (ev)=>{ if(ev.key === 'Escape') hideNotes(); });
   function waitWithCountdown(seconds){
     const total = Math.max(0, parseInt(seconds, 10) || 0);
     if(!total) return Promise.resolve();
@@ -249,6 +294,40 @@
     doRefresh(true)
       .finally(()=>{ setBusy(false); hideProgress(); });
   }
+
+  // VM notes popup via info icon
+  const infoButtons = document.querySelectorAll('.vm-info-btn');
+  infoButtons.forEach(btn=>{
+    btn.addEventListener('click', async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      const node = btn.getAttribute('data-node');
+      const vmid = btn.getAttribute('data-vmid');
+      const type = btn.getAttribute('data-type');
+      if(!node || !vmid || !type) return;
+      showNotesPopup(btn, 'Loading...');
+      try {
+        const qs = new URLSearchParams({node, vmid, type}).toString();
+        const r = await fetch(notesUrl + '?' + qs, {headers:{'Accept':'application/json'}});
+        if(r.status === 401){
+          let redirectTarget = sessionResetUrl;
+          try {
+            const data = await r.json();
+            if(data && data.redirect){ redirectTarget = data.redirect; }
+          } catch(ignore){}
+          showNotesPopup(btn, 'Session expired. Redirecting...');
+          setTimeout(()=>{ window.location.href = redirectTarget; }, 250);
+          return;
+        }
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        const data = await r.json();
+        const notes = (data && typeof data.notes === 'string') ? data.notes : '';
+        showNotesPopup(btn, notes || 'No notes.');
+      } catch(e){
+        showNotesPopup(btn, 'Failed to load notes: '+e.message);
+      }
+    });
+  });
 
   // Intercept VM card link clicks to open popup window instead of a new tab
   const vmLinks = document.querySelectorAll('.vm-list .vm-item a');

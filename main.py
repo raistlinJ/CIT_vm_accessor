@@ -146,6 +146,14 @@ TPL_BASE = """
   .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--border); border-radius:10px; padding:.55rem .6rem .55rem 2.2rem; background:#fff; min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
   .vm-item:hover { border-color:var(--accent); box-shadow:0 0 0 2px #07b36d1f, 0 4px 10px -4px #022e2044; }
   .vm-item input[type=checkbox] { position:absolute; left:.65rem; top:.75rem; width:1.05rem; height:1.05rem; margin:0; accent-color: var(--accent); cursor:pointer; }
+  .vm-info-btn { position:absolute; top:.4rem; right:.45rem; width:22px; height:22px; border-radius:50%; border:1px solid #b7c6d3; background:#f1f6fa; color:#2c4b62; font-weight:700; font-size:.7rem; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 1px 3px -1px #002b4033; }
+  .vm-info-btn:hover { background:#e3edf5; border-color:#8fb1c8; }
+  .vm-info-btn:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .vm-notes-pop { position:fixed; z-index:12000; background:#0d1e30; color:#e2f2ff; border:1px solid #12384f; border-radius:10px; padding:.65rem .75rem .7rem; width:320px; max-width:80vw; box-shadow:0 16px 30px -18px #000a, 0 0 0 1px #12425c inset; display:none; }
+  .vm-notes-pop.visible { display:block; }
+  .vm-notes-pop h5 { margin:0 0 .35rem; font-size:.72rem; letter-spacing:.5px; text-transform:uppercase; color:#9feaf9; display:flex; justify-content:space-between; align-items:center; }
+  .vm-notes-pop pre { margin:0; white-space:pre-wrap; font-family:var(--mono); font-size:.72rem; color:#e2f2ff; }
+  .vm-notes-close { background:transparent; border:1px solid #255b76; color:#9feaf9; font-size:.65rem; padding:.1rem .35rem; border-radius:6px; cursor:pointer; }
   .vm-item a { display:flex; flex-direction:column; gap:.25rem; color:inherit; flex:1; }
   .vm-item a:hover { text-decoration:none; }
   .vm-id-line { font:600 .85rem var(--mono); letter-spacing:.5px; color:#083f2d; text-shadow:0 0 1px #07b36d44; }
@@ -388,6 +396,7 @@ TPL_HOME = """
       {% for vm in vms %}
         <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
           <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
+          <button type="button" class="vm-info-btn" title="View notes" aria-label="View notes" data-node="{{ vm.get('node') }}" data-type="{{ vm.get('type') }}" data-vmid="{{ vm.get('vmid') }}">i</button>
           <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
             <span class="vm-id-line">#{{ vm.get('vmid') }} - {{ vm.get('node') }}</span>
             <span class="vm-name">{{ vm.get('name','') or '(no name)' }}</span>
@@ -431,7 +440,7 @@ TPL_HOME = """
 </div>
 </div>
 {% endif %}
-<div id="appConfig" data-api-vms="{{ url_for('api_vms') }}" data-session-reset="{{ url_for('session_reset', reason='invalid') }}" data-jobs-status="{{ url_for('api_jobs_status') }}" style="display:none"></div>
+<div id="appConfig" data-api-vms="{{ url_for('api_vms') }}" data-session-reset="{{ url_for('session_reset', reason='invalid') }}" data-jobs-status="{{ url_for('api_jobs_status') }}" data-notes-url="{{ url_for('api_vm_notes') }}" style="display:none"></div>
 <script src="/static/app.js" defer></script>
 {% endblock %}
 """
@@ -1075,6 +1084,31 @@ def api_vms():
     return jsonify({"vms": slim})
   except Exception:
     logger.exception(f"[{req_id()}] /api/vms exception")
+    return jsonify({"error": "exception"}), 500
+
+@app.route("/api/vm-notes", methods=["GET"])
+@require_session(api=True)
+def api_vm_notes():
+  node = (request.args.get("node") or "").strip()
+  vmid = (request.args.get("vmid") or "").strip()
+  vtype = (request.args.get("type") or "").strip().lower()
+  if not node or not vmid.isdigit() or vtype not in ("qemu", "lxc"):
+    return jsonify({"error": "bad_request"}), 400
+  cookies = {"PVEAuthCookie": session.get("pve_ticket")}
+  headers = {"CSRFPreventionToken": session.get("pve_csrf")}
+  try:
+    path = f"/nodes/{node}/{vtype}/{vmid}/config"
+    r = proxmox_get(path, cookies=cookies, headers=headers)
+    if r.status_code == 401:
+      session.clear()
+      return jsonify({"error": "unauthorized", "redirect": url_for("session_reset", reason="invalid")}), 401
+    if not r.ok:
+      return jsonify({"error": "upstream", "status": r.status_code}), 502
+    data = r.json().get("data", {})
+    notes = data.get("description") or ""
+    return jsonify({"notes": notes})
+  except Exception:
+    logger.exception(f"[{req_id()}] /api/vm-notes exception")
     return jsonify({"error": "exception"}), 500
 
 # Track async task completion for bulk actions
