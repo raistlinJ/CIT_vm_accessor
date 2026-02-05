@@ -243,6 +243,11 @@
     waitForJobsToComplete()
       .then(()=>doRefresh(true))
       .finally(()=>{ setBusy(false); hideProgress(); });
+  } else if(params.get('refresh') === '1'){
+    showProgress('Updating status, please wait...');
+    setBusy(true);
+    doRefresh(true)
+      .finally(()=>{ setBusy(false); hideProgress(); });
   }
 
   // Intercept VM card link clicks to open popup window instead of a new tab

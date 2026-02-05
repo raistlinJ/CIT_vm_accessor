@@ -1039,7 +1039,8 @@ def bulk_action():
   else:
     session.pop("last_jobs", None)
     jobs_flag = 0
-  return redirect(url_for("home", bulk=action, done=done, failed=failed, skipped=skipped, fail_list=fail_list, success_list=success_list, skip_list=skip_list, jobs=jobs_flag))
+  refresh_flag = 1 if action == "restore-all" else 0
+  return redirect(url_for("home", bulk=action, done=done, failed=failed, skipped=skipped, fail_list=fail_list, success_list=success_list, skip_list=skip_list, jobs=jobs_flag, refresh=refresh_flag))
 
 # Lightweight API endpoint returning current non-template VM statuses (used by JS refresh)
 @app.route("/api/vms", methods=["GET"])
