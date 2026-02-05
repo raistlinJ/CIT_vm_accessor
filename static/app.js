@@ -76,6 +76,57 @@
       progressOverlay.setAttribute('aria-hidden','true');
     }
   }
+  let confirmOverlay = null;
+  let confirmMessage = null;
+  let confirmOkBtn = null;
+  let confirmCancelBtn = null;
+  function ensureConfirmOverlay(){
+    if(confirmOverlay) return confirmOverlay;
+    confirmOverlay = document.createElement('div');
+    confirmOverlay.className = 'confirm-overlay';
+    confirmOverlay.setAttribute('aria-hidden','true');
+    confirmOverlay.innerHTML = '<div class="confirm-card" role="dialog" aria-modal="true">'+
+      '<div class="confirm-title">Confirm Action</div>'+
+      '<div class="confirm-msg" id="confirmMessage"></div>'+
+      '<div class="confirm-actions">'+
+        '<button type="button" class="btn-secondary" id="confirmCancel">Cancel</button>'+
+        '<button type="button" id="confirmOk">Proceed</button>'+
+      '</div>'+
+    '</div>';
+    document.body.appendChild(confirmOverlay);
+    confirmMessage = confirmOverlay.querySelector('#confirmMessage');
+    confirmOkBtn = confirmOverlay.querySelector('#confirmOk');
+    confirmCancelBtn = confirmOverlay.querySelector('#confirmCancel');
+    return confirmOverlay;
+  }
+  function confirmDialog(message){
+    const overlay = ensureConfirmOverlay();
+    if(confirmMessage){ confirmMessage.textContent = message || 'Are you sure?'; }
+    overlay.classList.add('visible');
+    overlay.setAttribute('aria-hidden','false');
+    return new Promise((resolve)=>{
+      let resolved = false;
+      const cleanup = (result)=>{
+        if(resolved) return;
+        resolved = true;
+        overlay.classList.remove('visible');
+        overlay.setAttribute('aria-hidden','true');
+        confirmOkBtn && confirmOkBtn.removeEventListener('click', onOk);
+        confirmCancelBtn && confirmCancelBtn.removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onOk = ()=>cleanup(true);
+      const onCancel = ()=>cleanup(false);
+      const onKey = (ev)=>{
+        if(ev.key === 'Escape') cleanup(false);
+        if(ev.key === 'Enter') cleanup(true);
+      };
+      confirmOkBtn && confirmOkBtn.addEventListener('click', onOk);
+      confirmCancelBtn && confirmCancelBtn.addEventListener('click', onCancel);
+      document.addEventListener('keydown', onKey);
+    });
+  }
   let notesPop = null;
   function ensureNotesPop(){
     if(notesPop) return notesPop;
@@ -185,30 +236,36 @@
       setTimeout(poll, 250);
     });
   }
-  if(bulkForm){ bulkForm.addEventListener('submit', function(ev){
-    const selected=[...document.querySelectorAll('.vm-item input[type=checkbox]:checked')].map(cb=>cb.value);
-    // Determine action from submitter OR hidden action field (for floating panel submission)
-    const hiddenActionInput = bulkForm.querySelector('input[name=action]');
-    const actionBtn = (ev && ev.submitter && ev.submitter.value) || (document.activeElement && document.activeElement.value) || (hiddenActionInput && hiddenActionInput.value) || '(unknown)';
-    if(!selected.length){ ev.preventDefault(); addLog('No VMs selected; action aborted','warn'); return; }
-    // Confirmation dialog before submitting
+  async function confirmBulkAction(actionBtn, selected){
+    if(!selected.length) return {ok:false, reason:'no-selection'};
     const previewList = selected.slice(0,15).map(v=>v.split('|')[2]).join(', ')+(selected.length>15?' ...':'');
-    // Use an escaped \n for readability in the confirm dialog
     const confirmMsg = (actionBtn === 'restore-all')
       ? 'RESTORE WARNING: This will revert selected VMs to a snapshot and all current data will be removed.\nProceed with RESTORE on '+selected.length+' VM(s)?\nVMIDs: '+previewList
-      : 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\nVMIDs: '+previewList; 
-    if(!window.confirm(confirmMsg)){
-      ev.preventDefault();
-      addLog('Bulk '+actionBtn+' canceled by user','warn');
-      // clear hidden action so future attempts can set it again
+      : 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\nVMIDs: '+previewList;
+    const ok = await confirmDialog(confirmMsg);
+    if(!ok) return {ok:false, reason:'canceled'};
+    return {ok:true};
+  }
+  if(bulkForm){ bulkForm.addEventListener('submit', async function(ev){
+    ev.preventDefault();
+    const selected=[...document.querySelectorAll('.vm-item input[type=checkbox]:checked')].map(cb=>cb.value);
+    const hiddenActionInput = bulkForm.querySelector('input[name=action]');
+    const actionBtn = (ev && ev.submitter && ev.submitter.value) || (document.activeElement && document.activeElement.value) || (hiddenActionInput && hiddenActionInput.value) || '(unknown)';
+    const result = await confirmBulkAction(actionBtn, selected);
+    if(!result.ok){
+      if(result.reason === 'no-selection'){
+        addLog('No VMs selected; action aborted','warn');
+      } else {
+        addLog('Bulk '+actionBtn+' canceled by user','warn');
+      }
       if(hiddenActionInput) hiddenActionInput.value='';
       hideProgress();
       return;
     }
     addLog('DEBUG bulk submit (pre) action_btn='+actionBtn+' total_selected='+selected.length+' values=['+selected.join(',')+'] formAction='+bulkForm.getAttribute('action'),'info');
     showProgress('Submitting '+actionBtn+' for '+selected.length+' VM(s)...');
-    // Disable buttons but keep their labels unchanged
     setTimeout(()=>{ setBusy(true); addLog('Bulk action submitted (deferred disable)','info'); }, 25);
+    try { bulkForm.submit(); } catch(e){ addLog('Submit error: '+e.message,'error'); }
   }); }
   async function doRefresh(skipJobWait){
     if(!refreshBtn) return;
@@ -397,22 +454,25 @@
   }
   // Bulk action triggers (outside dock conditional so they work even if dock hidden)
   updateBulkButtons();
-  function triggerAction(action){
+  async function triggerAction(action){
     if(!bulkForm) return;
     if(hiddenSnapshot) hiddenSnapshot.value = '';
     hiddenAction.value = action;
-    showProgress('Submitting '+action+' request...');
-    let canceled = false;
-    const preValue = hiddenAction.value;
-    const evt = new Event('submit', {cancelable:true});
-    if(!bulkForm.dispatchEvent(evt)) canceled = true; // if any listener called preventDefault via legacy path
-    // If listener prevented default, canceled stays true (bulkForm listener uses preventDefault on cancel)
-    if(hiddenAction.value != preValue) canceled = true; // listener cleared hidden action when canceled
-    if(!canceled){
-      try { bulkForm.submit(); } catch(e){ addLog('Submit error: '+e.message,'error'); }
-    } else {
+    const selected=[...document.querySelectorAll('.vm-item input[type=checkbox]:checked')].map(cb=>cb.value);
+    const result = await confirmBulkAction(action, selected);
+    if(!result.ok){
+      if(result.reason === 'no-selection'){
+        addLog('No VMs selected; action aborted','warn');
+      } else {
+        addLog('Bulk '+action+' canceled by user','warn');
+      }
+      hiddenAction.value = '';
       hideProgress();
+      return;
     }
+    showProgress('Submitting '+action+' request...');
+    setTimeout(()=>{ setBusy(true); addLog('Bulk action submitted (deferred disable)','info'); }, 25);
+    try { bulkForm.submit(); } catch(e){ addLog('Submit error: '+e.message,'error'); }
   }
   btnStart && btnStart.addEventListener('click', ()=>triggerAction('start'));
   btnPoweroff && btnPoweroff.addEventListener('click', ()=>triggerAction('poweroff'));

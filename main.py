@@ -143,11 +143,11 @@ TPL_BASE = """
   .error { color: var(--danger); margin-bottom:.8rem; font-weight:500; }
   .notice { background:#daf7eccc; border:1px solid #9be0c7; padding:.6rem .75rem; border-radius:8px; margin-bottom:1rem; font-size:.9rem; }
   .vm-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:.65rem; margin:0 0 1rem; }
-  .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--border); border-radius:10px; padding:.55rem .6rem .55rem 2.2rem; background:#fff; min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
+  .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--border); border-radius:10px; padding:.55rem 3.1rem .55rem 2.2rem; background:#fff; min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
   .vm-item:hover { border-color:var(--accent); box-shadow:0 0 0 2px #07b36d1f, 0 4px 10px -4px #022e2044; }
   .vm-item input[type=checkbox] { position:absolute; left:.65rem; top:.75rem; width:1.05rem; height:1.05rem; margin:0; accent-color: var(--accent); cursor:pointer; }
-  .vm-info-btn { position:absolute; top:.4rem; right:.45rem; width:22px; height:22px; border-radius:50%; border:1px solid #b7c6d3; background:#f1f6fa; color:#2c4b62; font-weight:700; font-size:.7rem; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 1px 3px -1px #002b4033; }
-  .vm-info-btn:hover { background:#e3edf5; border-color:#8fb1c8; }
+  .vm-info-btn { position:absolute; top:0; right:0; height:100%; width:2.6rem; border:0; border-left:1px solid var(--border); background:#f3f7fb; color:#2c4b62; font-weight:700; font-size:1.4rem; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:inset 0 0 0 1px #eef3f7; }
+  .vm-info-btn:hover { background:#e6eef6; }
   .vm-info-btn:focus { outline:2px solid var(--accent); outline-offset:1px; }
   .vm-notes-pop { position:fixed; z-index:12000; background:#0d1e30; color:#e2f2ff; border:1px solid #12384f; border-radius:10px; padding:.65rem .75rem .7rem; width:320px; max-width:80vw; box-shadow:0 16px 30px -18px #000a, 0 0 0 1px #12425c inset; display:none; }
   .vm-notes-pop.visible { display:block; }
@@ -213,6 +213,13 @@ TPL_BASE = """
   .progress-bar { height:6px; border-radius:6px; background:#12384f; overflow:hidden; }
   .progress-bar span { display:block; height:100%; width:40%; background:linear-gradient(90deg,#07b36d,#30d08c); animation: progress-indef 1.1s ease-in-out infinite; }
   @keyframes progress-indef { 0%{ transform:translateX(-60%);} 100%{ transform:translateX(220%);} }
+  .confirm-overlay { position:fixed; inset:0; background:rgba(10,20,30,.6); display:flex; align-items:center; justify-content:center; z-index:21000; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease-out; backdrop-filter: blur(2px); }
+  .confirm-overlay.visible { opacity:1; visibility:visible; pointer-events:auto; }
+  .confirm-card { background:#ffffff; color:#0e2336; border:3px solid #0d1e30; border-radius:14px; padding:1.2rem 1.4rem; min-width:340px; max-width:92vw; box-shadow:0 24px 50px -18px #000c; display:flex; flex-direction:column; gap:.75rem; text-align:center; }
+  .confirm-title { font-weight:800; letter-spacing:.4px; font-size:1rem; color:#0e2336; }
+  .confirm-msg { font-size:.85rem; color:#233445; font-weight:600; white-space:pre-wrap; }
+  .confirm-actions { display:flex; gap:.6rem; justify-content:center; }
+  .btn-secondary { border-color:#7a8c9b; background:linear-gradient(180deg,#93a3b2,#6f7f8d); box-shadow:0 2px 6px -2px #3b4b5a88; color:#fff; }
 </style>
 </head>
 <body>
@@ -396,7 +403,7 @@ TPL_HOME = """
       {% for vm in vms %}
         <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
           <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
-          <button type="button" class="vm-info-btn" title="View notes" aria-label="View notes" data-node="{{ vm.get('node') }}" data-type="{{ vm.get('type') }}" data-vmid="{{ vm.get('vmid') }}">i</button>
+          <button type="button" class="vm-info-btn" title="View notes" aria-label="View notes" data-node="{{ vm.get('node') }}" data-type="{{ vm.get('type') }}" data-vmid="{{ vm.get('vmid') }}">📄</button>
           <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
             <span class="vm-id-line">#{{ vm.get('vmid') }} - {{ vm.get('node') }}</span>
             <span class="vm-name">{{ vm.get('name','') or '(no name)' }}</span>
@@ -1048,7 +1055,7 @@ def bulk_action():
   else:
     session.pop("last_jobs", None)
     jobs_flag = 0
-  refresh_flag = 1 if action == "restore-all" else 0
+  refresh_flag = 1
   return redirect(url_for("home", bulk=action, done=done, failed=failed, skipped=skipped, fail_list=fail_list, success_list=success_list, skip_list=skip_list, jobs=jobs_flag, refresh=refresh_flag))
 
 # Lightweight API endpoint returning current non-template VM statuses (used by JS refresh)
