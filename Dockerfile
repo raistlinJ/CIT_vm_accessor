@@ -24,8 +24,9 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip check || true
 
-# Copy application (single-file app plus any needed dirs)
+# Copy application (single-file app plus static assets)
 COPY main.py ./
+COPY static ./static
 
 # (Optional) Copy templates/static if later split out; currently all inline.
 

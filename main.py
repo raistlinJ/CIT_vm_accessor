@@ -9,7 +9,7 @@ import traceback
 import uuid
 import requests
 import time
-from flask import Flask, request, redirect, session, make_response, render_template_string, url_for, g, jsonify
+from flask import Flask, request, redirect, session, make_response, render_template_string, url_for, g, jsonify, send_from_directory
 from waitress import serve
 from jinja2 import DictLoader
 
@@ -38,7 +38,7 @@ How it works
 - User logs into this Flask app with their Proxmox username/password.
 - We call /api2/json/access/ticket to get PVEAuthCookie + CSRFPreventionToken.
 - We set those as cookies for the Proxmox host, so the browser can access 8006.
-- We redirect the user to Proxmox’s built-in noVNC page for the VM they chose.
+- We redirect the user to Proxmox's built-in noVNC page for the VM they chose.
 """
 
 PROXMOX_HOST = os.environ.get("PROXMOX_HOST", "127.0.0.1").strip()
@@ -89,6 +89,13 @@ BASE_API = f"https://{PROXMOX_HOST}:{PROXMOX_PORT}/api2/json"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+
+# Explicit static route to ensure correct MIME type under reverse proxy
+@app.route("/static/<path:filename>")
+def static_files(filename):
+  if filename.endswith(".js"):
+    return send_from_directory("static", filename, mimetype="text/javascript")
+  return send_from_directory("static", filename)
 
 # ---------- HTML (inline templates to keep it single-file) ----------
 
@@ -190,10 +197,11 @@ TPL_BASE = """
   .actions-row { margin-top:.4rem; }
   .vm-item:focus-within { outline:2px solid var(--accent); }
   @media (max-width:640px){ .vm-list { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); } }
-  .progress-overlay { position:fixed; inset:0; background:rgba(10,20,30,.45); display:none; align-items:center; justify-content:center; z-index:9999; }
-  .progress-card { background:#0f2434; color:#e7f6ff; border:1px solid #1f4b63; border-radius:12px; padding:1.1rem 1.2rem; min-width:260px; max-width:90vw; box-shadow:0 8px 24px -10px #000a; display:flex; flex-direction:column; gap:.6rem; }
-  .progress-title { font-weight:700; letter-spacing:.4px; font-size:.9rem; }
-  .progress-msg { font-size:.78rem; color:#b6d7e6; }
+  .progress-overlay { position:fixed; inset:0; background:rgba(10,20,30,.6); display:flex; align-items:center; justify-content:center; z-index:20000; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease-out; backdrop-filter: blur(2px); }
+  .progress-overlay.visible { opacity:1; visibility:visible; pointer-events:auto; }
+  .progress-card { background:#ffffff; color:#0e2336; border:3px solid #0d1e30; border-radius:14px; padding:1.4rem 1.5rem; min-width:360px; max-width:92vw; box-shadow:0 24px 50px -18px #000c; display:flex; flex-direction:column; gap:.75rem; text-align:center; }
+  .progress-title { font-weight:800; letter-spacing:.4px; font-size:1.05rem; color:#0e2336; }
+  .progress-msg { font-size:.9rem; color:#233445; font-weight:600; }
   .progress-bar { height:6px; border-radius:6px; background:#12384f; overflow:hidden; }
   .progress-bar span { display:block; height:100%; width:40%; background:linear-gradient(90deg,#07b36d,#30d08c); animation: progress-indef 1.1s ease-in-out infinite; }
   @keyframes progress-indef { 0%{ transform:translateX(-60%);} 100%{ transform:translateX(220%);} }
@@ -213,6 +221,13 @@ TPL_BASE = """
   <div class=\"card\">
     {% block content %}{% endblock %}
   <!-- Footer removed per user request -->
+  </div>
+  <div id=\"progressOverlay\" class=\"progress-overlay\" role=\"dialog\" aria-modal=\"true\" aria-live=\"polite\" aria-hidden=\"true\">
+    <div class=\"progress-card\">
+      <div class=\"progress-title\">Working...</div>
+      <div id=\"progressMessage\" class=\"progress-msg\">Please wait.</div>
+      <div class=\"progress-bar\" aria-hidden=\"true\"><span></span></div>
+    </div>
   </div>
 </body>
 </html>
@@ -238,6 +253,11 @@ def _allow_iframe(resp):
     if 'frame-ancestors' not in existing_csp:
       csp_prefix = existing_csp + ('; ' if existing_csp else '')
       resp.headers['Content-Security-Policy'] = f"{csp_prefix}frame-ancestors {fa}"
+  # Prevent stale HTML from being cached by the browser during rapid UI changes
+  if resp.mimetype == 'text/html':
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
   return resp
 
 TPL_LOGIN = """
@@ -269,7 +289,7 @@ TPL_LOGIN = """
         <label style="font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; font-weight:600; margin:0 0 .42rem;">Verify SSL</label>
         <div style="display:flex; align-items:center; padding:.48rem .55rem; border:1px solid #cfd9e3; border-radius:8px; background:#fff; height:38px; line-height:1;">
           <input id="verifyBox" aria-label="Verify SSL" type="checkbox" name="verify_ssl" value="1" {% if verify_ssl %}checked{% endif %} style="margin:0; width:1.05rem; height:1.05rem; cursor:pointer;"/>
-          <span style="font-size:.62rem; margin-left:.55rem; color:#576b7a; font-weight:500;">Uncheck only for self‑signed certs</span>
+          <span style="font-size:.62rem; margin-left:.55rem; color:#576b7a; font-weight:500;">Uncheck only for self-signed certs</span>
         </div>
       </div>
     </div>
@@ -369,7 +389,7 @@ TPL_HOME = """
         <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
           <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
           <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
-            <span class="vm-id-line">#{{ vm.get('vmid') }} · {{ vm.get('node') }}</span>
+            <span class="vm-id-line">#{{ vm.get('vmid') }} - {{ vm.get('node') }}</span>
             <span class="vm-name">{{ vm.get('name','') or '(no name)' }}</span>
             <span class="vm-status {{ vm.get('status') }}" id="vm-status-{{ vm.get('node') }}-{{ vm.get('vmid') }}">{{ vm.get('status') }}</span>
           </a>
@@ -387,10 +407,6 @@ TPL_HOME = """
   <button id="btnPoweroff" type="button" class="btn-danger" disabled title="Power off (stop) each selected VM">Poweroff</button>
   <button id="btnRestore" type="button" class="btn-danger" disabled title="Rollback each selected VM to its newest snapshot">Factory-Reset</button>
     </div>
-    <div style="margin:.4rem 0 .2rem; display:grid; gap:.35rem;">
-      <label style="font-size:.62rem; letter-spacing:.5px; text-transform:uppercase; font-weight:600; color:#b9d7e8;">Snapshot name (optional)</label>
-      <input id="snapshotInput" type="text" placeholder="Leave blank to use newest snapshot" style="margin:0; padding:.45rem .55rem; border-radius:8px; border:1px solid #1e4a62; background:#0f2a3b; color:#e7f6ff;" />
-    </div>
     <div class="small-group">
   <button id="selectAllBtn" type="button" title="Select all visible VMs">Select All</button>
       <button id="deselectAllBtn" type="button" title="Clear all selections">Clear</button>
@@ -403,282 +419,20 @@ TPL_HOME = """
 {% if show_dock %}
 <div class="activity-frame" aria-label="Activity Console Frame">
   <h4>Activity Console</h4>
-<div id="activityDock" class="activity-dock collapsed" aria-label="Activity Log Panel">
+<div id="activityDock" class="activity-dock" aria-label="Activity Log Panel">
   <div class="dock-resize-handle" title="Drag to resize"></div>
   <div class="dock-header">Activity Log <span id="dockLastLine" class="dock-last"></span>
     <div style="margin-left:auto; display:flex; gap:.35rem; align-items:center">
       <button type="button" id="dockClear" class="dock-clear" aria-label="Clear Activity Log">Clear</button>
-      <button type="button" id="dockToggle" class="dock-toggle" aria-expanded="false" aria-controls="dockBody" aria-label="Toggle Activity">▴</button>
+      <button type="button" id="dockToggle" class="dock-toggle" aria-expanded="true" aria-controls="dockBody" aria-label="Toggle Activity">v</button>
     </div>
   </div>
   <div id="dockBody" class="dock-body" role="log" aria-live="polite"></div>
 </div>
 </div>
 {% endif %}
-<div id="appConfig" data-api-vms="{{ url_for('api_vms') }}" data-session-reset="{{ url_for('session_reset', reason='invalid') }}" style="display:none"></div>
-<script id="lastActionJson" type="application/json">{{ last_action|tojson }}</script>
-<div id="progressOverlay" class="progress-overlay" role="dialog" aria-modal="true" aria-live="polite" aria-hidden="true">
-  <div class="progress-card">
-    <div class="progress-title">Working...</div>
-    <div id="progressMessage" class="progress-msg">Please wait.</div>
-    <div class="progress-bar" aria-hidden="true"><span></span></div>
-  </div>
-</div>
-<script>
- (function(){
-   const bulkForm = document.getElementById('bulkForm');
-   const refreshBtn = document.getElementById('refreshBtn');
-   const refreshMeta = document.getElementById('refreshMeta');
-  const dockBody = document.getElementById('dockBody');
-   const dock = document.getElementById('activityDock');
-   const dockToggle = document.getElementById('dockToggle');
-   const dockClear = document.getElementById('dockClear');
-  const progressOverlay = document.getElementById('progressOverlay');
-  const progressMessage = document.getElementById('progressMessage');
-  const appConfig = document.getElementById('appConfig');
-  const apiVmsUrl = (appConfig && appConfig.dataset && appConfig.dataset.apiVms) ? appConfig.dataset.apiVms : '/api/vms';
-  const sessionResetUrl = (appConfig && appConfig.dataset && appConfig.dataset.sessionReset) ? appConfig.dataset.sessionReset : '/session-reset?reason=invalid';
-  // Fixed-height dock (no resize)
-  const btnStart = document.getElementById('btnStart');
-  const btnPoweroff = document.getElementById('btnPoweroff');
-  const btnRestore = document.getElementById('btnRestore');
-  const hiddenAction = document.getElementById('hiddenBulkAction');
-  const hiddenSnapshot = document.getElementById('hiddenSnapshot');
-  const snapshotInput = document.getElementById('snapshotInput');
-   const LOG_KEY = 'activityLogLines';
-   function ts(){ return new Date().toISOString(); }
-   function addLog(msg,type){
-      if(!dockBody) return;
-      const div=document.createElement('div');
-      div.className='log-line'+(type?(' '+type):'');
-      div.textContent='['+ts()+'] '+msg;
-      dockBody.appendChild(div);
-      dockBody.scrollTop = dockBody.scrollHeight;
-  try { if(typeof console!== 'undefined' && console.debug){ console.debug('[dock]', div.textContent); } } catch(e){}
-      try {
-        const existing = JSON.parse(sessionStorage.getItem(LOG_KEY)||'[]');
-        existing.push(div.textContent);
-        if(existing.length>500) existing.splice(0, existing.length-500); // cap
-        sessionStorage.setItem(LOG_KEY, JSON.stringify(existing));
-      } catch(e){}
-   }
-   // Restore previous log entries
-   try {
-     const prev = JSON.parse(sessionStorage.getItem(LOG_KEY)||'[]');
-     prev.forEach(line=>{ const div=document.createElement('div'); div.className='log-line'; div.textContent=line; dockBody.appendChild(div); });
-     if(prev.length) dockBody.scrollTop = dockBody.scrollHeight;
-   } catch(e){}
-  // (Replaced by scroll-preserving toggle later after padding helper is defined)
-  // Original simple toggle removed to prevent scroll jump.
-  dockClear && dockClear.addEventListener('click',()=>{ if(dockBody){ dockBody.innerHTML=''; sessionStorage.removeItem(LOG_KEY); addLog('Activity log cleared','info'); }});
-    // Update enabled/disabled state for central bulk buttons
-    function updateBulkButtons(){
-      const any = !!document.querySelector('.vm-item input[type=checkbox]:checked');
-      if(btnStart) btnStart.disabled = !any;
-  if(btnPoweroff) btnPoweroff.disabled = !any;
-      if(btnRestore){
-        btnRestore.disabled = !any;
-      }
-    }
-  const vmCheckboxes = document.querySelectorAll('.vm-item input[type=checkbox]');
-  vmCheckboxes.forEach(cb=>{ cb.addEventListener('change', updateBulkButtons); });
-  if(snapshotInput){ snapshotInput.addEventListener('input', updateBulkButtons); }
-  updateBulkButtons();
-  // Select / Deselect all controls
-  const selectAllBtn = document.getElementById('selectAllBtn');
-  const deselectAllBtn = document.getElementById('deselectAllBtn');
-  selectAllBtn && selectAllBtn.addEventListener('click', ()=>{ vmCheckboxes.forEach(cb=>cb.checked=true); updateBulkButtons(); addLog('All VMs selected','info'); });
-  deselectAllBtn && deselectAllBtn.addEventListener('click', ()=>{ vmCheckboxes.forEach(cb=>cb.checked=false); updateBulkButtons(); addLog('All VMs deselected','info'); });
-   function setBusy(flag, label){ const btns=document.querySelectorAll('button'); btns.forEach(b=>{ if(flag){ if(!b.dataset.originalText){ b.dataset.originalText=b.textContent; } b.disabled=true; if(label) b.textContent=label; } else { b.disabled=false; if(b.dataset.originalText){ b.textContent=b.dataset.originalText; delete b.dataset.originalText; } } }); }
-   function showProgress(msg){
-     if(progressOverlay){
-       if(progressMessage){ progressMessage.textContent = msg || 'Please wait.'; }
-       progressOverlay.style.display='flex';
-       progressOverlay.setAttribute('aria-hidden','false');
-     }
-   }
-   function hideProgress(){
-     if(progressOverlay){
-       progressOverlay.style.display='none';
-       progressOverlay.setAttribute('aria-hidden','true');
-     }
-   }
-  if(bulkForm){ bulkForm.addEventListener('submit', function(ev){
-      const selected=[...document.querySelectorAll('.vm-item input[type=checkbox]:checked')].map(cb=>cb.value);
-      // Determine action from submitter OR hidden action field (for floating panel submission)
-      const hiddenActionInput = bulkForm.querySelector('input[name=action]');
-      const actionBtn = (ev && ev.submitter && ev.submitter.value) || (document.activeElement && document.activeElement.value) || (hiddenActionInput && hiddenActionInput.value) || '(unknown)';
-      if(!selected.length){ ev.preventDefault(); addLog('No VMs selected; action aborted','warn'); return; }
-      // Confirmation dialog before submitting
-  const previewList = selected.slice(0,15).map(v=>v.split('|')[2]).join(', ')+(selected.length>15?' ...':'');
-  // Use an escaped \\n for readability in the confirm dialog
-  const confirmMsg = (actionBtn === 'restore-all')
-    ? 'RESTORE WARNING: This will revert selected VMs to a snapshot and all current data will be removed.\\nProceed with RESTORE on '+selected.length+' VM(s)?\\nVMIDs: '+previewList
-    : 'Proceed with '+actionBtn.toUpperCase()+' on '+selected.length+' VM(s)?\\nVMIDs: '+previewList; 
-      if(!window.confirm(confirmMsg)){
-        ev.preventDefault();
-        addLog('Bulk '+actionBtn+' canceled by user','warn');
-        // clear hidden action so future attempts can set it again
-        if(hiddenActionInput) hiddenActionInput.value='';
-        hideProgress();
-        return;
-      }
-      addLog('DEBUG bulk submit (pre) action_btn='+actionBtn+' total_selected='+selected.length+' values=['+selected.join(',')+'] formAction='+bulkForm.getAttribute('action'),'info');
-      showProgress('Submitting '+actionBtn+' for '+selected.length+' VM(s)...');
-  // Disable buttons but keep their labels unchanged
-  setTimeout(()=>{ setBusy(true); addLog('Bulk action submitted (deferred disable)','info'); }, 25);
-    }); }
-   async function doRefresh(){
-     if(!refreshBtn) return;
-  setBusy(true);
-  showProgress('Refreshing VM status...');
-     try {
-       const r = await fetch(apiVmsUrl,{headers:{'Accept':'application/json'}});
-       if(r.status === 401){
-         let redirectTarget = sessionResetUrl;
-         try {
-           const data = await r.json();
-           if(data && data.redirect){ redirectTarget = data.redirect; }
-         } catch(ignore){}
-         addLog('Session expired; redirecting to sign-in','warn');
-         if(refreshMeta){ refreshMeta.textContent='Session expired; redirecting...'; }
-         setTimeout(()=>{ window.location.href = redirectTarget; }, 250);
-         return;
-       }
-  if(!r.ok) throw new Error('HTTP '+r.status);
-  const data = await r.json();
-  let updated=0;
-       (data.vms||[]).forEach(vm=>{
-         const id='vm-status-'+vm.node+'-'+vm.vmid;
-         const el=document.getElementById(id);
-         if(el){
-           const old=el.textContent;
-           if(old!==vm.status){
-             el.textContent=vm.status;
-             el.className='vm-status '+vm.status+' changed';
-             setTimeout(()=>{ el.classList.remove('changed'); },1200);
-           }
-           updated++;
-         }
-       });
-       if(refreshMeta){
-         const stamp = (new Date()).toLocaleTimeString();
-         const label = updated === 1 ? 'status' : 'statuses';
-         refreshMeta.textContent='Last refresh: '+stamp+' • '+updated+' '+label+' updated';
-       }
-       addLog('Refresh completed ('+updated+' statuses)','info');
-     } catch(e){
-  addLog('Refresh failed: '+e.message,'error');
-  if(refreshMeta){ refreshMeta.textContent='Last refresh failed'; }
-     } finally {
-       setBusy(false);
-       hideProgress();
-     }
-   }
-   if(refreshBtn){ refreshBtn.addEventListener('click', doRefresh); }
-  let lastAction = null;
-  try {
-    const lastActionEl = document.getElementById('lastActionJson');
-    if(lastActionEl && lastActionEl.textContent){ lastAction = JSON.parse(lastActionEl.textContent); }
-  } catch(e){}
-  if(lastAction && lastAction.action){ addLog('Bulk '+lastAction.action+' summary: '+(lastAction.done||0)+' ok, '+(lastAction.failed||0)+' failed'+(lastAction.skipped?(', '+lastAction.skipped+' skipped'):'') , (parseInt(lastAction.failed||0)>0)?'warn':'success'); }
-  const params = new URLSearchParams(window.location.search);
-  const failListRaw = params.get('fail_list');
-  const successListRaw = params.get('success_list');
-  const skipListRaw = params.get('skip_list');
-  if(successListRaw){ successListRaw.split(';').forEach(s=>{ if(s.trim()) addLog('OK '+s.trim(),'success'); }); }
-  if(skipListRaw){ skipListRaw.split(';').forEach(s=>{ if(s.trim()) addLog('SKIP '+s.trim(),'info'); }); }
-  if(failListRaw){ failListRaw.split(';').forEach(f=>{ if(f.trim()) addLog('FAIL '+f.trim(),'error'); }); }
-  // Auto-refresh disabled per user request.
-
-  // Intercept VM card link clicks to open popup window instead of a new tab
-  const vmLinks = document.querySelectorAll('.vm-list .vm-item a');
-  vmLinks.forEach(a=>{
-    a.addEventListener('click', function(ev){
-      // Only intercept simple left click (no modifiers). Otherwise let browser handle (incl. Ctrl/Cmd+click new tab).
-      if(ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
-      ev.preventDefault();
-      const url = this.href;
-      const vmid = this.getAttribute('data-vmid') || 'vm';
-      const features = 'width=1100,height=760,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes';
-      let win = null;
-      try { win = window.open(url, 'vm_console_'+vmid, features); } catch(e) { /* ignore */ }
-      if(!win){
-        // Try a plain new tab
-        try { win = window.open(url, '_blank'); } catch(e) { /* ignore */ }
-      }
-      if(!win){
-        addLog('Popup blocked; falling back to same-tab navigation','warn');
-        window.location.href = url;
-        return;
-      }
-      try { win.focus(); } catch(e){}
-      addLog('Opened console '+(win===window?'(same tab) ':'')+'for VM '+vmid,'info');
-    });
-  });
-
-  // Reworked dock: inline frame with resize + collapse
-  if(dock){
-    const resizeHandle = dock.querySelector('.dock-resize-handle');
-    let isResizing=false; let startY=0; let startH=0;
-    function applyHeight(h){
-      const min=34; const max = Math.min(window.innerHeight*0.75, 600);
-      h=Math.max(min, Math.min(max, h));
-      dock.style.height = h+"px";
-    }
-    if(resizeHandle){
-      resizeHandle.addEventListener('mousedown', (e)=>{
-        if(dock.classList.contains('collapsed')) return;
-        isResizing=true; startY=e.clientY; startH=dock.getBoundingClientRect().height; dock.classList.add('resizing');
-        e.preventDefault();
-      });
-      window.addEventListener('mousemove', (e)=>{ if(!isResizing) return; const delta = startY - e.clientY; applyHeight(startH + delta); });
-      window.addEventListener('mouseup', ()=>{ if(isResizing){ isResizing=false; dock.classList.remove('resizing'); }});
-    }
-    if(dockToggle){
-      dockToggle.addEventListener('click', ()=>{
-        const collapsed = dock.classList.toggle('collapsed');
-        dockToggle.textContent = collapsed ? '▴' : '▾';
-        dockToggle.setAttribute('aria-expanded', String(!collapsed));
-        if(!collapsed){
-          // Expand to previous or default height
-          if(!dock.style.height || parseInt(dock.style.height,10) < 120){
-            applyHeight(Math.round(window.innerHeight * 0.28));
-          }
-          if(dockBody){ dockBody.scrollTop = dockBody.scrollHeight; }
-        }
-      });
-    }
-  }
-  // Bulk action triggers (outside dock conditional so they work even if dock hidden)
-  updateBulkButtons();
-  function triggerAction(action){
-    if(!bulkForm) return;
-    if(action === 'restore-all'){
-      const snap = snapshotInput ? snapshotInput.value.trim() : '';
-      if(hiddenSnapshot) hiddenSnapshot.value = snap;
-    } else {
-      if(hiddenSnapshot) hiddenSnapshot.value = '';
-    }
-    hiddenAction.value = action;
-    showProgress('Submitting '+action+' request...');
-    let canceled = false;
-    const preValue = hiddenAction.value;
-    const evt = new Event('submit', {cancelable:true});
-    if(!bulkForm.dispatchEvent(evt)) canceled = true; // if any listener called preventDefault via legacy path
-    // If listener prevented default, canceled stays true (bulkForm listener uses preventDefault on cancel)
-    if(hiddenAction.value != preValue) canceled = true; // listener cleared hidden action when canceled
-    if(!canceled){
-      try { bulkForm.submit(); } catch(e){ addLog('Submit error: '+e.message,'error'); }
-    } else {
-      hideProgress();
-    }
-  }
-  btnStart && btnStart.addEventListener('click', ()=>triggerAction('start'));
-  btnPoweroff && btnPoweroff.addEventListener('click', ()=>triggerAction('poweroff'));
-  btnRestore && btnRestore.addEventListener('click', ()=>triggerAction('restore-all'));
- })();
-</script>
+<div id="appConfig" data-api-vms="{{ url_for('api_vms') }}" data-session-reset="{{ url_for('session_reset', reason='invalid') }}" data-jobs-status="{{ url_for('api_jobs_status') }}" style="display:none"></div>
+<script src="/static/app.js" defer></script>
 {% endblock %}
 """
 
@@ -1101,6 +855,7 @@ def bulk_action():
   failure_details = []  # collect strings "node/vmid action failed (reason)"
   success_details = []  # collect strings "node/vmid action ok"
   skip_details = []     # collect strings "node/vmid skipped (reason)"
+  jobs = []             # collect task upids for async tracking
   cookies = {"PVEAuthCookie": session.get("pve_ticket")}
   headers = {"CSRFPreventionToken": session.get("pve_csrf")}
   # Fetch current statuses to allow intelligent skipping
@@ -1181,6 +936,13 @@ def bulk_action():
         if r.ok:
           done += 1
           success_details.append(f"{node}/{vmid} poweroff ok")
+          try:
+            payload = r.json()
+            upid = payload.get("data") if isinstance(payload, dict) else None
+            if isinstance(upid, str) and upid.startswith("UPID:"):
+              jobs.append({"node": node, "upid": upid})
+          except Exception:
+            pass
         else:
           failed += 1
           reason = f"HTTP {r.status_code}"
@@ -1208,6 +970,13 @@ def bulk_action():
         if r.ok:
           done += 1
           success_details.append(f"{node}/{vmid} start ok")
+          try:
+            payload = r.json()
+            upid = payload.get("data") if isinstance(payload, dict) else None
+            if isinstance(upid, str) and upid.startswith("UPID:"):
+              jobs.append({"node": node, "upid": upid})
+          except Exception:
+            pass
         else:
           failed += 1
           reason = f"HTTP {r.status_code}"
@@ -1242,6 +1011,13 @@ def bulk_action():
         if r.ok:
           done += 1
           success_details.append(f"{node}/{vmid} restore ok")
+          try:
+            payload = r.json()
+            upid = payload.get("data") if isinstance(payload, dict) else None
+            if isinstance(upid, str) and upid.startswith("UPID:"):
+              jobs.append({"node": node, "upid": upid})
+          except Exception:
+            pass
         else:
           failed += 1
           reason = f"HTTP {r.status_code}"
@@ -1257,7 +1033,13 @@ def bulk_action():
   fail_list = ";".join(failure_details) if failure_details else None
   success_list = ";".join(success_details) if success_details else None
   skip_list = ";".join(skip_details) if skip_details else None
-  return redirect(url_for("home", bulk=action, done=done, failed=failed, skipped=skipped, fail_list=fail_list, success_list=success_list, skip_list=skip_list))
+  if jobs:
+    session["last_jobs"] = jobs
+    jobs_flag = 1
+  else:
+    session.pop("last_jobs", None)
+    jobs_flag = 0
+  return redirect(url_for("home", bulk=action, done=done, failed=failed, skipped=skipped, fail_list=fail_list, success_list=success_list, skip_list=skip_list, jobs=jobs_flag))
 
 # Lightweight API endpoint returning current non-template VM statuses (used by JS refresh)
 @app.route("/api/vms", methods=["GET"])
@@ -1293,6 +1075,53 @@ def api_vms():
   except Exception:
     logger.exception(f"[{req_id()}] /api/vms exception")
     return jsonify({"error": "exception"}), 500
+
+# Track async task completion for bulk actions
+@app.route("/api/jobs", methods=["GET"])
+@require_session(api=True)
+def api_jobs_status():
+  cookies = {"PVEAuthCookie": session.get("pve_ticket")}
+  headers = {"CSRFPreventionToken": session.get("pve_csrf")}
+  jobs = session.get("last_jobs") or []
+  if not jobs:
+    return jsonify({"total": 0, "done": 0, "running": 0, "failed": 0, "statuses": []})
+  statuses = []
+  done = 0
+  running = 0
+  failed = 0
+  for job in jobs:
+    node = job.get("node")
+    upid = job.get("upid")
+    if not node or not upid:
+      failed += 1
+      statuses.append({"node": node, "upid": upid, "status": "error", "exitstatus": "MISSING"})
+      continue
+    try:
+      r = proxmox_get(f"/nodes/{node}/tasks/{upid}/status", cookies=cookies, headers=headers)
+      if r.status_code == 401:
+        session.clear()
+        return jsonify({"error": "unauthorized", "redirect": url_for("session_reset", reason="invalid")}), 401
+      if not r.ok:
+        failed += 1
+        statuses.append({"node": node, "upid": upid, "status": "error", "exitstatus": f"HTTP {r.status_code}"})
+        continue
+      payload = r.json().get("data", {})
+      status = payload.get("status") or "unknown"
+      exitstatus = payload.get("exitstatus")
+      statuses.append({"node": node, "upid": upid, "status": status, "exitstatus": exitstatus})
+      if status == "stopped":
+        done += 1
+        if exitstatus and exitstatus != "OK":
+          failed += 1
+      else:
+        running += 1
+    except Exception:
+      failed += 1
+      statuses.append({"node": node, "upid": upid, "status": "error", "exitstatus": "EXCEPTION"})
+  total = len(jobs)
+  if done >= total:
+    session.pop("last_jobs", None)
+  return jsonify({"total": total, "done": done, "running": running, "failed": failed, "statuses": statuses})
 
 # ---------- App runner ----------
 
