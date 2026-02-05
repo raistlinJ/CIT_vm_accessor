@@ -924,6 +924,27 @@ def bulk_action():
     except Exception:
       logger.exception(f"[{req_id()}] Snapshot list exception vmid={vmid} node={node}")
       return None
+  def _get_lock_state(node: str, vtype: str, vmid: str):
+    if vtype == "qemu":
+      path = f"/nodes/{node}/qemu/{vmid}/status/current"
+    elif vtype == "lxc":
+      path = f"/nodes/{node}/lxc/{vmid}/status/current"
+    else:
+      return None
+    try:
+      rs = proxmox_get(path, cookies=cookies, headers=headers)
+      if rs.status_code == 401:
+        logger.info(f"[{req_id()}] Status current unauthorized vmid={vmid} node={node}; forcing session reset")
+        session.clear()
+        return "__unauthorized__"
+      if not rs.ok:
+        logger.warning(f"[{req_id()}] Status current failed vmid={vmid} node={node} status={rs.status_code} body={rs.text[:180]!r}")
+        return None
+      data = rs.json().get("data", {})
+      return data.get("lock")
+    except Exception:
+      logger.exception(f"[{req_id()}] Status current exception vmid={vmid} node={node}")
+      return None
   for item in selections:
     try:
       node, vtype, vmid = item.split("|")
@@ -965,6 +986,13 @@ def bulk_action():
           failure_details.append(f"{node}/{vmid} poweroff failed ({reason})")
           logger.warning(f"[{req_id()}] Poweroff failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
       elif action == "start":
+        lock_state = _get_lock_state(node, vtype, vmid)
+        if lock_state == "__unauthorized__":
+          return redirect(url_for("session_reset", reason="invalid"))
+        if lock_state:
+          skipped += 1
+          skip_details.append(f"{node}/{vmid} skipped (locked: {lock_state})")
+          continue
         if current_status and current_status == "running":
           skipped += 1
           skip_details.append(f"{node}/{vmid} skipped (already running)")
