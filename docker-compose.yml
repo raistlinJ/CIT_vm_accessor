@@ -26,6 +26,7 @@ services:
     container_name: proxclient
     volumes:
       - ./static:/app/static:ro
+      - ./:/app
     environment:
       # App listens on plain HTTP 8080 inside container
       - PORT=8080

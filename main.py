@@ -12,6 +12,9 @@ import time
 from flask import Flask, request, redirect, session, make_response, render_template_string, url_for, g, jsonify, send_from_directory
 from waitress import serve
 from jinja2 import DictLoader
+import concurrent.futures
+import re
+import html
 
 """
 Quick start
@@ -145,6 +148,62 @@ TPL_BASE = """
   .vm-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:.65rem; margin:0 0 1rem; }
   .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--border); border-radius:10px; padding:.55rem 3.1rem .55rem 2.2rem; background:#fff; min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
   .vm-item:hover { border-color:var(--accent); box-shadow:0 0 0 2px #07b36d1f, 0 4px 10px -4px #022e2044; }
+  .scenario-section { margin-bottom: 2rem; }
+  .scenario-header {
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin: 0 0 0.8rem 0.2rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 2px solid #e1e8ed;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .scenario-section {
+    border: 1px solid #cfd9e3;
+    background: #f8fafc;
+    border-radius: 12px;
+    padding: 1rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .scenario-header {
+    margin: 0 0 1rem 0;
+    padding-bottom: 0.5rem;
+  }
+  .vm-list {
+     margin: 0;
+  }
+  .scenario-btn {
+    margin-left: auto; /* Push to right */
+    padding: 0.35rem 0.8rem;
+    font-size: 0.72rem;
+    background: #d32f2f;
+    color: #ffffff;
+    border: 1px solid #b71c1c;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 700;
+    transition: all 0.2s;
+    letter-spacing: 0.3px;
+    box-shadow: 0 2px 4px rgba(211,47,47,0.3);
+  }
+  .scenario-btn:hover {
+    background: #b71c1c;
+    border-color: #880e4f;
+    box-shadow: 0 3px 6px rgba(183,28,28,0.4);
+    transform: translateY(-1px);
+  }
+  .scenario-count {
+    background: #e1e8ed;
+    color: #5c6f80;
+    padding: 0.1rem 0.4rem;
+    border-radius: 12px;
+    font-size: 0.7rem;
+  }
   .vm-item input[type=checkbox] { position:absolute; left:.65rem; top:.75rem; width:1.05rem; height:1.05rem; margin:0; accent-color: var(--accent); cursor:pointer; }
   .vm-info-btn { position:absolute; top:0; right:0; height:100%; width:2.6rem; border:0; border-left:1px solid var(--border); background:#f3f7fb; color:#2c4b62; font-weight:700; font-size:1.4rem; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:inset 0 0 0 1px #eef3f7; }
   .vm-info-btn:hover { background:#e6eef6; }
@@ -397,12 +456,18 @@ TPL_HOME = """
 {% if vms %}
 <div class="vm-action-layout">
   <div>
-    <h3>Visible VMs</h3>
-    <form method="post" action="{{ url_for('bulk_action') }}" id="bulkForm">
-      <div class="vm-list" id="vmList">
-      {% for vm in vms %}
+    {% for scenario, group_vms in grouped_vms.items() %}
+    <div class="scenario-section">
+      <div class="scenario-header">
+        {{ scenario }}
+        <span class="scenario-count">{{ group_vms|length }}</span>
+        <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset all VMs in this scenario">Factory Reset Scenario</button>
+      </div>
+      <div class="vm-list">
+      {% for vm in group_vms %}
         <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
           <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
+
           <button type="button" class="vm-info-btn" title="View notes" aria-label="View notes" data-node="{{ vm.get('node') }}" data-type="{{ vm.get('type') }}" data-vmid="{{ vm.get('vmid') }}">📄</button>
           <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
             <span class="vm-id-line">#{{ vm.get('vmid') }} - {{ vm.get('node') }}</span>
@@ -412,16 +477,32 @@ TPL_HOME = """
         </label>
       {% endfor %}
       </div>
+    </div>
+    {% else %}
+      {% if not vms %}
+        <p class="muted">No VMs listed, or your account lacks VM.Audit permission.</p>
+      {% endif %}
+    {% endfor %}
+
+    <form method="post" action="{{ url_for('bulk_action') }}" id="bulkForm">
+      <!-- Hidden inputs for bulk actions; checkboxes are inside loops above but form needs to encompass or be linked -->
+      <!-- Since form cannot easily wrap multiple divs in this layout without breaking grid, we use a trick or JS submit -->
+      <!-- Actually, standard HTML forms cannot span non-descendants easily. 
+           We will use JS to gather checkboxes or wrapping the whole 'Visible VMs' logic in one form is better.
+           Let's wrap the loop in the form. -->
+    <form method="post" action="{{ url_for('bulk_action') }}" id="bulkForm">
       <input type="hidden" name="action" value="" id="hiddenBulkAction" />
       <input type="hidden" name="snapshot" value="" id="hiddenSnapshot" />
+      <input type="hidden" name="scenario" value="" id="hiddenScenario" />
     </form>
   </div>
   <div class="action-frame" aria-label="Bulk VM Actions">
-    <h4>Bulk Actions</h4>
+    <h4>Selection Actions</h4>
+    <p style="margin:-0.2rem 0 0.6rem; font-size:0.65rem; color:#9cc9d9; text-align:center;">Applied to checked VMs only</p>
     <div class="btn-group">
-  <button id="btnStart" type="button" disabled title="Start each selected VM">Start</button>
-  <button id="btnPoweroff" type="button" class="btn-danger" disabled title="Power off (stop) each selected VM">Poweroff</button>
-  <button id="btnRestore" type="button" class="btn-danger" disabled title="Rollback each selected VM to its newest snapshot">Factory-Reset</button>
+  <button id="btnStart" type="button" disabled title="Start each selected VM">Start Selected</button>
+  <button id="btnPoweroff" type="button" class="btn-danger" disabled title="Power off (stop) each selected VM">Poweroff Selected</button>
+  <button id="btnRestore" type="button" class="btn-danger" disabled title="Rollback each selected VM to its newest snapshot">Factory Reset Selected</button>
     </div>
     <div class="small-group">
   <button id="selectAllBtn" type="button" title="Select all visible VMs">Select All</button>
@@ -515,9 +596,67 @@ def proxmox_get(path, **kwargs):
 def proxmox_post(path, **kwargs):
   return proxmox_request("POST", path, **kwargs)
 
-@app.before_request
-def assign_request_id():
-  g.request_id = uuid.uuid4().hex[:8]
+
+def _extract_scenario(notes: str) -> str:
+  if not notes:
+    return "Uncategorized"
+  
+  # Decode HTML entities (Proxmox sometimes sends &quot; for quotes, etc)
+  try:
+    clean_notes = html.unescape(notes)
+  except:
+    clean_notes = notes
+
+  # Remove HTML tags if present (e.g. <br>, <div>)
+  clean_notes = re.sub(r'<[^>]+>', ' ', clean_notes)
+
+  # Look for "Scenario": "Value" or Scenario: Value
+  # We use DOTALL to allow matching across lines if needed, though usually key/value is on one line.
+  # We look for Key... : ... Value
+  match = re.search(r'[\"\']?Scenario[\"\']?\s*[:=]\s*[\"\']?([^\"\',}\r\n]+)[\"\']?', clean_notes, re.IGNORECASE)
+  if match:
+    return match.group(1).strip()
+  
+  return "Uncategorized"
+
+def fetch_vm_notes(vm, cookies, headers, host, port, verify):
+  """
+  Fetches config for a single VM to get its notes/description.
+  Returns (vmid, notes_text).
+  """
+  try:
+    node = vm.get("node")
+    vmid = vm.get("vmid")
+    vtype = vm.get("type", "qemu") # default to qemu if missing (unlikely for valid VMs)
+    if vtype not in ("qemu", "lxc"):
+       return (vmid, "")
+  
+    # Use requests directly to avoid session context issues in threads if any, 
+    # but we need the base URL.
+    # We will pass specific cookies/headers.
+    
+    path = f"/nodes/{node}/{vtype}/{vmid}/config"
+    url = f"https://{host}:{port}/api2/json" + path
+    
+    
+    # Enable verbose logging for debugging
+    # logger.info(f"DEBUG: Fetching notes for {vmid} from {url}")
+    resp = requests.get(url, cookies=cookies, headers=headers, verify=verify, timeout=5)
+    
+    if resp.ok:
+      data = resp.json().get("data", {})
+      notes = data.get("description", "")
+      # logger.info(f"DEBUG: VM {vmid} raw notes: {notes!r}")
+      
+      extracted = _extract_scenario(notes)
+      # logger.info(f"DEBUG: VM {vmid} extracted scenario: {extracted!r}")
+      return (vmid, notes)
+    else:
+      logger.warning(f"DEBUG: Failed to fetch notes for {vmid}: status={resp.status_code}")
+  except Exception as e:
+    logger.exception(f"DEBUG: Exception fetching notes for {vmid}: {e}")
+  return (vm.get("vmid"), "")
+
 
 # ---------- Routes ----------
 
@@ -791,6 +930,64 @@ def home():
   except Exception:
     logger.exception(f"[{req_id()}] Exception while listing VMs")
 
+  # Enrich VMs with notes in parallel to determine Scenario
+  # Limit workers to avoid hammering Proxmox
+  grouped_vms = {}
+  if vms:
+    # Prepare shared auth for threads
+    # Session is thread-local in Flask, but we are inside the request thread here spawning workers.
+    # We pass explicit dicts to workers.
+    t_cookies = {"PVEAuthCookie": session.get("pve_ticket")}
+    t_headers = {"CSRFPreventionToken": session.get("pve_csrf")}
+    t_host = session.get("pve_host", PROXMOX_HOST)
+    t_port = session.get("pve_port", PROXMOX_PORT)
+    t_verify = session.get("pve_verify_ssl", VERIFY_SSL)
+    
+    # Map vmid -> vm_obj for easy lookup
+    vm_map = {str(vm["vmid"]): vm for vm in vms}
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+      # Submit tasks
+      future_to_vmid = {
+        executor.submit(fetch_vm_notes, vm, t_cookies, t_headers, t_host, t_port, t_verify): str(vm["vmid"]) 
+        for vm in vms
+      }
+      for future in concurrent.futures.as_completed(future_to_vmid):
+        vmid = future_to_vmid[future]
+        try:
+          _, notes = future.result()
+          vm_map[vmid]["notes"] = notes
+          vm_map[vmid]["scenario"] = _extract_scenario(notes)
+        except Exception:
+          vm_map[vmid]["scenario"] = "Uncategorized"
+
+    # Grouping
+    for vm in vms:
+      # Recalculate scenario in main thread just in case context matters
+      # But wait, vm["notes"] is set above.
+      # Let's verify what the main thread sees.
+      sc = vm.get("scenario", "Uncategorized")
+      logger.info(f"DEBUG: MainThread Grouping VM {vm.get('vmid')} -> Scenario: {sc!r}")
+      
+      if sc not in grouped_vms:
+        grouped_vms[sc] = []
+      grouped_vms[sc].append(vm)
+      
+    # Sort groups: Scenarios alphabetically, but "Uncategorized" last?
+    # Or just simple alphanumeric. Let's do simple alphanumeric for now.
+    # If users want specific order, they can name them "01 Scenario", "02 Scenario".
+    # Sorting keys
+    sorted_keys = sorted(grouped_vms.keys())
+
+    # Create a sorted dict (Python 3.7+ preserves insertion order)
+    # If "Uncategorized" exists, maybe move it to end?
+    if "Uncategorized" in sorted_keys and len(sorted_keys) > 1:
+        sorted_keys.remove("Uncategorized")
+        sorted_keys.append("Uncategorized")
+        
+    grouped_vms = {k: grouped_vms[k] for k in sorted_keys}
+
+
   # Provide last action result to JS dock
   last_action = {
     "action": request.args.get("bulk"),
@@ -825,6 +1022,7 @@ def home():
   return render_template_string(
     TPL_HOME,
     vms=vms,
+    grouped_vms=grouped_vms,
     last_action=last_action,
     show_dock=True,
     bulk_notice=notice,
@@ -1067,6 +1265,143 @@ def bulk_action():
           reason = f"HTTP {r.status_code}"
           failure_details.append(f"{node}/{vmid} restore failed ({reason})")
           logger.warning(f"[{req_id()}] Restore failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
+      elif action == "factory-reset":
+        # ... existing logic for SELECTED VMs ...
+        # Stop -> Sleep -> Rollback -> Start
+        if current_status == "running":
+            if vtype == "qemu":
+              path = f"/nodes/{node}/qemu/{vmid}/status/stop"
+            elif vtype == "lxc":
+              path = f"/nodes/{node}/lxc/{vmid}/status/stop"
+            else:
+               pass
+            try:
+               proxmox_post(path, data={}, cookies=cookies, headers=headers)
+            except:
+               pass
+        
+        time.sleep(1.5)
+
+        snap_name = snapshot
+        if not snap_name:
+          snap_name = _get_newest_snapshot(node, vtype, vmid)
+        
+        if not snap_name or snap_name == "__unauthorized__":
+           failed += 1
+           failure_details.append(f"{node}/{vmid} reset failed (no snapshot)")
+           continue
+
+        if vtype == "qemu":
+          path = f"/nodes/{node}/qemu/{vmid}/snapshot/{snap_name}/rollback"
+        elif vtype == "lxc":
+          path = f"/nodes/{node}/lxc/{vmid}/snapshot/{snap_name}/rollback"
+        
+        r = proxmox_post(path, data={"start": 1}, cookies=cookies, headers=headers)
+        if r.ok:
+          done += 1
+          success_details.append(f"{node}/{vmid} reset ok")
+          try:
+            payload = r.json()
+            upid = payload.get("data")
+            if isinstance(upid, str) and upid.startswith("UPID:"):
+              jobs.append({"node": node, "upid": upid})
+          except:
+            pass
+        else:
+          failed += 1
+          failure_details.append(f"{node}/{vmid} reset failed (HTTP {r.status_code})")
+      
+      elif action == "factory-reset-scenario":
+          # Resets ALL VMs in the given scenario (passed via 'scenario' form field or we parse it?)
+          # Actually, bulk_action receives a list of 'vms', but for this action we want EVERYTHING in the scenario.
+          # But the form submission for this button might not select all VMs if some are hidden.
+          # So we need to:
+          # 1. Fetch ALL VMs (user visible)
+          # 2. Fetch notes for ALL of them (in parallel!)
+          # 3. Filter by target scenario
+          # 4. Perform reset on the matching list
+          
+          target_scenario = request.form.get("scenario")
+          if not target_scenario:
+             # Fallback if checks exist? No, this action implies scenario target.
+             return redirect(url_for("home"))
+          
+          # 1. Fetch all VMs again (fresh list)
+          all_vms = []
+          try:
+            r = proxmox_get("/cluster/resources", params={"type": "vm"}, cookies=cookies, headers=headers)
+            if r.ok:
+               all_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+          except:
+             pass
+          
+          # 2. Parallel fetch notes
+          t_host = session.get("pve_host", PROXMOX_HOST)
+          t_port = session.get("pve_port", PROXMOX_PORT)
+          t_verify = session.get("pve_verify_ssl", VERIFY_SSL)
+          
+          target_vms = []
+          with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_vm = {
+                executor.submit(fetch_vm_notes, vm, cookies, headers, t_host, t_port, t_verify): vm
+                for vm in all_vms
+            }
+            for future in concurrent.futures.as_completed(future_to_vm):
+                vm = future_to_vm[future]
+                try:
+                    _, notes = future.result()
+                    sc = _extract_scenario(notes) # re-extract
+                    if sc == target_scenario:
+                        target_vms.append(vm)
+                except:
+                    pass
+          
+          # 3. Reset loop for target_vms
+          for vm in target_vms:
+             node = vm.get("node")
+             vmid = str(vm.get("vmid"))
+             vtype = vm.get("type")
+             current_status = vm.get("status") # might be slightly stale but ok
+             
+             # Stop
+             if current_status == "running":
+                path = f"/nodes/{node}/{vtype}/{vmid}/status/stop"
+                try:
+                    proxmox_post(path, data={}, cookies=cookies, headers=headers)
+                except:
+                    pass
+          
+          # Sleep once for the whole batch
+          time.sleep(2.0)
+          
+          # Rollback
+          for vm in target_vms:
+             node = vm.get("node")
+             vmid = str(vm.get("vmid"))
+             vtype = vm.get("type")
+             
+             snap_name = _get_newest_snapshot(node, vtype, vmid)
+             if not snap_name or snap_name == "__unauthorized__":
+                 failed += 1
+                 failure_details.append(f"{node}/{vmid} hidden-reset failed (no snapshot)")
+                 continue
+             
+             path = f"/nodes/{node}/{vtype}/{vmid}/snapshot/{snap_name}/rollback"
+             r = proxmox_post(path, data={"start": 1}, cookies=cookies, headers=headers)
+             if r.ok:
+                done += 1
+                success_details.append(f"{node}/{vmid} scenario-reset ok")
+                try:
+                    payload = r.json()
+                    upid = payload.get("data")
+                    if isinstance(upid, str) and upid.startswith("UPID:"):
+                        jobs.append({"node": node, "upid": upid})
+                except:
+                    pass
+             else:
+                failed += 1
+                failure_details.append(f"{node}/{vmid} scenario-reset failed")
+        
       else:
         logger.warning(f"[{req_id()}] Unsupported bulk action: {action}")
         failed += 1
