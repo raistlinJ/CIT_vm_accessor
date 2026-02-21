@@ -461,7 +461,7 @@ TPL_HOME = """
       <div class="scenario-header">
         {{ scenario }}
         <span class="scenario-count">{{ group_vms|length }}</span>
-        <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset all VMs in this scenario">Factory Reset Scenario</button>
+        <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY hidden background VMs for this scenario">Factory Reset Network Backend</button>
       </div>
       <div class="vm-list">
       {% for vm in group_vms %}
@@ -485,14 +485,9 @@ TPL_HOME = """
     {% endfor %}
 
     <form method="post" action="{{ url_for('bulk_action') }}" id="bulkForm">
-      <!-- Hidden inputs for bulk actions; checkboxes are inside loops above but form needs to encompass or be linked -->
-      <!-- Since form cannot easily wrap multiple divs in this layout without breaking grid, we use a trick or JS submit -->
-      <!-- Actually, standard HTML forms cannot span non-descendants easily. 
-           We will use JS to gather checkboxes or wrapping the whole 'Visible VMs' logic in one form is better.
-           Let's wrap the loop in the form. -->
-    <form method="post" action="{{ url_for('bulk_action') }}" id="bulkForm">
       <input type="hidden" name="action" value="" id="hiddenBulkAction" />
       <input type="hidden" name="snapshot" value="" id="hiddenSnapshot" />
+      <input type="hidden" name="vms_visible" value="" id="hiddenVisibleVms" />
       <input type="hidden" name="scenario" value="" id="hiddenScenario" />
     </form>
   </div>
@@ -922,7 +917,25 @@ def home():
       session.clear()
       return redirect(url_for("session_reset", reason="invalid"))
     if r.ok:
-      vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+      raw_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+      
+      # Filter by VM.Console permission to hide backend VMs
+      try:
+          p = proxmox_get("/access/permissions", cookies=cookies, headers=headers)
+          if p.ok:
+              perms = p.json().get("data", {})
+              for vm in raw_vms:
+                  vmid = str(vm.get("vmid"))
+                  vm_perms = perms.get(f"/vms/{vmid}", {})
+                  # Only show VMs where the user has VM.Console
+                  if "VM.Console" in vm_perms:
+                      vms.append(vm)
+          else:
+              logger.warning(f"[{req_id()}] Failed to fetch permissions: {p.status_code}")
+              vms = raw_vms # fallback to all visible if perm check fails
+      except Exception as p_ex:
+          logger.exception(f"[{req_id()}] Exception fetching permissions")
+          vms = raw_vms
     else:
       logger.warning(
         f"[{req_id()}] Failed to list VMs: status={r.status_code} body={r.text[:300]!r}"
@@ -1058,10 +1071,19 @@ def open_console():
 @app.route("/bulk", methods=["POST"])
 @require_session()
 def bulk_action():
+  g.request_id = os.urandom(4).hex()
   action = (request.form.get("action") or "").lower().strip()
   selections = request.form.getlist("vms")
   snapshot = (request.form.get("snapshot") or "").strip()
-  if not action or not selections:
+  
+  logger.warning(f"[{req_id()}] === BULK_ACTION STARTED === action: '{action}' | form_keys: {list(request.form.keys())} | len(vms): {len(selections)}")
+  
+  if not action:
+    logger.warning(f"[{req_id()}] Aborting bulk_action: No action provided in form.")
+    return redirect(url_for("home"))
+    
+  if action != "factory-reset-scenario" and not selections:
+    logger.warning(f"[{req_id()}] Aborting bulk_action: Action '{action}' requires selections, but none provided.")
     return redirect(url_for("home"))
   done = 0
   failed = 0
@@ -1143,6 +1165,160 @@ def bulk_action():
     except Exception:
       logger.exception(f"[{req_id()}] Status current exception vmid={vmid} node={node}")
       return None
+
+  if action == "factory-reset-scenario":
+      try:
+          target_scenario = request.form.get("scenario")
+          visible_vms_str = request.form.get("vms_visible", "")
+          visible_vmid_set = set(v.strip() for v in visible_vms_str.split(",") if v.strip())
+          
+          logger.warning(f"[{req_id()}] ACTION: factory-reset-scenario | Target Scenario: '{target_scenario}' | Visible VMs Array: '{visible_vms_str}'")
+          
+          if target_scenario:
+              # 1. Fetch notes for all accessible VMs in the entire pool
+              t_host = session.get("pve_host", PROXMOX_HOST)
+              t_port = session.get("pve_port", PROXMOX_PORT)
+              t_verify = session.get("pve_verify_ssl", VERIFY_SSL)
+              
+              backend_vms_to_reset = set()
+              primary_node = None
+              
+              try:
+                  # Get all VMs accessible by user
+                  r = proxmox_get("/cluster/resources", params={"type": "vm"}, cookies=cookies, headers=headers)
+                  if r.ok:
+                      all_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+                      logger.info(f"[{req_id()}] Total accessible VMs for user: {[v.get('vmid') for v in all_vms]}")
+                      
+                      visible_vms_to_check = []
+                      hidden_vms_to_check = []
+                      
+                      for vm in all_vms:
+                          vmid = str(vm.get("vmid"))
+                          if vmid in visible_vmid_set:
+                              visible_vms_to_check.append(vm)
+                              # Capture the node of the first visible VM to use for backend VMs
+                              if not primary_node:
+                                  primary_node = vm.get("node")
+                          else:
+                              hidden_vms_to_check.append(vm)
+                      
+                      logger.info(f"[{req_id()}] Visible VMs ({len(visible_vms_to_check)}) | Hidden VMs ({len(hidden_vms_to_check)})")
+                      
+                      # --- OPTION 1: Scan Visible VMs for JSON 'BackendVMs' block ---
+                      if visible_vms_to_check:
+                          with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                              future_to_vm = {
+                                  executor.submit(fetch_vm_notes, vm, cookies, headers, t_host, t_port, t_verify): vm
+                                  for vm in visible_vms_to_check
+                              }
+                              for future in concurrent.futures.as_completed(future_to_vm):
+                                  vm = future_to_vm[future]
+                                  try:
+                                      _, notes = future.result()
+                                      sc = _extract_scenario(notes) 
+                                      if sc == target_scenario:
+                                          try:
+                                              clean_notes = html.unescape(notes)
+                                              clean_notes = re.sub(r'<[^>]+>', ' ', clean_notes)
+                                              json_match = re.search(r'(\{.*BackendVMs.*\})', clean_notes, re.DOTALL | re.IGNORECASE)
+                                              if json_match:
+                                                  note_data = json.loads(json_match.group(1))
+                                                  backend_ids = note_data.get("BackendVMs", [])
+                                                  if isinstance(backend_ids, list):
+                                                      for bid in backend_ids:
+                                                          backend_vms_to_reset.add(str(bid))
+                                                          logger.info(f"[{req_id()}] Discovered Backend VM {bid} via Option 1 (JSON in VM {vm.get('vmid')})")
+                                          except Exception:
+                                              pass
+                                  except Exception:
+                                      pass
+
+                      # --- OPTION 2: Scan Hidden VMs for matching 'Scenario' string ---
+                      if hidden_vms_to_check:
+                          with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                              future_to_vm = {
+                                  executor.submit(fetch_vm_notes, vm, cookies, headers, t_host, t_port, t_verify): vm
+                                  for vm in hidden_vms_to_check
+                              }
+                              for future in concurrent.futures.as_completed(future_to_vm):
+                                  vm = future_to_vm[future]
+                                  try:
+                                      _, notes = future.result()
+                                      sc = _extract_scenario(notes) 
+                                      if sc == target_scenario:
+                                          vmid_str = str(vm.get("vmid"))
+                                          backend_vms_to_reset.add(vmid_str)
+                                          logger.info(f"[{req_id()}] Discovered Backend VM {vmid_str} via Option 2 (Scenario string match)")
+                                  except Exception as ex:
+                                      logger.error(f"[{req_id()}] Error parsing notes for hidden VM {vm.get('vmid')}: {ex}")
+                          
+              except Exception as ex:
+                  logger.error(f"[{req_id()}] Failed to fetch cluster resources for context: {ex}")
+              
+              if not backend_vms_to_reset:
+                  logger.warning(f"[{req_id()}] Checked all accessible VMs. No backend VMs discovered for scenario '{target_scenario}' via JSON or Scenario tags.")
+                  failed += 1
+                  failure_details.append("No backend VMs discovered.")
+              
+              if backend_vms_to_reset and primary_node:
+                  logger.info(f"[{req_id()}] Executing stop -> rollback -> start for Backend VMs: {list(backend_vms_to_reset)} on node {primary_node}")
+                  
+                  # Stop loop
+                  for vmid in backend_vms_to_reset:
+                     # Try QEMU first
+                     try:
+                         logger.info(f"[{req_id()}] Stopping backend VM {vmid} on {primary_node} (qemu)")
+                         proxmox_post(f"/nodes/{primary_node}/qemu/{vmid}/status/stop", data={}, cookies=cookies, headers=headers)
+                     except Exception:
+                         # Fallback to LXC
+                         try:
+                             logger.info(f"[{req_id()}] Stopping backend VM {vmid} on {primary_node} (lxc)")
+                             proxmox_post(f"/nodes/{primary_node}/lxc/{vmid}/status/stop", data={}, cookies=cookies, headers=headers)
+                         except Exception as ex:
+                             logger.warning(f"[{req_id()}] Failed to stop hidden VM {vmid}: {ex}")
+                  
+                  # Sleep once for the whole batch
+                  time.sleep(2.0)
+                  
+                  # Rollback
+                  for vmid in backend_vms_to_reset:
+                     vtype = "qemu"
+                     snap_name = _get_newest_snapshot(primary_node, "qemu", vmid)
+                     
+                     if not snap_name or snap_name == "__unauthorized__":
+                         vtype = "lxc"
+                         snap_name = _get_newest_snapshot(primary_node, "lxc", vmid)
+                         
+                     if not snap_name or snap_name == "__unauthorized__":
+                         failed += 1
+                         failure_details.append(f"{primary_node}/{vmid} hidden-reset failed (no snapshot)")
+                         continue
+                     
+                     path = f"/nodes/{primary_node}/{vtype}/{vmid}/snapshot/{snap_name}/rollback"
+                     r = proxmox_post(path, data={"start": 1}, cookies=cookies, headers=headers)
+                     if r.ok:
+                        done += 1
+                        success_details.append(f"{primary_node}/{vmid} scenario-reset ok")
+                        try:
+                            payload = r.json()
+                            upid = payload.get("data")
+                            if isinstance(upid, str) and upid.startswith("UPID:"):
+                                jobs.append({"node": primary_node, "upid": upid})
+                        except:
+                            pass
+                     else:
+                        failed += 1
+                        failure_details.append(f"{primary_node}/{vmid} scenario-reset failed")
+              elif backend_vms_to_reset and not primary_node:
+                  logger.error(f"[{req_id()}] Could not determine primary_node to execute backend reset")
+          else:
+              logger.warning(f"[{req_id()}] Bypassed execution because target_scenario='{target_scenario}'")
+      except Exception:
+          failed += 1
+          failure_details.append("scenario-reset exception")
+          logger.exception(f"[{req_id()}] Scenario reset exception")
+
   for item in selections:
     try:
       node, vtype, vmid = item.split("|")
@@ -1311,98 +1487,6 @@ def bulk_action():
           failed += 1
           failure_details.append(f"{node}/{vmid} reset failed (HTTP {r.status_code})")
       
-      elif action == "factory-reset-scenario":
-          # Resets ALL VMs in the given scenario (passed via 'scenario' form field or we parse it?)
-          # Actually, bulk_action receives a list of 'vms', but for this action we want EVERYTHING in the scenario.
-          # But the form submission for this button might not select all VMs if some are hidden.
-          # So we need to:
-          # 1. Fetch ALL VMs (user visible)
-          # 2. Fetch notes for ALL of them (in parallel!)
-          # 3. Filter by target scenario
-          # 4. Perform reset on the matching list
-          
-          target_scenario = request.form.get("scenario")
-          if not target_scenario:
-             # Fallback if checks exist? No, this action implies scenario target.
-             return redirect(url_for("home"))
-          
-          # 1. Fetch all VMs again (fresh list)
-          all_vms = []
-          try:
-            r = proxmox_get("/cluster/resources", params={"type": "vm"}, cookies=cookies, headers=headers)
-            if r.ok:
-               all_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
-          except:
-             pass
-          
-          # 2. Parallel fetch notes
-          t_host = session.get("pve_host", PROXMOX_HOST)
-          t_port = session.get("pve_port", PROXMOX_PORT)
-          t_verify = session.get("pve_verify_ssl", VERIFY_SSL)
-          
-          target_vms = []
-          with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_vm = {
-                executor.submit(fetch_vm_notes, vm, cookies, headers, t_host, t_port, t_verify): vm
-                for vm in all_vms
-            }
-            for future in concurrent.futures.as_completed(future_to_vm):
-                vm = future_to_vm[future]
-                try:
-                    _, notes = future.result()
-                    sc = _extract_scenario(notes) # re-extract
-                    if sc == target_scenario:
-                        target_vms.append(vm)
-                except:
-                    pass
-          
-          # 3. Reset loop for target_vms
-          for vm in target_vms:
-             node = vm.get("node")
-             vmid = str(vm.get("vmid"))
-             vtype = vm.get("type")
-             current_status = vm.get("status") # might be slightly stale but ok
-             
-             # Stop
-             if current_status == "running":
-                path = f"/nodes/{node}/{vtype}/{vmid}/status/stop"
-                try:
-                    proxmox_post(path, data={}, cookies=cookies, headers=headers)
-                except:
-                    pass
-          
-          # Sleep once for the whole batch
-          time.sleep(2.0)
-          
-          # Rollback
-          for vm in target_vms:
-             node = vm.get("node")
-             vmid = str(vm.get("vmid"))
-             vtype = vm.get("type")
-             
-             snap_name = _get_newest_snapshot(node, vtype, vmid)
-             if not snap_name or snap_name == "__unauthorized__":
-                 failed += 1
-                 failure_details.append(f"{node}/{vmid} hidden-reset failed (no snapshot)")
-                 continue
-             
-             path = f"/nodes/{node}/{vtype}/{vmid}/snapshot/{snap_name}/rollback"
-             r = proxmox_post(path, data={"start": 1}, cookies=cookies, headers=headers)
-             if r.ok:
-                done += 1
-                success_details.append(f"{node}/{vmid} scenario-reset ok")
-                try:
-                    payload = r.json()
-                    upid = payload.get("data")
-                    if isinstance(upid, str) and upid.startswith("UPID:"):
-                        jobs.append({"node": node, "upid": upid})
-                except:
-                    pass
-             else:
-                failed += 1
-                failure_details.append(f"{node}/{vmid} scenario-reset failed")
-        
-      else:
         logger.warning(f"[{req_id()}] Unsupported bulk action: {action}")
         failed += 1
     except Exception:
@@ -1439,7 +1523,23 @@ def api_vms():
       return jsonify({"error": "unauthorized", "redirect": url_for("session_reset", reason="invalid")}), 401
     if not r.ok:
       return jsonify({"error": "upstream", "status": r.status_code}), 502
-    data = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+    raw_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+    
+    # Filter by VM.Console permission
+    visible_vms = []
+    try:
+        p = proxmox_get("/access/permissions", cookies=cookies, headers=headers)
+        if p.ok:
+            perms = p.json().get("data", {})
+            for vm in raw_vms:
+                vmid = str(vm.get("vmid"))
+                if "VM.Console" in perms.get(f"/vms/{vmid}", {}):
+                    visible_vms.append(vm)
+        else:
+            visible_vms = raw_vms
+    except:
+        visible_vms = raw_vms
+        
     # Only fields needed by UI
     slim = [
       {
@@ -1449,7 +1549,7 @@ def api_vms():
         "name": row.get("name"),
         "type": row.get("type"),
       }
-      for row in data
+      for row in visible_vms
     ]
     return jsonify({"vms": slim})
   except Exception:

@@ -19,6 +19,7 @@
   const btnRestore = document.getElementById('btnRestore');
   const hiddenAction = document.getElementById('hiddenBulkAction');
   const hiddenSnapshot = document.getElementById('hiddenSnapshot');
+  const hiddenVisibleVms = document.getElementById('hiddenVisibleVms');
   const LOG_KEY = 'activityLogLines';
   function ts() { return new Date().toISOString(); }
   function addLog(msg, type) {
@@ -286,7 +287,7 @@
       // Determine wait time based on last action
       let waitSeconds = 10;
       const lastAct = params.get('bulk') || '';
-      if (lastAct.includes('reset') || lastAct.includes('restore')) {
+      if (lastAct.includes('reset') || lastAct.includes('restore') || lastAct === 'factory-reset-scenario') {
         waitSeconds = 30;
       }
 
@@ -558,33 +559,61 @@
       const section = btn.closest('.scenario-section');
       if (!section) return;
 
-      // 2. Select all checkboxes in this section
-      document.querySelectorAll('.vm-item input[type=checkbox]').forEach(cb => cb.checked = false);
-      const myChecks = section.querySelectorAll('.vm-item input[type=checkbox]');
-      myChecks.forEach(cb => cb.checked = true);
-      updateBulkButtons();
+      // 2. Collect visible VM IDs to exclude from reset
+      const myChecks = section.querySelectorAll('.vm-item');
+      const visibleIds = [];
+      myChecks.forEach(item => {
+        const vmid = item.getAttribute('data-vmid');
+        if (vmid) visibleIds.push(vmid);
+      });
 
       // 3. Confirm
-      const msg = 'WARNING: FULL SCENARIO RESET for "' + scenario + '"\n\n' +
-        'This will reset ALL VMs belonging to this scenario,\n' +
-        'INCLUDING backend VMs not currently visible in this list.\n\n' +
-        'ALL DATA & CHANGES WILL BE LOST.\n\n' +
+      const msg = 'WARNING: RESET NETWORK BACKEND for "' + scenario + '"\n\n' +
+        'This will reset ONLY the hidden backend VMs for this scenario.\n' +
+        'Visible VMs in this list (' + visibleIds.length + ') will NOT be touched.\n\n' +
         'Are you sure you want to proceed?';
 
       const ok = await confirmDialog(msg);
       if (!ok) return;
 
       // 4. Submit
-      if (hiddenAction && bulkForm) {
-        hiddenAction.value = 'factory-reset-scenario';
-        if (hiddenScenario) hiddenScenario.value = scenario; // Assuming hiddenScenario is defined in closure if getting by ID works
+      try {
+        if (!bulkForm) throw new Error("bulkForm not found");
 
-        // We need to ensure hiddenScenario element exists or we get it here
-        const hiddenScenField = document.getElementById('hiddenScenario');
-        if (hiddenScenField) hiddenScenField.value = scenario;
+        let actInput = bulkForm.querySelector('input[name="action"]');
+        if (!actInput) {
+          actInput = document.createElement('input');
+          actInput.type = 'hidden';
+          actInput.name = 'action';
+          bulkForm.appendChild(actInput);
+        }
+        actInput.value = 'factory-reset-scenario';
 
-        showProgress('Resetting ENTIRE "' + scenario + '" scenario...');
-        try { bulkForm.submit(); } catch (e) { addLog('Submit error: ' + e.message, 'error'); }
+        let scInput = bulkForm.querySelector('input[name="scenario"]');
+        if (!scInput) {
+          scInput = document.createElement('input');
+          scInput.type = 'hidden';
+          scInput.name = 'scenario';
+          bulkForm.appendChild(scInput);
+        }
+        scInput.value = scenario;
+
+        let visInput = bulkForm.querySelector('input[name="vms_visible"]');
+        if (!visInput) {
+          visInput = document.createElement('input');
+          visInput.type = 'hidden';
+          visInput.name = 'vms_visible';
+          bulkForm.appendChild(visInput);
+        }
+        visInput.value = visibleIds.join(',');
+
+        showProgress('Resetting HIDDEN BACKEND VMs for "' + scenario + '"...');
+        setTimeout(() => { setBusy(true); addLog('Scenario reset submitted (deferred disable)', 'info'); }, 25);
+
+        bulkForm.submit();
+      } catch (e) {
+        addLog('Submit error: ' + e.message, 'error');
+        alert("Action failed to submit: " + e.message);
       }
     });
   });
