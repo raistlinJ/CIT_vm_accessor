@@ -461,7 +461,7 @@ TPL_HOME = """
       <div class="scenario-header">
         {{ scenario }}
         <span class="scenario-count">{{ group_vms|length }}</span>
-        <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY hidden background VMs for this scenario">Factory Reset Network Backend</button>
+        <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY backend VMs for this scenario">Factory Reset Network Backend</button>
       </div>
       <div class="vm-list">
       {% for vm in group_vms %}
@@ -1188,7 +1188,6 @@ def bulk_action():
                   r = proxmox_get("/cluster/resources", params={"type": "vm"}, cookies=cookies, headers=headers)
                   if r.ok:
                       all_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
-                      logger.info(f"[{req_id()}] Total accessible VMs for user: {[v.get('vmid') for v in all_vms]}")
                       
                       visible_vms_to_check = []
                       hidden_vms_to_check = []
@@ -1228,7 +1227,6 @@ def bulk_action():
                                                   if isinstance(backend_ids, list):
                                                       for bid in backend_ids:
                                                           backend_vms_to_reset.add(str(bid))
-                                                          logger.info(f"[{req_id()}] Discovered Backend VM {bid} via Option 1 (JSON in VM {vm.get('vmid')})")
                                           except Exception:
                                               pass
                                   except Exception:
@@ -1249,7 +1247,6 @@ def bulk_action():
                                       if sc == target_scenario:
                                           vmid_str = str(vm.get("vmid"))
                                           backend_vms_to_reset.add(vmid_str)
-                                          logger.info(f"[{req_id()}] Discovered Backend VM {vmid_str} via Option 2 (Scenario string match)")
                                   except Exception as ex:
                                       logger.error(f"[{req_id()}] Error parsing notes for hidden VM {vm.get('vmid')}: {ex}")
                           
@@ -1268,12 +1265,10 @@ def bulk_action():
                   for vmid in backend_vms_to_reset:
                      # Try QEMU first
                      try:
-                         logger.info(f"[{req_id()}] Stopping backend VM {vmid} on {primary_node} (qemu)")
                          proxmox_post(f"/nodes/{primary_node}/qemu/{vmid}/status/stop", data={}, cookies=cookies, headers=headers)
                      except Exception:
                          # Fallback to LXC
                          try:
-                             logger.info(f"[{req_id()}] Stopping backend VM {vmid} on {primary_node} (lxc)")
                              proxmox_post(f"/nodes/{primary_node}/lxc/{vmid}/status/stop", data={}, cookies=cookies, headers=headers)
                          except Exception as ex:
                              logger.warning(f"[{req_id()}] Failed to stop hidden VM {vmid}: {ex}")

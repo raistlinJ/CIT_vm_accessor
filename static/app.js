@@ -356,12 +356,24 @@
     setBusy(true);
     waitForJobsToComplete()
       .then(() => doRefresh(true))
-      .finally(() => { setBusy(false); hideProgress(); });
+      .finally(() => {
+        setBusy(false);
+        hideProgress();
+        if (params.get('bulk') === 'factory-reset-scenario') {
+          setTimeout(() => alert("Factory Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
+        }
+      });
   } else if (params.get('refresh') === '1') {
     showProgress('Updating status, please wait...');
     setBusy(true);
     doRefresh(true)
-      .finally(() => { setBusy(false); hideProgress(); });
+      .finally(() => {
+        setBusy(false);
+        hideProgress();
+        if (params.get('bulk') === 'factory-reset-scenario') {
+          setTimeout(() => alert("Factory Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
+        }
+      });
   }
 
   // VM notes popup via info icon
@@ -607,7 +619,7 @@
         }
         visInput.value = visibleIds.join(',');
 
-        showProgress('Resetting HIDDEN BACKEND VMs for "' + scenario + '"...');
+        showProgress('Resetting backend VMs for "' + scenario + '"...');
         setTimeout(() => { setBusy(true); addLog('Scenario reset submitted (deferred disable)', 'info'); }, 25);
 
         bulkForm.submit();
