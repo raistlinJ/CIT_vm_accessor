@@ -373,15 +373,13 @@ TPL_LOGIN = """
 <script>
  (function(){
    const u=document.getElementById('usernameInput');
-   const r=document.getElementById('realmInput');
-   if(u && r){
+   if(u){
      function extract(){
        const val=u.value.trim();
        if(val.includes('@')){
          const parts=val.split('@');
-         if(parts.length===2 && parts[0] && parts[1]){
+         if(parts.length > 0 && parts[0]){
            u.value=parts[0];
-           r.value=parts[1];
          }
        }
      }
@@ -708,21 +706,19 @@ def login():
     )
 
   username_input = (request.form.get("username") or "").strip()
-  # Allow user to supply realm inline as user@realm; if present, split and override realm
+  # Remove realm from username if provided inline
   if "@" in username_input and not username_input.startswith("@"):  # basic guard
     parts = username_input.split("@", 1)
     username = parts[0].strip()
-    inline_realm = parts[1].strip()
   else:
     username = username_input
-    inline_realm = None
+
   password = request.form.get("password") or ""
   host_override = (request.form.get("host") or "").strip() or PROXMOX_HOST
   # Use provided port or default to configured PROXMOX_PORT (do not auto-switch 8006->443)
   port_override = (request.form.get("port") or "").strip() or PROXMOX_PORT
   realm_field = (request.form.get("realm") or "").strip() or PROXMOX_REALM
-  # If inline realm specified in username, it takes precedence
-  realm_override = inline_realm or realm_field
+  realm_override = realm_field
   verify_override = request.form.get("verify_ssl") == "1"
   session["pve_host"] = host_override
   session["pve_port"] = port_override
