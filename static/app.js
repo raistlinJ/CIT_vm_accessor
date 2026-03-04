@@ -285,9 +285,10 @@
 
 
       // Determine wait time based on last action
-      let waitSeconds = 10;
+      let waitSeconds = 5;
       const lastAct = params.get('bulk') || '';
-      if (lastAct.includes('reset') || lastAct.includes('restore') || lastAct === 'factory-reset-scenario') {
+      const isJobsOrRefreshTriggered = params.get('jobs') === '1' || params.get('refresh') === '1';
+      if (isJobsOrRefreshTriggered && (lastAct.includes('reset') || lastAct.includes('restore') || lastAct === 'factory-reset-scenario')) {
         waitSeconds = 30;
       }
 
@@ -362,6 +363,10 @@
         if (params.get('bulk') === 'factory-reset-scenario') {
           setTimeout(() => alert("Factory Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
         }
+        // Clear query parameters from URL to prevent re-triggering on manual refresh
+        if (window.location.search) {
+          window.location.replace(window.location.pathname);
+        }
       });
   } else if (params.get('refresh') === '1') {
     showProgress('Updating status, please wait...');
@@ -372,6 +377,10 @@
         hideProgress();
         if (params.get('bulk') === 'factory-reset-scenario') {
           setTimeout(() => alert("Factory Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
+        }
+        // Clear query parameters from URL to prevent re-triggering on manual refresh
+        if (window.location.search) {
+          window.location.replace(window.location.pathname);
         }
       });
   }
