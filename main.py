@@ -15,6 +15,7 @@ from jinja2 import DictLoader
 import concurrent.futures
 import re
 import html
+import json
 
 """
 Quick start
@@ -1162,6 +1163,23 @@ def bulk_action():
       logger.exception(f"[{req_id()}] Status current exception vmid={vmid} node={node}")
       return None
 
+  def _direct_reset_vm(node: str, vtype: str, vmid: str, current_status: str = None):
+    if vtype == "qemu":
+      action_name = "reset" if current_status == "running" else "start"
+      path = f"/nodes/{node}/qemu/{vmid}/status/{action_name}"
+    elif vtype == "lxc":
+      action_name = "reboot" if current_status == "running" else "start"
+      path = f"/nodes/{node}/lxc/{vmid}/status/{action_name}"
+    else:
+      return None, f"unsupported type {vtype}"
+
+    r = proxmox_post(path, data={}, cookies=cookies, headers=headers)
+    if r.status_code == 401:
+      logger.info(f"[{req_id()}] Direct reset unauthorized vmid={vmid} node={node}; forcing session reset")
+      session.clear()
+      return "__unauthorized__", None
+    return r, None
+
   if action == "factory-reset-scenario":
       try:
           target_scenario = request.form.get("scenario")
@@ -1175,15 +1193,14 @@ def bulk_action():
               t_host = session.get("pve_host", PROXMOX_HOST)
               t_port = session.get("pve_port", PROXMOX_PORT)
               t_verify = session.get("pve_verify_ssl", VERIFY_SSL)
-              
-              backend_vms_to_reset = set()
-              primary_node = None
+              backend_vms_to_reset = {}
               
               try:
                   # Get all VMs accessible by user
                   r = proxmox_get("/cluster/resources", params={"type": "vm"}, cookies=cookies, headers=headers)
                   if r.ok:
                       all_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+                      all_vms_by_id = {str(vm.get("vmid")): vm for vm in all_vms}
                       
                       visible_vms_to_check = []
                       hidden_vms_to_check = []
@@ -1192,9 +1209,6 @@ def bulk_action():
                           vmid = str(vm.get("vmid"))
                           if vmid in visible_vmid_set:
                               visible_vms_to_check.append(vm)
-                              # Capture the node of the first visible VM to use for backend VMs
-                              if not primary_node:
-                                  primary_node = vm.get("node")
                           else:
                               hidden_vms_to_check.append(vm)
                       
@@ -1222,7 +1236,9 @@ def bulk_action():
                                                   backend_ids = note_data.get("BackendVMs", [])
                                                   if isinstance(backend_ids, list):
                                                       for bid in backend_ids:
-                                                          backend_vms_to_reset.add(str(bid))
+                                                      backend_vm = all_vms_by_id.get(str(bid))
+                                                      if backend_vm:
+                                                        backend_vms_to_reset[str(bid)] = backend_vm
                                           except Exception:
                                               pass
                                   except Exception:
@@ -1242,7 +1258,7 @@ def bulk_action():
                                       sc = _extract_scenario(notes) 
                                       if sc == target_scenario:
                                           vmid_str = str(vm.get("vmid"))
-                                          backend_vms_to_reset.add(vmid_str)
+                                        backend_vms_to_reset[vmid_str] = vm
                                   except Exception as ex:
                                       logger.error(f"[{req_id()}] Error parsing notes for hidden VM {vm.get('vmid')}: {ex}")
                           
@@ -1254,55 +1270,40 @@ def bulk_action():
                   failed += 1
                   failure_details.append("No backend VMs discovered.")
               
-              if backend_vms_to_reset and primary_node:
-                  logger.info(f"[{req_id()}] Executing stop -> rollback -> start for Backend VMs: {list(backend_vms_to_reset)} on node {primary_node}")
-                  
-                  # Stop loop
-                  for vmid in backend_vms_to_reset:
-                     # Try QEMU first
-                     try:
-                         proxmox_post(f"/nodes/{primary_node}/qemu/{vmid}/status/stop", data={}, cookies=cookies, headers=headers)
-                     except Exception:
-                         # Fallback to LXC
-                         try:
-                             proxmox_post(f"/nodes/{primary_node}/lxc/{vmid}/status/stop", data={}, cookies=cookies, headers=headers)
-                         except Exception as ex:
-                             logger.warning(f"[{req_id()}] Failed to stop hidden VM {vmid}: {ex}")
-                  
-                  # Sleep once for the whole batch
-                  time.sleep(2.0)
-                  
-                  # Rollback
-                  for vmid in backend_vms_to_reset:
-                     vtype = "qemu"
-                     snap_name = _get_newest_snapshot(primary_node, "qemu", vmid)
-                     
-                     if not snap_name or snap_name == "__unauthorized__":
-                         vtype = "lxc"
-                         snap_name = _get_newest_snapshot(primary_node, "lxc", vmid)
-                         
-                     if not snap_name or snap_name == "__unauthorized__":
-                         failed += 1
-                         failure_details.append(f"{primary_node}/{vmid} hidden-reset failed (no snapshot)")
-                         continue
-                     
-                     path = f"/nodes/{primary_node}/{vtype}/{vmid}/snapshot/{snap_name}/rollback"
-                     r = proxmox_post(path, data={"start": 1}, cookies=cookies, headers=headers)
-                     if r.ok:
-                        done += 1
-                        success_details.append(f"{primary_node}/{vmid} scenario-reset ok")
-                        try:
-                            payload = r.json()
-                            upid = payload.get("data")
-                            if isinstance(upid, str) and upid.startswith("UPID:"):
-                                jobs.append({"node": primary_node, "upid": upid})
-                        except:
-                            pass
-                     else:
-                        failed += 1
-                        failure_details.append(f"{primary_node}/{vmid} scenario-reset failed")
-              elif backend_vms_to_reset and not primary_node:
-                  logger.error(f"[{req_id()}] Could not determine primary_node to execute backend reset")
+              if backend_vms_to_reset:
+                  logger.info(
+                    f"[{req_id()}] Executing direct reset for Backend VMs: {list(backend_vms_to_reset.keys())}"
+                  )
+
+                  for vmid, vm in backend_vms_to_reset.items():
+                      node = vm.get("node")
+                      vtype = vm.get("type")
+                      current_status = status_map.get((node, vmid))
+                      if not node or vtype not in ("qemu", "lxc"):
+                          failed += 1
+                          failure_details.append(f"{vmid} scenario-reset failed (missing node/type)")
+                          continue
+
+                      r, error = _direct_reset_vm(node, vtype, vmid, current_status=current_status)
+                      if r == "__unauthorized__":
+                          return redirect(url_for("session_reset", reason="invalid"))
+                      if error:
+                          failed += 1
+                          failure_details.append(f"{node}/{vmid} scenario-reset failed ({error})")
+                          continue
+                      if r.ok:
+                          done += 1
+                          success_details.append(f"{node}/{vmid} scenario-reset ok")
+                          try:
+                              payload = r.json()
+                              upid = payload.get("data")
+                              if isinstance(upid, str) and upid.startswith("UPID:"):
+                                  jobs.append({"node": node, "upid": upid})
+                          except Exception:
+                              pass
+                      else:
+                          failed += 1
+                          failure_details.append(f"{node}/{vmid} scenario-reset failed (HTTP {r.status_code})")
           else:
               logger.warning(f"[{req_id()}] Bypassed execution because target_scenario='{target_scenario}'")
       except Exception:
@@ -1433,37 +1434,13 @@ def bulk_action():
           failure_details.append(f"{node}/{vmid} restore failed ({reason})")
           logger.warning(f"[{req_id()}] Restore failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
       elif action == "factory-reset":
-        # ... existing logic for SELECTED VMs ...
-        # Stop -> Sleep -> Rollback -> Start
-        if current_status == "running":
-            if vtype == "qemu":
-              path = f"/nodes/{node}/qemu/{vmid}/status/stop"
-            elif vtype == "lxc":
-              path = f"/nodes/{node}/lxc/{vmid}/status/stop"
-            else:
-               pass
-            try:
-               proxmox_post(path, data={}, cookies=cookies, headers=headers)
-            except:
-               pass
-        
-        time.sleep(1.5)
-
-        snap_name = snapshot
-        if not snap_name:
-          snap_name = _get_newest_snapshot(node, vtype, vmid)
-        
-        if not snap_name or snap_name == "__unauthorized__":
-           failed += 1
-           failure_details.append(f"{node}/{vmid} reset failed (no snapshot)")
-           continue
-
-        if vtype == "qemu":
-          path = f"/nodes/{node}/qemu/{vmid}/snapshot/{snap_name}/rollback"
-        elif vtype == "lxc":
-          path = f"/nodes/{node}/lxc/{vmid}/snapshot/{snap_name}/rollback"
-        
-        r = proxmox_post(path, data={"start": 1}, cookies=cookies, headers=headers)
+        r, error = _direct_reset_vm(node, vtype, vmid, current_status=current_status)
+        if r == "__unauthorized__":
+          return redirect(url_for("session_reset", reason="invalid"))
+        if error:
+          failed += 1
+          failure_details.append(f"{node}/{vmid} reset failed ({error})")
+          continue
         if r.ok:
           done += 1
           success_details.append(f"{node}/{vmid} reset ok")
@@ -1472,12 +1449,12 @@ def bulk_action():
             upid = payload.get("data")
             if isinstance(upid, str) and upid.startswith("UPID:"):
               jobs.append({"node": node, "upid": upid})
-          except:
+          except Exception:
             pass
         else:
           failed += 1
           failure_details.append(f"{node}/{vmid} reset failed (HTTP {r.status_code})")
-      
+      else:
         logger.warning(f"[{req_id()}] Unsupported bulk action: {action}")
         failed += 1
     except Exception:
