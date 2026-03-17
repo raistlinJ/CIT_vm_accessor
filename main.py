@@ -1163,6 +1163,87 @@ def bulk_action():
       logger.exception(f"[{req_id()}] Status current exception vmid={vmid} node={node}")
       return None
 
+  def _extract_upid(resp):
+    try:
+      payload = resp.json()
+    except Exception:
+      return None
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, str) and data.startswith("UPID:"):
+      return data
+    return None
+
+  def _wait_for_task(node: str, upid: str, timeout: float = 120.0, interval: float = 1.0):
+    deadline = time.time() + timeout
+    last_status = "unknown"
+    while time.time() < deadline:
+      try:
+        r = proxmox_get(f"/nodes/{node}/tasks/{upid}/status", cookies=cookies, headers=headers)
+        if r.status_code == 401:
+          logger.info(f"[{req_id()}] Task status unauthorized upid={upid} node={node}; forcing session reset")
+          session.clear()
+          return "__unauthorized__", None
+        if not r.ok:
+          return False, f"HTTP {r.status_code}"
+        data = r.json().get("data", {})
+        status = data.get("status") or "unknown"
+        exitstatus = data.get("exitstatus")
+        last_status = status
+        if status == "stopped":
+          if exitstatus and exitstatus != "OK":
+            return False, exitstatus
+          return True, exitstatus or "OK"
+      except Exception:
+        logger.exception(f"[{req_id()}] Task wait exception upid={upid} node={node}")
+        return False, "exception"
+      time.sleep(interval)
+    return False, f"timeout waiting for task ({last_status})"
+
+  def _wait_for_vm_unlock(node: str, vtype: str, vmid: str, timeout: float = 45.0, interval: float = 1.0):
+    deadline = time.time() + timeout
+    last_lock = None
+    while time.time() < deadline:
+      lock_state = _get_lock_state(node, vtype, vmid)
+      if lock_state == "__unauthorized__":
+        return "__unauthorized__"
+      if not lock_state:
+        return None
+      last_lock = lock_state
+      time.sleep(interval)
+    return last_lock or "unknown"
+
+  def _run_vm_action(node: str, vtype: str, vmid: str, path: str, data=None):
+    lock_state = _wait_for_vm_unlock(node, vtype, vmid)
+    if lock_state == "__unauthorized__":
+      return "__unauthorized__", None, None
+    if lock_state:
+      return None, f"locked: {lock_state}", None
+
+    r = proxmox_post(path, data=data or {}, cookies=cookies, headers=headers)
+    if r.status_code == 401:
+      logger.info(f"[{req_id()}] Action unauthorized vmid={vmid} node={node} path={path}; forcing session reset")
+      session.clear()
+      return "__unauthorized__", None, None
+
+    upid = _extract_upid(r)
+    if not r.ok:
+      return r, None, upid
+
+    if upid:
+      task_ok, task_reason = _wait_for_task(node, upid)
+      if task_ok == "__unauthorized__":
+        return "__unauthorized__", None, upid
+      if not task_ok:
+        return None, f"task failed: {task_reason}", upid
+
+    lock_state = _wait_for_vm_unlock(node, vtype, vmid)
+    if lock_state == "__unauthorized__":
+      return "__unauthorized__", None, upid
+    if lock_state:
+      return None, f"lock did not clear: {lock_state}", upid
+
+    return r, None, upid
+
   def _direct_reset_vm(node: str, vtype: str, vmid: str, current_status: str = None):
     if vtype == "qemu":
       action_name = "reset" if current_status == "running" else "start"
@@ -1171,145 +1252,127 @@ def bulk_action():
       action_name = "reboot" if current_status == "running" else "start"
       path = f"/nodes/{node}/lxc/{vmid}/status/{action_name}"
     else:
-      return None, f"unsupported type {vtype}"
+      return None, f"unsupported type {vtype}", None
 
-    r = proxmox_post(path, data={}, cookies=cookies, headers=headers)
-    if r.status_code == 401:
-      logger.info(f"[{req_id()}] Direct reset unauthorized vmid={vmid} node={node}; forcing session reset")
-      session.clear()
-      return "__unauthorized__", None
-    return r, None
+    return _run_vm_action(node, vtype, vmid, path, data={})
 
   if action == "factory-reset-scenario":
-      try:
-          target_scenario = request.form.get("scenario")
-          visible_vms_str = request.form.get("vms_visible", "")
-          visible_vmid_set = set(v.strip() for v in visible_vms_str.split(",") if v.strip())
-          
-          logger.warning(f"[{req_id()}] ACTION: factory-reset-scenario | Target Scenario: '{target_scenario}' | Visible VMs Array: '{visible_vms_str}'")
-          
-          if target_scenario:
-              # 1. Fetch notes for all accessible VMs in the entire pool
-              t_host = session.get("pve_host", PROXMOX_HOST)
-              t_port = session.get("pve_port", PROXMOX_PORT)
-              t_verify = session.get("pve_verify_ssl", VERIFY_SSL)
-              backend_vms_to_reset = {}
-              
-              try:
-                  # Get all VMs accessible by user
-                  r = proxmox_get("/cluster/resources", params={"type": "vm"}, cookies=cookies, headers=headers)
-                  if r.ok:
-                      all_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
-                      all_vms_by_id = {str(vm.get("vmid")): vm for vm in all_vms}
-                      
-                      visible_vms_to_check = []
-                      hidden_vms_to_check = []
-                      
-                      for vm in all_vms:
-                          vmid = str(vm.get("vmid"))
-                          if vmid in visible_vmid_set:
-                              visible_vms_to_check.append(vm)
-                          else:
-                              hidden_vms_to_check.append(vm)
-                      
-                      logger.info(f"[{req_id()}] Visible VMs ({len(visible_vms_to_check)}) | Hidden VMs ({len(hidden_vms_to_check)})")
-                      
-                      # --- OPTION 1: Scan Visible VMs for JSON 'BackendVMs' block ---
-                      if visible_vms_to_check:
-                          with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                              future_to_vm = {
-                                  executor.submit(fetch_vm_notes, vm, cookies, headers, t_host, t_port, t_verify): vm
-                                  for vm in visible_vms_to_check
-                              }
-                              for future in concurrent.futures.as_completed(future_to_vm):
-                                  vm = future_to_vm[future]
-                                  try:
-                                      _, notes = future.result()
-                                      sc = _extract_scenario(notes) 
-                                      if sc == target_scenario:
-                                          try:
-                                              clean_notes = html.unescape(notes)
-                                              clean_notes = re.sub(r'<[^>]+>', ' ', clean_notes)
-                                              json_match = re.search(r'(\{.*BackendVMs.*\})', clean_notes, re.DOTALL | re.IGNORECASE)
-                                              if json_match:
-                                                  note_data = json.loads(json_match.group(1))
-                                                  backend_ids = note_data.get("BackendVMs", [])
-                                                  if isinstance(backend_ids, list):
-                                                      for bid in backend_ids:
-                                                      backend_vm = all_vms_by_id.get(str(bid))
-                                                      if backend_vm:
-                                                        backend_vms_to_reset[str(bid)] = backend_vm
-                                          except Exception:
-                                              pass
-                                  except Exception:
-                                      pass
+    try:
+      target_scenario = request.form.get("scenario")
+      visible_vms_str = request.form.get("vms_visible", "")
+      visible_vmid_set = set(v.strip() for v in visible_vms_str.split(",") if v.strip())
 
-                      # --- OPTION 2: Scan Hidden VMs for matching 'Scenario' string ---
-                      if hidden_vms_to_check:
-                          with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                              future_to_vm = {
-                                  executor.submit(fetch_vm_notes, vm, cookies, headers, t_host, t_port, t_verify): vm
-                                  for vm in hidden_vms_to_check
-                              }
-                              for future in concurrent.futures.as_completed(future_to_vm):
-                                  vm = future_to_vm[future]
-                                  try:
-                                      _, notes = future.result()
-                                      sc = _extract_scenario(notes) 
-                                      if sc == target_scenario:
-                                          vmid_str = str(vm.get("vmid"))
-                                        backend_vms_to_reset[vmid_str] = vm
-                                  except Exception as ex:
-                                      logger.error(f"[{req_id()}] Error parsing notes for hidden VM {vm.get('vmid')}: {ex}")
-                          
-              except Exception as ex:
-                  logger.error(f"[{req_id()}] Failed to fetch cluster resources for context: {ex}")
-              
-              if not backend_vms_to_reset:
-                  logger.warning(f"[{req_id()}] Checked all accessible VMs. No backend VMs discovered for scenario '{target_scenario}' via JSON or Scenario tags.")
-                  failed += 1
-                  failure_details.append("No backend VMs discovered.")
-              
-              if backend_vms_to_reset:
-                  logger.info(
-                    f"[{req_id()}] Executing direct reset for Backend VMs: {list(backend_vms_to_reset.keys())}"
-                  )
+      logger.warning(f"[{req_id()}] ACTION: factory-reset-scenario | Target Scenario: '{target_scenario}' | Visible VMs Array: '{visible_vms_str}'")
 
-                  for vmid, vm in backend_vms_to_reset.items():
-                      node = vm.get("node")
-                      vtype = vm.get("type")
-                      current_status = status_map.get((node, vmid))
-                      if not node or vtype not in ("qemu", "lxc"):
-                          failed += 1
-                          failure_details.append(f"{vmid} scenario-reset failed (missing node/type)")
-                          continue
+      if target_scenario:
+        t_host = session.get("pve_host", PROXMOX_HOST)
+        t_port = session.get("pve_port", PROXMOX_PORT)
+        t_verify = session.get("pve_verify_ssl", VERIFY_SSL)
+        backend_vms_to_reset = {}
 
-                      r, error = _direct_reset_vm(node, vtype, vmid, current_status=current_status)
-                      if r == "__unauthorized__":
-                          return redirect(url_for("session_reset", reason="invalid"))
-                      if error:
-                          failed += 1
-                          failure_details.append(f"{node}/{vmid} scenario-reset failed ({error})")
-                          continue
-                      if r.ok:
-                          done += 1
-                          success_details.append(f"{node}/{vmid} scenario-reset ok")
-                          try:
-                              payload = r.json()
-                              upid = payload.get("data")
-                              if isinstance(upid, str) and upid.startswith("UPID:"):
-                                  jobs.append({"node": node, "upid": upid})
-                          except Exception:
-                              pass
-                      else:
-                          failed += 1
-                          failure_details.append(f"{node}/{vmid} scenario-reset failed (HTTP {r.status_code})")
-          else:
-              logger.warning(f"[{req_id()}] Bypassed execution because target_scenario='{target_scenario}'")
-      except Exception:
+        try:
+          r = proxmox_get("/cluster/resources", params={"type": "vm"}, cookies=cookies, headers=headers)
+          if r.ok:
+            all_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+            all_vms_by_id = {str(vm.get("vmid")): vm for vm in all_vms}
+
+            visible_vms_to_check = []
+            hidden_vms_to_check = []
+            for vm in all_vms:
+              vmid = str(vm.get("vmid"))
+              if vmid in visible_vmid_set:
+                visible_vms_to_check.append(vm)
+              else:
+                hidden_vms_to_check.append(vm)
+
+            logger.info(f"[{req_id()}] Visible VMs ({len(visible_vms_to_check)}) | Hidden VMs ({len(hidden_vms_to_check)})")
+
+            if visible_vms_to_check:
+              with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_vm = {
+                  executor.submit(fetch_vm_notes, vm, cookies, headers, t_host, t_port, t_verify): vm
+                  for vm in visible_vms_to_check
+                }
+                for future in concurrent.futures.as_completed(future_to_vm):
+                  vm = future_to_vm[future]
+                  try:
+                    _, notes = future.result()
+                    sc = _extract_scenario(notes)
+                    if sc == target_scenario:
+                      try:
+                        clean_notes = html.unescape(notes)
+                        clean_notes = re.sub(r'<[^>]+>', ' ', clean_notes)
+                        json_match = re.search(r'(\{.*BackendVMs.*\})', clean_notes, re.DOTALL | re.IGNORECASE)
+                        if json_match:
+                          note_data = json.loads(json_match.group(1))
+                          backend_ids = note_data.get("BackendVMs", [])
+                          if isinstance(backend_ids, list):
+                            for bid in backend_ids:
+                              backend_vm = all_vms_by_id.get(str(bid))
+                              if backend_vm:
+                                backend_vms_to_reset[str(bid)] = backend_vm
+                      except Exception:
+                        pass
+                  except Exception:
+                    pass
+
+            if hidden_vms_to_check:
+              with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_vm = {
+                  executor.submit(fetch_vm_notes, vm, cookies, headers, t_host, t_port, t_verify): vm
+                  for vm in hidden_vms_to_check
+                }
+                for future in concurrent.futures.as_completed(future_to_vm):
+                  vm = future_to_vm[future]
+                  try:
+                    _, notes = future.result()
+                    sc = _extract_scenario(notes)
+                    if sc == target_scenario:
+                      vmid_str = str(vm.get("vmid"))
+                      backend_vms_to_reset[vmid_str] = vm
+                  except Exception as ex:
+                    logger.error(f"[{req_id()}] Error parsing notes for hidden VM {vm.get('vmid')}: {ex}")
+        except Exception as ex:
+          logger.error(f"[{req_id()}] Failed to fetch cluster resources for context: {ex}")
+
+        if not backend_vms_to_reset:
+          logger.warning(f"[{req_id()}] Checked all accessible VMs. No backend VMs discovered for scenario '{target_scenario}' via JSON or Scenario tags.")
           failed += 1
-          failure_details.append("scenario-reset exception")
-          logger.exception(f"[{req_id()}] Scenario reset exception")
+          failure_details.append("No backend VMs discovered.")
+
+        if backend_vms_to_reset:
+          logger.info(f"[{req_id()}] Executing direct reset for Backend VMs: {list(backend_vms_to_reset.keys())}")
+          for vmid, vm in backend_vms_to_reset.items():
+            node = vm.get("node")
+            vtype = vm.get("type")
+            current_status = status_map.get((node, vmid))
+            if not node or vtype not in ("qemu", "lxc"):
+              failed += 1
+              failure_details.append(f"{vmid} scenario-reset failed (missing node/type)")
+              continue
+
+            r, error, upid = _direct_reset_vm(node, vtype, vmid, current_status=current_status)
+            if r == "__unauthorized__":
+              return redirect(url_for("session_reset", reason="invalid"))
+            if upid:
+              jobs.append({"node": node, "upid": upid})
+            if error:
+              failed += 1
+              failure_details.append(f"{node}/{vmid} scenario-reset failed ({error})")
+              continue
+            if r and r.ok:
+              done += 1
+              success_details.append(f"{node}/{vmid} scenario-reset ok")
+            else:
+              status_code = r.status_code if r is not None else "unknown"
+              failed += 1
+              failure_details.append(f"{node}/{vmid} scenario-reset failed (HTTP {status_code})")
+      else:
+        logger.warning(f"[{req_id()}] Bypassed execution because target_scenario='{target_scenario}'")
+    except Exception:
+      failed += 1
+      failure_details.append("scenario-reset exception")
+      logger.exception(f"[{req_id()}] Scenario reset exception")
 
   for item in selections:
     try:
@@ -1331,34 +1394,25 @@ def bulk_action():
           failed += 1
           continue
         logger.info(f"[{req_id()}] Sending poweroff request path={path}")
-        r = proxmox_post(path, data={}, cookies=cookies, headers=headers)
-        if r.status_code == 401:
-          logger.info(f"[{req_id()}] Poweroff unauthorized vmid={vmid} node={node}; forcing session reset")
-          session.clear()
+        r, error, upid = _run_vm_action(node, vtype, vmid, path, data={})
+        if r == "__unauthorized__":
           return redirect(url_for("session_reset", reason="invalid"))
-        if r.ok:
+        if upid:
+          jobs.append({"node": node, "upid": upid})
+        if error:
+          failed += 1
+          failure_details.append(f"{node}/{vmid} poweroff failed ({error})")
+          continue
+        if r and r.ok:
           done += 1
           success_details.append(f"{node}/{vmid} poweroff ok")
-          try:
-            payload = r.json()
-            upid = payload.get("data") if isinstance(payload, dict) else None
-            if isinstance(upid, str) and upid.startswith("UPID:"):
-              jobs.append({"node": node, "upid": upid})
-          except Exception:
-            pass
         else:
           failed += 1
-          reason = f"HTTP {r.status_code}"
+          reason = f"HTTP {r.status_code}" if r is not None else "unknown"
           failure_details.append(f"{node}/{vmid} poweroff failed ({reason})")
-          logger.warning(f"[{req_id()}] Poweroff failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
+          if r is not None:
+            logger.warning(f"[{req_id()}] Poweroff failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
       elif action == "start":
-        lock_state = _get_lock_state(node, vtype, vmid)
-        if lock_state == "__unauthorized__":
-          return redirect(url_for("session_reset", reason="invalid"))
-        if lock_state:
-          skipped += 1
-          skip_details.append(f"{node}/{vmid} skipped (locked: {lock_state})")
-          continue
         if current_status and current_status == "running":
           skipped += 1
           skip_details.append(f"{node}/{vmid} skipped (already running)")
@@ -1372,26 +1426,24 @@ def bulk_action():
           failed += 1
           continue
         logger.info(f"[{req_id()}] Sending start request path={path}")
-        r = proxmox_post(path, data={}, cookies=cookies, headers=headers)
-        if r.status_code == 401:
-          logger.info(f"[{req_id()}] Start unauthorized vmid={vmid} node={node}; forcing session reset")
-          session.clear()
+        r, error, upid = _run_vm_action(node, vtype, vmid, path, data={})
+        if r == "__unauthorized__":
           return redirect(url_for("session_reset", reason="invalid"))
-        if r.ok:
+        if upid:
+          jobs.append({"node": node, "upid": upid})
+        if error:
+          failed += 1
+          failure_details.append(f"{node}/{vmid} start failed ({error})")
+          continue
+        if r and r.ok:
           done += 1
           success_details.append(f"{node}/{vmid} start ok")
-          try:
-            payload = r.json()
-            upid = payload.get("data") if isinstance(payload, dict) else None
-            if isinstance(upid, str) and upid.startswith("UPID:"):
-              jobs.append({"node": node, "upid": upid})
-          except Exception:
-            pass
         else:
           failed += 1
-          reason = f"HTTP {r.status_code}"
+          reason = f"HTTP {r.status_code}" if r is not None else "unknown"
           failure_details.append(f"{node}/{vmid} start failed ({reason})")
-          logger.warning(f"[{req_id()}] Start failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
+          if r is not None:
+            logger.warning(f"[{req_id()}] Start failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
       elif action == "restore-all":
         # Roll back to a named snapshot or auto-pick newest
         snap_name = snapshot
@@ -1413,47 +1465,41 @@ def bulk_action():
           continue
         logger.info(f"[{req_id()}] Sending restore request path={path}")
         start_flag = 1 if current_status == "running" else 0
-        r = proxmox_post(path, data={"start": start_flag}, cookies=cookies, headers=headers)
-        if r.status_code == 401:
-          logger.info(f"[{req_id()}] Restore unauthorized vmid={vmid} node={node}; forcing session reset")
-          session.clear()
-          return redirect(url_for("session_reset", reason="invalid"))
-        if r.ok:
-          done += 1
-          success_details.append(f"{node}/{vmid} restore ok")
-          try:
-            payload = r.json()
-            upid = payload.get("data") if isinstance(payload, dict) else None
-            if isinstance(upid, str) and upid.startswith("UPID:"):
-              jobs.append({"node": node, "upid": upid})
-          except Exception:
-            pass
-        else:
-          failed += 1
-          reason = f"HTTP {r.status_code}"
-          failure_details.append(f"{node}/{vmid} restore failed ({reason})")
-          logger.warning(f"[{req_id()}] Restore failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
-      elif action == "factory-reset":
-        r, error = _direct_reset_vm(node, vtype, vmid, current_status=current_status)
+        r, error, upid = _run_vm_action(node, vtype, vmid, path, data={"start": start_flag})
         if r == "__unauthorized__":
           return redirect(url_for("session_reset", reason="invalid"))
+        if upid:
+          jobs.append({"node": node, "upid": upid})
+        if error:
+          failed += 1
+          failure_details.append(f"{node}/{vmid} restore failed ({error})")
+          continue
+        if r and r.ok:
+          done += 1
+          success_details.append(f"{node}/{vmid} restore ok")
+        else:
+          failed += 1
+          reason = f"HTTP {r.status_code}" if r is not None else "unknown"
+          failure_details.append(f"{node}/{vmid} restore failed ({reason})")
+          if r is not None:
+            logger.warning(f"[{req_id()}] Restore failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
+      elif action == "factory-reset":
+        r, error, upid = _direct_reset_vm(node, vtype, vmid, current_status=current_status)
+        if r == "__unauthorized__":
+          return redirect(url_for("session_reset", reason="invalid"))
+        if upid:
+          jobs.append({"node": node, "upid": upid})
         if error:
           failed += 1
           failure_details.append(f"{node}/{vmid} reset failed ({error})")
           continue
-        if r.ok:
+        if r and r.ok:
           done += 1
           success_details.append(f"{node}/{vmid} reset ok")
-          try:
-            payload = r.json()
-            upid = payload.get("data")
-            if isinstance(upid, str) and upid.startswith("UPID:"):
-              jobs.append({"node": node, "upid": upid})
-          except Exception:
-            pass
         else:
           failed += 1
-          failure_details.append(f"{node}/{vmid} reset failed (HTTP {r.status_code})")
+          status_code = r.status_code if r is not None else "unknown"
+          failure_details.append(f"{node}/{vmid} reset failed (HTTP {status_code})")
       else:
         logger.warning(f"[{req_id()}] Unsupported bulk action: {action}")
         failed += 1
