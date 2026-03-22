@@ -322,6 +322,33 @@
           updated++;
         }
       });
+      
+      if (data.backend_health) {
+        Object.keys(data.backend_health).forEach(sc => {
+          const id = 'health-' + sc.replace(/ /g, '-');
+          const el = document.getElementById(id);
+          if (el) {
+            const newHealth = data.backend_health[sc];
+            const textEl = el.querySelector('.health-text');
+            const oldHealth = textEl ? textEl.textContent : '';
+            if (oldHealth !== newHealth) {
+              if (textEl) textEl.textContent = newHealth;
+              if (newHealth === 'Running') {
+                el.style.backgroundColor = '#d0f4e4';
+                el.style.color = '#055230';
+                el.style.border = '1px solid #07b36d';
+              } else {
+                el.style.backgroundColor = '#ffe4d5';
+                el.style.color = '#7c2b00';
+                el.style.border = '1px solid #ff924d';
+              }
+              el.classList.add('changed'); // using the same trick
+              setTimeout(() => { el.classList.remove('changed'); }, 1200);
+              updated++;
+            }
+          }
+        });
+      }
       if (refreshMeta) {
         const stamp = (new Date()).toLocaleTimeString();
         const label = updated === 1 ? 'status' : 'statuses';

@@ -460,6 +460,12 @@ TPL_HOME = """
       <div class="scenario-header">
         {{ scenario }}
         <span class="scenario-count">{{ group_vms|length }}</span>
+        {% if backend_health.get(scenario) %}
+          {% set b_health = backend_health[scenario] %}
+          <span id="health-{{ scenario|replace(' ', '-') }}" class="backend-health-indicator" style="margin-left: 10px; font-size: 0.75rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 4px; {% if b_health == 'Running' %}background-color: #d0f4e4; color: #055230; border: 1px solid #07b36d;{% else %}background-color: #ffe4d5; color: #7c2b00; border: 1px solid #ff924d;{% endif %}">
+            Backend Network: <span class="health-text">{{ b_health }}</span>
+          </span>
+        {% endif %}
         <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY backend VMs for this scenario">Factory Reset Network Backend</button>
       </div>
       <div class="vm-list">
@@ -898,8 +904,8 @@ def session_reset():
 @require_session()
 def home():
 
-  # Show user's visible non-template VMs
-  vms = []
+  raw_vms = []
+  raw_vms_by_id = {}
   try:
     cookies = {"PVEAuthCookie": session.get("pve_ticket")}
     headers = {"CSRFPreventionToken": session.get("pve_csrf")}
@@ -915,6 +921,7 @@ def home():
       return redirect(url_for("session_reset", reason="invalid"))
     if r.ok:
       raw_vms = [row for row in r.json().get("data", []) if row.get("type") in ("qemu", "lxc") and not row.get("template")]
+      raw_vms_by_id = {str(vm["vmid"]): vm for vm in raw_vms}
       
       # Filter by VM.Console permission to hide backend VMs
       try:
@@ -943,7 +950,8 @@ def home():
   # Enrich VMs with notes in parallel to determine Scenario
   # Limit workers to avoid hammering Proxmox
   grouped_vms = {}
-  if vms:
+  backend_health = {}
+  if raw_vms:
     # Prepare shared auth for threads
     # Session is thread-local in Flask, but we are inside the request thread here spawning workers.
     # We pass explicit dicts to workers.
@@ -953,29 +961,23 @@ def home():
     t_port = session.get("pve_port", PROXMOX_PORT)
     t_verify = session.get("pve_verify_ssl", VERIFY_SSL)
     
-    # Map vmid -> vm_obj for easy lookup
-    vm_map = {str(vm["vmid"]): vm for vm in vms}
-    
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-      # Submit tasks
+      # Submit tasks for all raw_vms so we can accurately find hidden backend VMs by Scenario
       future_to_vmid = {
         executor.submit(fetch_vm_notes, vm, t_cookies, t_headers, t_host, t_port, t_verify): str(vm["vmid"]) 
-        for vm in vms
+        for vm in raw_vms
       }
       for future in concurrent.futures.as_completed(future_to_vmid):
         vmid = future_to_vmid[future]
         try:
           _, notes = future.result()
-          vm_map[vmid]["notes"] = notes
-          vm_map[vmid]["scenario"] = _extract_scenario(notes)
+          raw_vms_by_id[vmid]["notes"] = notes
+          raw_vms_by_id[vmid]["scenario"] = _extract_scenario(notes)
         except Exception:
-          vm_map[vmid]["scenario"] = "Uncategorized"
+          raw_vms_by_id[vmid]["scenario"] = "Uncategorized"
 
-    # Grouping
+    # Grouping only visible VMs
     for vm in vms:
-      # Recalculate scenario in main thread just in case context matters
-      # But wait, vm["notes"] is set above.
-      # Let's verify what the main thread sees.
       sc = vm.get("scenario", "Uncategorized")
       logger.info(f"DEBUG: MainThread Grouping VM {vm.get('vmid')} -> Scenario: {sc!r}")
       
@@ -983,19 +985,53 @@ def home():
         grouped_vms[sc] = []
       grouped_vms[sc].append(vm)
       
-    # Sort groups: Scenarios alphabetically, but "Uncategorized" last?
-    # Or just simple alphanumeric. Let's do simple alphanumeric for now.
-    # If users want specific order, they can name them "01 Scenario", "02 Scenario".
-    # Sorting keys
+    # Sort groups
     sorted_keys = sorted(grouped_vms.keys())
-
-    # Create a sorted dict (Python 3.7+ preserves insertion order)
-    # If "Uncategorized" exists, maybe move it to end?
     if "Uncategorized" in sorted_keys and len(sorted_keys) > 1:
         sorted_keys.remove("Uncategorized")
         sorted_keys.append("Uncategorized")
-        
     grouped_vms = {k: grouped_vms[k] for k in sorted_keys}
+
+    # Calculate backend network health for each scenario
+    visible_vmid_set = set(str(v["vmid"]) for v in vms)
+    backend_map = {}
+    for sc, group_vms in grouped_vms.items():
+      backend_vms_in_sc = set()
+      # 1. Look for BackendVMs JSON inside visible VMs
+      for vm in group_vms:
+        notes = vm.get("notes", "")
+        try:
+          clean_notes = html.unescape(notes)
+          clean_notes = re.sub(r'<[^>]+>', ' ', clean_notes)
+          json_match = re.search(r'(\{.*BackendVMs.*\})', clean_notes, re.DOTALL | re.IGNORECASE)
+          if json_match:
+            note_data = json.loads(json_match.group(1))
+            b_ids = note_data.get("BackendVMs", [])
+            for bid in b_ids:
+              backend_vms_in_sc.add(str(bid))
+        except Exception:
+          pass
+      # 2. Add hidden VMs that belong to this scenario
+      for r_vm in raw_vms:
+        if str(r_vm["vmid"]) not in visible_vmid_set:
+          if r_vm.get("scenario") == sc:
+            backend_vms_in_sc.add(str(r_vm["vmid"]))
+            
+      backend_map[sc] = list(backend_vms_in_sc)
+      # Check statuses
+      if backend_vms_in_sc:
+        all_running = True
+        for bid in backend_vms_in_sc:
+          b_vm = raw_vms_by_id.get(bid)
+          if b_vm and b_vm.get("status") != "running":
+            all_running = False
+            break
+        if all_running:
+          backend_health[sc] = "Running"
+        else:
+          backend_health[sc] = "unhealthy - reset recommended"
+
+    session["backend_map"] = backend_map
 
 
   # Provide last action result to JS dock
@@ -1033,6 +1069,7 @@ def home():
     TPL_HOME,
     vms=vms,
     grouped_vms=grouped_vms,
+    backend_health=backend_health,
     last_action=last_action,
     show_dock=True,
     bulk_notice=notice,
@@ -1565,7 +1602,25 @@ def api_vms():
       }
       for row in visible_vms
     ]
-    return jsonify({"vms": slim})
+    
+    backend_health = {}
+    backend_map = session.get("backend_map") or {}
+    if backend_map:
+        raw_vms_by_id = {str(vm["vmid"]): vm for vm in raw_vms}
+        for sc, b_ids in backend_map.items():
+            if b_ids:
+                all_running = True
+                for bid in b_ids:
+                    b_vm = raw_vms_by_id.get(str(bid))
+                    if b_vm and b_vm.get("status") != "running":
+                        all_running = False
+                        break
+                if all_running:
+                    backend_health[sc] = "Running"
+                else:
+                    backend_health[sc] = "unhealthy - reset recommended"
+                    
+    return jsonify({"vms": slim, "backend_health": backend_health})
   except Exception:
     logger.exception(f"[{req_id()}] /api/vms exception")
     return jsonify({"error": "exception"}), 500
