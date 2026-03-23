@@ -426,7 +426,11 @@ TPL_HOME = """
 <p class="muted" style="margin-top:.1rem">Select VMs below. Click a VM card to open its console in a popup. Use bulk actions for management.</p>
 <div class="top-controls" style="margin:0 0 1rem; display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; justify-content:flex-end;">
   <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
-    <small class="muted" id="refreshMeta" aria-live="polite">Last refresh: never</small>
+    <label style="display:flex; align-items:center; gap:.3rem; font-size:.72rem; cursor:pointer;" title="Automatically refresh VM statuses every 5 minutes">
+      <input type="checkbox" id="autoRefreshToggle" checked style="margin:0; width:1.05rem; height:1.05rem;" />
+      Auto-refresh (5m)
+    </label>
+    <small class="muted" id="refreshMeta" aria-live="polite" style="margin-left: .5rem; border-left: 1px solid var(--border); padding-left: .5rem;">Last refresh: never</small>
     <button type="button" id="refreshBtn" title="Refresh VM statuses">Refresh Status</button>
   </div>
 </div>

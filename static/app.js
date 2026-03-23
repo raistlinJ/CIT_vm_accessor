@@ -270,15 +270,20 @@
       try { bulkForm.submit(); } catch (e) { addLog('Submit error: ' + e.message, 'error'); }
     });
   }
-  async function doRefresh(skipJobWait) {
+  async function doRefresh(skipJobWait, isSilent = false) {
+    if (skipJobWait instanceof Event) {
+      skipJobWait = false;
+    }
+    const isActuallySilent = isSilent === true;
+
     if (!refreshBtn) return;
-    setBusy(true);
-    showProgress('Checking for active jobs...');
+    if (!isActuallySilent) setBusy(true);
+    if (!isActuallySilent) showProgress('Checking for active jobs...');
     try {
       if (!skipJobWait) {
         const jobSnap = await fetchJobsStatus();
         if (jobSnap && jobSnap.total && jobSnap.done < jobSnap.total) {
-          showProgress('Waiting for jobs to complete before refresh...');
+          if (!isActuallySilent) showProgress('Waiting for jobs to complete before refresh...');
           await waitForJobsToComplete();
         }
       }
@@ -292,8 +297,8 @@
         waitSeconds = 30;
       }
 
-      await waitWithCountdown(waitSeconds);
-      showProgress('Refreshing VM status...');
+      if (!isActuallySilent) await waitWithCountdown(waitSeconds);
+      if (!isActuallySilent) showProgress('Refreshing VM status...');
       const r = await fetch(apiVmsUrl, { headers: { 'Accept': 'application/json' } });
       if (r.status === 401) {
         let redirectTarget = sessionResetUrl;
@@ -354,13 +359,15 @@
         const label = updated === 1 ? 'status' : 'statuses';
         refreshMeta.textContent = 'Last refresh: ' + stamp + ' - ' + updated + ' ' + label + ' updated';
       }
-      addLog('Refresh completed (' + updated + ' statuses)', 'info');
+      addLog(isActuallySilent ? 'Auto-refresh completed (' + updated + ' statuses)' : 'Refresh completed (' + updated + ' statuses)', 'info');
     } catch (e) {
-      addLog('Refresh failed: ' + e.message, 'error');
+      if (!isActuallySilent) addLog('Refresh failed: ' + e.message, 'error');
       if (refreshMeta) { refreshMeta.textContent = 'Last refresh failed'; }
     } finally {
-      setBusy(false);
-      hideProgress();
+      if (!isActuallySilent) {
+        setBusy(false);
+        hideProgress();
+      }
     }
   }
   if (refreshBtn) { refreshBtn.addEventListener('click', doRefresh); }
@@ -665,4 +672,40 @@
       }
     });
   });
+
+  // Auto-refresh timer logic
+  const autoRefreshToggle = document.getElementById('autoRefreshToggle');
+  let autoRefreshTimer = null;
+  const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+  function setupAutoRefresh() {
+    if (autoRefreshTimer) {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = null;
+    }
+    if (autoRefreshToggle && autoRefreshToggle.checked) {
+      autoRefreshTimer = setInterval(() => {
+        // Skip refreshing if there's an active blocking overlay (meaning the user is busy)
+        if (progressOverlay && progressOverlay.classList.contains('visible')) return;
+        if (confirmOverlay && confirmOverlay.classList.contains('visible')) return;
+        doRefresh(true, true);
+      }, REFRESH_INTERVAL_MS);
+      addLog('Auto-refresh activated (5m)', 'info');
+    } else {
+      addLog('Auto-refresh deactivated', 'info');
+    }
+  }
+
+  if (autoRefreshToggle) {
+    autoRefreshToggle.addEventListener('change', setupAutoRefresh);
+    // Suppress the initial log of 'Auto-refresh activated' on page load to keep log clean
+    if (autoRefreshToggle.checked) {
+      autoRefreshTimer = setInterval(() => {
+        if (progressOverlay && progressOverlay.classList.contains('visible')) return;
+        if (confirmOverlay && confirmOverlay.classList.contains('visible')) return;
+        doRefresh(true, true);
+      }, REFRESH_INTERVAL_MS);
+    }
+  }
+
 })();
