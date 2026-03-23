@@ -903,9 +903,9 @@ def session_reset():
 @app.route("/")
 @require_session()
 def home():
-
   raw_vms = []
   raw_vms_by_id = {}
+  vms = []
   try:
     cookies = {"PVEAuthCookie": session.get("pve_ticket")}
     headers = {"CSRFPreventionToken": session.get("pve_csrf")}
