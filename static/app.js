@@ -342,6 +342,10 @@
                 el.style.backgroundColor = '#d0f4e4';
                 el.style.color = '#055230';
                 el.style.border = '1px solid #07b36d';
+              } else if (newHealth.includes('ERROR')) {
+                el.style.backgroundColor = '#fce4e4';
+                el.style.color = '#cc0000';
+                el.style.border = '1px solid #ff3333';
               } else {
                 el.style.backgroundColor = '#ffe4d5';
                 el.style.color = '#7c2b00';
@@ -395,7 +399,7 @@
         setBusy(false);
         hideProgress();
         if (params.get('bulk') === 'factory-reset-scenario') {
-          setTimeout(() => alert("Factory Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
+          setTimeout(() => alert("Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
         }
         // Clear query parameters from URL to prevent re-triggering on manual refresh
         if (window.location.search) {
@@ -410,7 +414,7 @@
         setBusy(false);
         hideProgress();
         if (params.get('bulk') === 'factory-reset-scenario') {
-          setTimeout(() => alert("Factory Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
+          setTimeout(() => alert("Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
         }
         // Clear query parameters from URL to prevent re-triggering on manual refresh
         if (window.location.search) {

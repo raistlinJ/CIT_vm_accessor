@@ -466,11 +466,11 @@ TPL_HOME = """
         <span class="scenario-count">{{ group_vms|length }}</span>
         {% if backend_health.get(scenario) %}
           {% set b_health = backend_health[scenario] %}
-          <span id="health-{{ scenario|replace(' ', '-') }}" class="backend-health-indicator" style="margin-left: 10px; font-size: 0.75rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 4px; {% if b_health == 'Running' %}background-color: #d0f4e4; color: #055230; border: 1px solid #07b36d;{% else %}background-color: #ffe4d5; color: #7c2b00; border: 1px solid #ff924d;{% endif %}">
+          <span id="health-{{ scenario|replace(' ', '-') }}" class="backend-health-indicator" style="margin-left: 10px; font-size: 0.75rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 4px; {% if b_health == 'Running' %}background-color: #d0f4e4; color: #055230; border: 1px solid #07b36d;{% elif 'ERROR' in b_health %}background-color: #fce4e4; color: #cc0000; border: 1px solid #ff3333;{% else %}background-color: #ffe4d5; color: #7c2b00; border: 1px solid #ff924d;{% endif %}">
             Backend Network: <span class="health-text">{{ b_health }}</span>
           </span>
         {% endif %}
-        <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY backend VMs for this scenario">Factory Reset Network Backend</button>
+        <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY backend VMs for this scenario">Reset Network Backend</button>
       </div>
       <div class="vm-list">
       {% for vm in group_vms %}
@@ -1025,12 +1025,20 @@ def home():
       # Check statuses
       if backend_vms_in_sc:
         all_running = True
+        has_error = False
         for bid in backend_vms_in_sc:
           b_vm = raw_vms_by_id.get(bid)
-          if b_vm and b_vm.get("status") != "running":
-            all_running = False
-            break
-        if all_running:
+          if b_vm:
+            status = b_vm.get("status", "")
+            if status and "error" in status.lower():
+              has_error = True
+              break
+            if status != "running":
+              all_running = False
+        
+        if has_error:
+          backend_health[sc] = "ERROR - CONTACT ADMIN"
+        elif all_running:
           backend_health[sc] = "Running"
         else:
           backend_health[sc] = "unhealthy - reset recommended"
@@ -1614,12 +1622,20 @@ def api_vms():
         for sc, b_ids in backend_map.items():
             if b_ids:
                 all_running = True
+                has_error = False
                 for bid in b_ids:
                     b_vm = raw_vms_by_id.get(str(bid))
-                    if b_vm and b_vm.get("status") != "running":
-                        all_running = False
-                        break
-                if all_running:
+                    if b_vm:
+                        status = b_vm.get("status", "")
+                        if status and "error" in status.lower():
+                            has_error = True
+                            break
+                        if status != "running":
+                            all_running = False
+                            
+                if has_error:
+                    backend_health[sc] = "ERROR - CONTACT ADMIN"
+                elif all_running:
                     backend_health[sc] = "Running"
                 else:
                     backend_health[sc] = "unhealthy - reset recommended"
