@@ -15,7 +15,7 @@ services:
         echo 'Existing certs found in volume, skipping generation.';
       fi"
     volumes:
-      - certs:/out
+      - ./certs:/out
     restart: "no"
 
   proxclient:
@@ -59,7 +59,7 @@ services:
       certs:
         condition: service_completed_successfully
     volumes:
-      - certs:/etc/nginx/certs:ro
+      - ./certs:/etc/nginx/certs:ro
       # Mount only the server snippet (default nginx.conf in image stays intact)
       - ./deploy/proxmox.conf:/etc/nginx/conf.d/proxmox.conf:ro
     extra_hosts:
@@ -71,5 +71,3 @@ services:
     command: ["nginx", "-g", "master_process off; daemon off;"]
     restart: unless-stopped
 
-volumes:
-  certs:
