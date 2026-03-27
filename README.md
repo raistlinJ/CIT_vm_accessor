@@ -1,4 +1,4 @@
-# CIT VM Accessor
+# AccessForge
 
 Lightweight Flask app that signs into the Proxmox VE API and then launches the built‑in Proxmox noVNC console for a selected VM. The app obtains a PVE ticket and CSRF token via `/api2/json/access/ticket`, sets browser cookies for the Proxmox host, and redirects you to the console page.
 

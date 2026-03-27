@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Multi-stage build for CIT VM Accessor
+# Multi-stage build for AccessForge
 # Stage 1: base runtime (no separate build needed, pure Python)
 FROM python:3.12-slim AS runtime
 
