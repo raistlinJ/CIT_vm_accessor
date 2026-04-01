@@ -502,16 +502,18 @@ TPL_BASE = """
   [data-theme="hacker"] .backend-health-indicator.health-running { text-shadow: 0 0 2px var(--ok); }
   
   .backend-health-indicator.health-error {
-    background-color: var(--status-stop);
-    color: var(--danger);
+    background-color: var(--danger);
+    color: #fff;
     border-color: var(--danger);
+    font-weight: 800;
   }
-  [data-theme="hacker"] .backend-health-indicator.health-error { text-shadow: 0 0 2px var(--danger); }
+  [data-theme="hacker"] .backend-health-indicator.health-error { text-shadow: 0 0 2px #fff; }
   
   .backend-health-indicator.health-warn {
-    background-color: var(--status-bg);
-    color: var(--warn);
+    background-color: var(--warn);
+    color: #000;
     border-color: var(--warn);
+    font-weight: 800;
   }
   
   /* Login Page Advanced Section */
