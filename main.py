@@ -110,8 +110,18 @@ TPL_BASE = """
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>{{ title or "AccessForge" }}</title>
+<script>
+  (function() {
+    var storedTheme = localStorage.getItem('accessforge-theme') || 'hacker';
+    document.documentElement.setAttribute('data-theme', storedTheme);
+  })();
+  function changeTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('accessforge-theme', theme);
+  }
+</script>
 <style>
-  :root {
+  :root, [data-theme="hacker"] {
     --bg: #030a03;
     --panel: #071507ea;
     --border: #00ff41;
@@ -123,118 +133,292 @@ TPL_BASE = """
     --text: #00ff41;
     --muted: #008f11;
     --mono: 'SFMono-Regular', Menlo, Consolas, monospace;
+    
+    --topbar-bg: #020502dd;
+    --shadow-base: #00ff4133;
+    --shadow-dim: #00ff4122;
+    --input-bg: #000;
+    --input-focus: #051105;
+    --btn-bg: #001100;
+    --btn-hover: #002b0e;
+    --danger-bg: #1a0000;
+    --danger-hover: #330000;
+    --danger-border-hover: #ff4d4d;
+    --notice-bg: #051a05cc;
+    --item-bg: #000;
+    --item-hover: #021102;
+    --scenario-bg: #000;
+    --scenario-shadow: #00ff4111;
+    --count-bg: #002200;
+    --info-btn-bg: #000;
+    --info-btn-hover: #002200;
+    --info-btn-focus: #001100;
+    --info-btn-shadow: #002200;
+    --pop-bg: #000e00;
+    --pop-shadow: #00ff4144;
+    --status-bg: #002200;
+    --status-run: #001a00;
+    --status-stop: #1a0000;
+    --action-bg: #000d00f2;
+    --dock-bg: #000500f2;
+    --dock-hdr: #001100;
+    --dock-hov: #003300;
+    --log-bg: #000a00;
+    --log-succ: #001100;
+    --log-warn: #1a1100;
+    --log-err: #1a0000;
+    --prog-over: rgba(0,10,0,.8);
+    --prog-card: #000;
+    --prog-bar-bg: #002200;
+    --btn-sec: #001100;
+    --btn-sec-hov: #002200;
   }
+  [data-theme="original"] {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --border: #d1d5db;
+    --accent: #2563eb;
+    --accent-glow: 0 0 0 transparent;
+    --danger: #ef4444;
+    --warn: #f59e0b;
+    --ok: #10b981;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --mono: 'SFMono-Regular', Menlo, Consolas, monospace;
+    
+    --topbar-bg: #ffffffdd;
+    --shadow-base: rgba(0,0,0,0.1);
+    --shadow-dim: rgba(0,0,0,0.05);
+    --input-bg: #ffffff;
+    --input-focus: #f9fafb;
+    --btn-bg: #f3f4f6;
+    --btn-hover: #e5e7eb;
+    --danger-bg: #fef2f2;
+    --danger-hover: #fee2e2;
+    --danger-border-hover: #ef4444;
+    --notice-bg: #eff6ff;
+    --item-bg: #ffffff;
+    --item-hover: #f9fafb;
+    --scenario-bg: #ffffff;
+    --scenario-shadow: rgba(0,0,0,0.02);
+    --count-bg: #e5e7eb;
+    --info-btn-bg: #f9fafb;
+    --info-btn-hover: #f3f4f6;
+    --info-btn-focus: #e5e7eb;
+    --info-btn-shadow: #e5e7eb;
+    --pop-bg: #ffffff;
+    --pop-shadow: rgba(0,0,0,0.15);
+    --status-bg: #f3f4f6;
+    --status-run: #d1fae5;
+    --status-stop: #fee2e2;
+    --action-bg: #ffffffdd;
+    --dock-bg: #f9fafb;
+    --dock-hdr: #e5e7eb;
+    --dock-hov: #d1d5db;
+    --log-bg: #ffffff;
+    --log-succ: #d1fae5;
+    --log-warn: #fef3c7;
+    --log-err: #fee2e2;
+    --prog-over: rgba(255,255,255,.8);
+    --prog-card: #ffffff;
+    --prog-bar-bg: #e5e7eb;
+    --btn-sec: #f3f4f6;
+    --btn-sec-hov: #e5e7eb;
+  }
+  [data-theme="pokemon"] {
+    --bg: #f5f5f5;
+    --panel: #ffffff;
+    --border: #222224;
+    --accent: #cc0000;
+    --accent-glow: 0 0 10px rgba(204,0,0,0.5);
+    --danger: #ff0000;
+    --warn: #ffcb05; /* pikachu yellow */
+    --ok: #4dad5b;
+    --text: #222224;
+    --muted: #555555;
+    --mono: 'SFMono-Regular', Menlo, Consolas, monospace;
+    
+    --topbar-bg: #cc0000dd; /* red topbar */
+    --shadow-base: rgba(0,0,0,0.15);
+    --shadow-dim: rgba(0,0,0,0.1);
+    --input-bg: #ffffff;
+    --input-focus: #fffae5; /* yellow tint */
+    --btn-bg: #ffffff;
+    --btn-hover: #fffae5;
+    --danger-bg: #ffeeee;
+    --danger-hover: #ffdddd;
+    --danger-border-hover: #ff0000;
+    --notice-bg: #fffceb;
+    --item-bg: #ffffff;
+    --item-hover: #fafafa;
+    --scenario-bg: #ffffff;
+    --scenario-shadow: rgba(0,0,0,0.05);
+    --count-bg: #e0e0e0;
+    --info-btn-bg: #f5f5f5;
+    --info-btn-hover: #eeeeee;
+    --info-btn-focus: #e0e0e0;
+    --info-btn-shadow: #cccccc;
+    --pop-bg: #ffffff;
+    --pop-shadow: rgba(0,0,0,0.2);
+    --status-bg: #eeeeee;
+    --status-run: #e8f5e9;
+    --status-stop: #ffebee;
+    --action-bg: #ffffffdd;
+    --dock-bg: #fafafa;
+    --dock-hdr: #eeeeee;
+    --dock-hov: #e0e0e0;
+    --log-bg: #ffffff;
+    --log-succ: #e8f5e9;
+    --log-warn: #fff8e1;
+    --log-err: #ffebee;
+    --prog-over: rgba(255,255,255,.9);
+    --prog-card: #ffffff;
+    --prog-bar-bg: #eeeeee;
+    --btn-sec: #f5f5f5;
+    --btn-sec-hov: #eeeeee;
+  }
+  
+  [data-theme="pokemon"] .topbar { color: #ffffff; border-bottom: 3px solid #000; }
+  [data-theme="pokemon"] .topbar a { color: #ffcb05; text-shadow: 1px 1px 0 #000; }
+  [data-theme="pokemon"] .topbar strong { color: #ffffff !important; text-shadow: 1px 1px 0 #000 !important; }
+  [data-theme="pokemon"] .topbar .muted { color: #eeeeee; }
+
   * { box-sizing: border-box; }
   html, body { height:100%; }
-  body { font-family: var(--mono); margin:0; padding:0 1.25rem 0; background: var(--bg); color: var(--text); min-height:100vh; display:flex; flex-direction:column; text-shadow: 0 0 2px var(--muted); }
-  .topbar { position:sticky; top:0; backdrop-filter: blur(6px); background:#020502dd; border-bottom: 1px solid var(--border); padding:0.9rem 1rem; margin:0 -1.25rem 1rem; display:flex; justify-content:space-between; align-items:center; color:var(--text); box-shadow:0 0 8px #00ff4133; }
+  body { font-family: var(--mono); margin:0; padding:0 1.25rem 0; background: var(--bg); color: var(--text); min-height:100vh; display:flex; flex-direction:column; text-shadow: none; }
+  [data-theme="hacker"] body { text-shadow: 0 0 2px var(--muted); }
+  .topbar { position:sticky; top:0; backdrop-filter: blur(6px); background:var(--topbar-bg); border-bottom: 1px solid var(--border); padding:0.9rem 1rem; margin:0 -1.25rem 1rem; display:flex; justify-content:space-between; align-items:center; color:var(--text); box-shadow:0 0 8px var(--shadow-base); }
   .topbar strong { letter-spacing:.5px; font-weight:600; text-transform:uppercase; text-shadow: var(--accent-glow); }
   .topbar a { color:var(--accent); text-shadow: var(--accent-glow); }
+  [data-theme="original"] .topbar strong, [data-theme="original"] .topbar a, [data-theme="original"] h2, [data-theme="original"] h3 { text-shadow: none; }
+  
   a { text-decoration:none; color: var(--accent); }
   a:hover { text-decoration:underline; text-shadow: var(--accent-glow); }
-  .card { width:100%; max-width:1100px; margin:0 auto 1.2rem; border:1px solid var(--border); background:var(--panel); border-radius:0; padding:1.4rem 1.5rem 1.8rem; box-shadow:0 0 10px #00ff4122; flex:1; display:flex; flex-direction:column; }
+  .card { width:100%; max-width:1100px; margin:0 auto 1.2rem; border:1px solid var(--border); background:var(--panel); border-radius:0; padding:1.4rem 1.5rem 1.8rem; box-shadow:0 0 10px var(--shadow-dim); flex:1; display:flex; flex-direction:column; }
   h2,h3 { margin-top:0; font-weight:600; letter-spacing:.5px; text-transform:uppercase; text-shadow: var(--accent-glow); }
   input, select, button { font: inherit; line-height:1.2; font-family: var(--mono); }
-  input, select { width:100%; padding:.55rem .65rem; border:1px solid var(--border); border-radius:0; background:#000; color:var(--text); margin-bottom:.7rem; }
-  input:focus { outline:none; box-shadow: var(--accent-glow); border-color:var(--accent); background:#051105; }
-  button { padding:.6rem 1.1rem; border:1px solid var(--accent); background:#001100; color:var(--accent); border-radius:0; font-weight:600; letter-spacing:.4px; display:inline-flex; gap:.35rem; align-items:center; text-transform:uppercase; cursor:pointer; text-shadow:0 0 2px var(--accent); }
-  button:hover { background:#002b0e; box-shadow:var(--accent-glow); }
+  input, select { width:100%; padding:.55rem .65rem; border:1px solid var(--border); border-radius:0; background:var(--input-bg); color:var(--text); margin-bottom:.7rem; }
+  input:focus, select:focus { outline:none; box-shadow: var(--accent-glow); border-color:var(--accent); background:var(--input-focus); }
+  button { padding:.6rem 1.1rem; border:1px solid var(--accent); background:var(--btn-bg); color:var(--accent); border-radius:0; font-weight:600; letter-spacing:.4px; display:inline-flex; gap:.35rem; align-items:center; text-transform:uppercase; cursor:pointer; text-shadow:0 0 2px var(--accent); }
+  [data-theme="original"] button, [data-theme="pokemon"] button { text-shadow:none; }
+  button:hover { background:var(--btn-hover); box-shadow:var(--accent-glow); }
   button:active { transform:translateY(1px); }
   button:disabled { opacity: 0.5; cursor: not-allowed; border-color:var(--muted); color:var(--muted); text-shadow:none; }
-  .btn-danger { border-color:var(--danger); background:#1a0000; color:var(--danger); text-shadow:0 0 2px var(--danger); box-shadow:none; }
-  .btn-danger:hover { background:#330000; border-color:#ff4d4d; box-shadow: 0 0 8px var(--danger); }
+  .btn-danger { border-color:var(--danger); background:var(--danger-bg); color:var(--danger); text-shadow:0 0 2px var(--danger); box-shadow:none; }
+  [data-theme="original"] .btn-danger, [data-theme="pokemon"] .btn-danger { text-shadow:none; }
+  .btn-danger:hover { background:var(--danger-hover); border-color:var(--danger-border-hover); box-shadow: 0 0 8px var(--danger); }
   .row { display:flex; gap:.75rem; }
   .row > * { flex:1; }
   .error { color: var(--danger); margin-bottom:.8rem; font-weight:500; text-shadow:0 0 4px var(--danger); }
-  .notice { background:#051a05cc; border:1px solid var(--border); padding:.6rem .75rem; border-radius:0; margin-bottom:1rem; font-size:.9rem; text-shadow:none; }
+  [data-theme="original"] .error, [data-theme="pokemon"] .error { text-shadow:none; }
+  .notice { background:var(--notice-bg); border:1px solid var(--border); padding:.6rem .75rem; border-radius:0; margin-bottom:1rem; font-size:.9rem; text-shadow:none; }
   .vm-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:.65rem; margin:0 0 1rem; }
-  .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--muted); border-radius:0; padding:.55rem 3.1rem .55rem 2.2rem; background:#000; min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
-  .vm-item:hover { border-color:var(--border); background:#021102; box-shadow:0 0 8px #00ff4133; }
-  .scenario-section { border: 1px solid var(--muted); background: #000; border-radius: 0; padding: 1rem; margin-bottom: 2rem; box-shadow: inset 0 0 10px #00ff4111; }
+  .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--muted); border-radius:0; padding:.55rem 3.1rem .55rem 2.2rem; background:var(--item-bg); min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
+  .vm-item:hover { border-color:var(--border); background:var(--item-hover); box-shadow:0 0 8px var(--shadow-base); }
+  .scenario-section { border: 1px solid var(--muted); background: var(--scenario-bg); border-radius: 0; padding: 1rem; margin-bottom: 2rem; box-shadow: inset 0 0 10px var(--scenario-shadow); }
   .scenario-header { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.8rem 0.2rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--muted); display: flex; align-items: center; gap: 0.5rem; text-shadow:0 0 2px var(--accent); }
+  [data-theme="original"] .scenario-header, [data-theme="pokemon"] .scenario-header { text-shadow:none; }
   .vm-list { margin: 0; }
-  .scenario-btn { margin-left: auto; padding: 0.35rem 0.8rem; font-size: 0.72rem; background: #1a0000; color: var(--danger); border: 1px solid var(--danger); border-radius: 0; cursor: pointer; font-weight: 700; transition: all 0.2s; letter-spacing: 0.3px; text-shadow: none; box-shadow: 0 2px 4px rgba(255,0,0,0.3); }
-  .scenario-btn:hover { background: #330000; box-shadow: 0 0 8px var(--danger); transform: translateY(-1px); border-color:#ff4d4d; }
-  .scenario-count { background: #002200; color: var(--text); padding: 0.1rem 0.4rem; border-radius: 0; border:1px solid var(--muted); font-size: 0.7rem; }
+  .scenario-btn { margin-left: auto; padding: 0.35rem 0.8rem; font-size: 0.72rem; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); border-radius: 0; cursor: pointer; font-weight: 700; transition: all 0.2s; letter-spacing: 0.3px; text-shadow: none; box-shadow: 0 2px 4px var(--shadow-base); }
+  .scenario-btn:hover { background: var(--danger-hover); box-shadow: 0 0 8px var(--danger); transform: translateY(-1px); border-color:var(--danger-border-hover); }
+  .scenario-count { background: var(--count-bg); color: var(--text); padding: 0.1rem 0.4rem; border-radius: 0; border:1px solid var(--muted); font-size: 0.7rem; }
   .vm-item input[type=checkbox] { position:absolute; left:.65rem; top:.75rem; width:1.05rem; height:1.05rem; margin:0; accent-color: var(--accent); cursor:pointer; }
-  .vm-info-btn { position:absolute; top:0; right:0; height:100%; width:2.6rem; border:0; border-left:1px solid var(--muted); background:#000; color:var(--text); font-weight:700; font-size:1.4rem; display:flex; align-items:center; justify-content:center; cursor:pointer; transition: all .2s; box-shadow:inset 0 0 0 1px #002200; }
-  .vm-info-btn:hover { background:#002200; color:var(--accent); text-shadow: var(--accent-glow); border-left-color:var(--accent); }
-  .vm-info-btn:focus { outline:1px solid var(--accent); background:#001100; outline-offset:1px; }
-  .vm-notes-pop { position:fixed; z-index:12000; background:#000e00; color:var(--text); border:1px solid var(--border); border-radius:0; padding:.65rem .75rem .7rem; width:320px; max-width:80vw; box-shadow:0 0 20px #00ff4144; display:none; }
+  .vm-info-btn { position:absolute; top:0; right:0; height:100%; width:2.6rem; border:0; border-left:1px solid var(--muted); background:var(--info-btn-bg); color:var(--text); font-weight:700; font-size:1.4rem; display:flex; align-items:center; justify-content:center; cursor:pointer; transition: all .2s; box-shadow:inset 0 0 0 1px var(--info-btn-shadow); }
+  .vm-info-btn:hover { background:var(--info-btn-hover); color:var(--accent); text-shadow: var(--accent-glow); border-left-color:var(--accent); }
+  [data-theme="original"] .vm-info-btn:hover, [data-theme="pokemon"] .vm-info-btn:hover { text-shadow:none; }
+  .vm-info-btn:focus { outline:1px solid var(--accent); background:var(--info-btn-focus); outline-offset:1px; }
+  .vm-notes-pop { position:fixed; z-index:12000; background:var(--pop-bg); color:var(--text); border:1px solid var(--border); border-radius:0; padding:.65rem .75rem .7rem; width:320px; max-width:80vw; box-shadow:0 0 20px var(--pop-shadow); display:none; }
   .vm-notes-pop.visible { display:block; }
   .vm-notes-pop h5 { margin:0 0 .35rem; font-size:.72rem; letter-spacing:.5px; text-transform:uppercase; color:var(--accent); display:flex; justify-content:space-between; align-items:center; text-shadow:0 0 3px var(--accent); }
+  [data-theme="original"] .vm-notes-pop h5, [data-theme="pokemon"] .vm-notes-pop h5 { text-shadow:none; }
   .vm-notes-pop pre { margin:0; white-space:pre-wrap; font-family:var(--mono); font-size:.72rem; color:var(--text); text-shadow:none; }
   .vm-notes-close { background:transparent; border:1px solid var(--border); color:var(--accent); font-size:.65rem; padding:.1rem .35rem; border-radius:0; cursor:pointer; text-transform:uppercase; }
-  .vm-notes-close:hover { background:#002200; box-shadow:var(--accent-glow); }
+  .vm-notes-close:hover { background:var(--info-btn-hover); box-shadow:var(--accent-glow); }
   .vm-item a { display:flex; flex-direction:column; gap:.25rem; color:inherit; flex:1; text-decoration:none; }
   .vm-id-line { font:600 .85rem var(--mono); letter-spacing:.5px; color:var(--muted); text-shadow:none; }
   .vm-name { font-weight:600; font-size:.95rem; line-height:1.1; margin-top:0.2rem; }
-  .vm-status { font-size:.72rem; font-weight:600; letter-spacing:1px; text-transform:uppercase; display:inline-block; padding:.17rem .45rem; border-radius:0; background:#002200; color:var(--muted); box-shadow:inset 0 0 0 1px var(--muted); margin-top:0.2rem; }
-  .vm-status.running { background:#001a00; color:var(--text); box-shadow:inset 0 0 0 1px var(--border); }
-  .vm-status.stopped, .vm-status.paused { background:#1a0000; color:var(--danger); box-shadow:inset 0 0 0 1px var(--danger); }
+  .vm-status { font-size:.72rem; font-weight:600; letter-spacing:1px; text-transform:uppercase; display:inline-block; padding:.17rem .45rem; border-radius:0; background:var(--status-bg); color:var(--muted); box-shadow:inset 0 0 0 1px var(--muted); margin-top:0.2rem; }
+  .vm-status.running { background:var(--status-run); color:var(--text); box-shadow:inset 0 0 0 1px var(--border); }
+  .vm-status.stopped, .vm-status.paused { background:var(--status-stop); color:var(--danger); box-shadow:inset 0 0 0 1px var(--danger); }
   .vm-status.changed { outline:1px solid var(--accent); animation: pulse 1.1s ease-out; }
   @keyframes pulse { 0% { transform:scale(.9); filter:brightness(1.4);} 70% { transform:scale(1.03);} 100% { transform:scale(1); filter:brightness(1);} }
   .bulk-actions { display:flex; gap:.6rem; flex-wrap:wrap; }
   .with-side { display:block; }
   .vm-action-layout { display:grid; grid-template-columns: 1fr 210px; gap:1.25rem; align-items:start; }
   @media (max-width:1050px){ .vm-action-layout { grid-template-columns:1fr; } .action-frame { position:relative; top:auto; } }
-  .action-frame { position:sticky; top:68px; display:flex; flex-direction:column; gap:.65rem; background:#000d00f2; backdrop-filter:blur(8px); padding:.9rem .95rem 1.1rem; border:1px solid var(--border); border-radius:0; box-shadow:inset 0 0 10px #00ff4122; min-height:140px; }
+  .action-frame { position:sticky; top:68px; display:flex; flex-direction:column; gap:.65rem; background:var(--action-bg); backdrop-filter:blur(8px); padding:.9rem .95rem 1.1rem; border:1px solid var(--border); border-radius:0; box-shadow:inset 0 0 10px var(--shadow-dim); min-height:140px; }
   .action-frame h4 { margin:0 0 .4rem; font-size:.68rem; letter-spacing:.55px; font-weight:600; text-transform:uppercase; color:var(--accent); text-align:center; text-shadow:0 0 3px var(--accent); }
+  [data-theme="original"] .action-frame h4, [data-theme="pokemon"] .action-frame h4 { text-shadow:none; }
   .action-frame .btn-group { display:flex; flex-direction:column; gap:.45rem; }
   .action-frame button { width:100%; justify-content:center; min-height:38px; }
   .action-frame .small-group { display:flex; gap:.4rem; }
   .action-frame .small-group button { flex:1; min-height:32px; font-size:.65rem; }
-  .activity-frame { margin:1.2rem 0 0; border:1px solid var(--border); background:#000d00f2; backdrop-filter:blur(8px); border-radius:0; box-shadow:inset 0 0 10px #00ff4122; padding:.4rem 0 .2rem; display:flex; flex-direction:column; }
+  .activity-frame { margin:1.2rem 0 0; border:1px solid var(--border); background:var(--action-bg); backdrop-filter:blur(8px); border-radius:0; box-shadow:inset 0 0 10px var(--shadow-dim); padding:.4rem 0 .2rem; display:flex; flex-direction:column; }
   .activity-frame h4 { margin:.2rem .9rem .4rem; font-size:.7rem; letter-spacing:.6px; text-transform:uppercase; font-weight:600; color:var(--accent); display:flex; justify-content:center; gap:.75rem; align-items:center; text-shadow:0 0 3px var(--accent); }
+  [data-theme="original"] .activity-frame h4, [data-theme="pokemon"] .activity-frame h4 { text-shadow:none; }
   .activity-frame h4 button { position:static; width:auto; }
-  /* Reworked dock */
-  .activity-dock { position:relative; background:#000500f2; color:var(--text); font-size:.72rem; font-family:var(--mono); height:28vh; max-height:60vh; min-height:34px; border:1px solid var(--border); border-radius:0; box-shadow:none; margin:0 auto; width:100%; max-width:1100px; overflow:hidden; }
+  .activity-dock { position:relative; background:var(--dock-bg); color:var(--text); font-size:.72rem; font-family:var(--mono); height:28vh; max-height:60vh; min-height:34px; border:1px solid var(--border); border-radius:0; box-shadow:none; margin:0 auto; width:100%; max-width:1100px; overflow:hidden; }
   .activity-dock.collapsed { height:34px !important; min-height:34px; }
   .dock-resize-handle { position:absolute; top:0; left:0; right:0; height:6px; cursor:ns-resize; background:var(--muted); opacity:.6; }
   .activity-dock.resizing { user-select:none; }
-  .activity-dock .dock-header { padding:.35rem .75rem; display:flex; justify-content:space-between; align-items:center; font-weight:600; letter-spacing:.5px; background:#001100; border-bottom:1px solid var(--border); text-transform:uppercase; text-shadow:0 0 2px var(--accent); }
+  .activity-dock .dock-header { padding:.35rem .75rem; display:flex; justify-content:space-between; align-items:center; font-weight:600; letter-spacing:.5px; background:var(--dock-hdr); border-bottom:1px solid var(--border); text-transform:uppercase; text-shadow:0 0 2px var(--accent); }
+  [data-theme="original"] .activity-dock .dock-header, [data-theme="pokemon"] .activity-dock .dock-header { text-shadow:none; }
   .dock-last { flex:1; font-weight:400; font-size:.65rem; color:var(--muted); margin:0 .65rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-shadow:none; }
   .activity-dock .dock-toggle { background:transparent; color:var(--accent); border:1px solid var(--accent); padding:.15rem .55rem; border-radius:0; font-size:.65rem; line-height:1; cursor:pointer; }
-  .activity-dock .dock-toggle:hover { background:#003300; box-shadow:var(--accent-glow); }
+  .activity-dock .dock-toggle:hover { background:var(--dock-hov); box-shadow:var(--accent-glow); }
   .activity-dock .dock-clear { background:transparent; color:var(--accent); border:1px solid var(--accent); padding:.15rem .55rem; border-radius:0; font-size:.65rem; line-height:1; cursor:pointer; margin-right:.35rem; }
-  .activity-dock .dock-clear:hover { background:#003300; box-shadow:var(--accent-glow); }
+  .activity-dock .dock-clear:hover { background:var(--dock-hov); box-shadow:var(--accent-glow); }
   .activity-dock .dock-body { padding:.4rem .6rem .7rem; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:.25rem; }
-  .log-line { padding:.15rem .4rem; border-radius:0; background:#000a00; border-left:2px solid var(--muted); }
-  .log-line.info { background:#000a00; border-left-color:var(--muted); }
-  .log-line.success { background:#001100; border-left-color:var(--border); color:#fff; text-shadow:0 0 2px #fff; }
-  .log-line.warn { background:#1a1100; border-left-color:var(--warn); color:var(--warn); }
-  .log-line.error { background:#1a0000; border-left-color:var(--danger); color:var(--danger); text-shadow:0 0 2px var(--danger); }
+  .log-line { padding:.15rem .4rem; border-radius:0; background:var(--log-bg); border-left:2px solid var(--muted); }
+  .log-line.info { background:var(--log-bg); border-left-color:var(--muted); }
+  .log-line.success { background:var(--log-succ); border-left-color:var(--border); color:#fff; text-shadow:0 0 2px #fff; }
+  [data-theme="original"] .log-line.success, [data-theme="pokemon"] .log-line.success { color:var(--text); text-shadow:none; border-left-color:var(--ok); }
+  .log-line.warn { background:var(--log-warn); border-left-color:var(--warn); color:var(--warn); }
+  .log-line.error { background:var(--log-err); border-left-color:var(--danger); color:var(--danger); text-shadow:0 0 2px var(--danger); }
+  [data-theme="original"] .log-line.error, [data-theme="pokemon"] .log-line.error { text-shadow:none; }
   .muted { color:var(--muted); text-shadow:none; }
-  code { font-family:var(--mono); font-size:.85rem; background:#001100; color:var(--border); padding:.15rem .4rem; border-radius:0; border:1px solid var(--muted); text-shadow:none; }
+  code { font-family:var(--mono); font-size:.85rem; background:var(--btn-sec); color:var(--border); padding:.15rem .4rem; border-radius:0; border:1px solid var(--muted); text-shadow:none; }
   footer { margin-top:1.5rem; text-align:center; font-size:.7rem; color:var(--muted); text-transform:uppercase; text-shadow:none; }
   .divider { height:1px; background:linear-gradient(90deg,transparent,var(--muted),transparent); margin:1.2rem 0; border-radius:0; }
   .inline-form { display:inline; }
   .actions-row { margin-top:.4rem; }
   .vm-item:focus-within { outline:1px solid var(--accent); box-shadow:var(--accent-glow); }
   @media (max-width:640px){ .vm-list { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); } }
-  .progress-overlay { position:fixed; inset:0; background:rgba(0,10,0,.8); display:flex; align-items:center; justify-content:center; z-index:20000; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease-out; backdrop-filter: blur(2px); }
+  .progress-overlay { position:fixed; inset:0; background:var(--prog-over); display:flex; align-items:center; justify-content:center; z-index:20000; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease-out; backdrop-filter: blur(2px); }
   .progress-overlay.visible { opacity:1; visibility:visible; pointer-events:auto; }
-  .progress-card { background:#000; color:var(--text); border:1px solid var(--border); border-radius:0; padding:1.4rem 1.5rem; min-width:360px; max-width:92vw; box-shadow:0 0 20px #00ff4144; display:flex; flex-direction:column; gap:.75rem; text-align:center; font-family:var(--mono); }
+  .progress-card { background:var(--prog-card); color:var(--text); border:1px solid var(--border); border-radius:0; padding:1.4rem 1.5rem; min-width:360px; max-width:92vw; box-shadow:0 0 20px var(--pop-shadow); display:flex; flex-direction:column; gap:.75rem; text-align:center; font-family:var(--mono); }
   .progress-title { font-weight:800; letter-spacing:.4px; font-size:1.05rem; color:var(--accent); text-transform:uppercase; text-shadow:0 0 4px var(--accent); }
+  [data-theme="original"] .progress-title, [data-theme="pokemon"] .progress-title { text-shadow:none; }
   .progress-msg { font-size:.9rem; color:var(--text); font-weight:600; text-shadow:none; }
-  .progress-bar { height:6px; border-radius:0; background:#002200; overflow:hidden; border:1px solid var(--muted); }
+  .progress-bar { height:6px; border-radius:0; background:var(--prog-bar-bg); overflow:hidden; border:1px solid var(--muted); }
   .progress-bar span { display:block; height:100%; width:40%; background:var(--accent); box-shadow:0 0 8px var(--accent); animation: progress-indef 1.1s ease-in-out infinite; }
   @keyframes progress-indef { 0%{ transform:translateX(-60%);} 100%{ transform:translateX(220%);} }
-  .confirm-overlay { position:fixed; inset:0; background:rgba(0,10,0,.8); display:flex; align-items:center; justify-content:center; z-index:21000; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease-out; backdrop-filter: blur(2px); }
+  .confirm-overlay { position:fixed; inset:0; background:var(--prog-over); display:flex; align-items:center; justify-content:center; z-index:21000; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease-out; backdrop-filter: blur(2px); }
   .confirm-overlay.visible { opacity:1; visibility:visible; pointer-events:auto; }
-  .confirm-card { background:#000; color:var(--text); border:1px solid var(--border); border-radius:0; padding:1.2rem 1.4rem; min-width:340px; max-width:92vw; box-shadow:0 0 20px #00ff4144; display:flex; flex-direction:column; gap:.75rem; text-align:center; font-family:var(--mono); }
+  .confirm-card { background:var(--prog-card); color:var(--text); border:1px solid var(--border); border-radius:0; padding:1.2rem 1.4rem; min-width:340px; max-width:92vw; box-shadow:0 0 20px var(--pop-shadow); display:flex; flex-direction:column; gap:.75rem; text-align:center; font-family:var(--mono); }
   .confirm-title { font-weight:800; letter-spacing:.4px; font-size:1rem; color:var(--accent); text-transform:uppercase; text-shadow:0 0 4px var(--accent); }
+  [data-theme="original"] .confirm-title, [data-theme="pokemon"] .confirm-title { text-shadow:none; }
   .confirm-msg { font-size:.85rem; color:var(--text); font-weight:600; white-space:pre-wrap; text-shadow:none; }
   .confirm-actions { display:flex; gap:.6rem; justify-content:center; }
-  .btn-secondary { border-color:var(--muted); background:#001100; box-shadow:none; color:var(--muted); text-shadow:none; }
-  .btn-secondary:hover { background:#002200; border-color:var(--accent); color:var(--accent); box-shadow:0 0 8px var(--muted); }
+  .btn-secondary { border-color:var(--muted); background:var(--btn-sec); box-shadow:none; color:var(--muted); text-shadow:none; }
+  .btn-secondary:hover { background:var(--btn-sec-hov); border-color:var(--accent); color:var(--accent); box-shadow:0 0 8px var(--muted); }
 </style>
 </head>
 <body>
   <div class="grid-overlay"></div>
   <div class="topbar">
-  <div><strong style="color:var(--accent); text-shadow:var(--accent-glow);">_AccessForge</strong></div>
-    <div>
+    <div><strong style="color:var(--accent);">_AccessForge</strong></div>
+    <div style="display:flex; align-items:center; gap:0.75rem;">
+      <select id="themeSelector" onchange="changeTheme(this.value)" style="margin:0; padding:0.15rem 0.35rem; width:auto; font-size:0.75rem; cursor:pointer;" aria-label="Select Theme">
+        <option value="hacker">Hacker (Default)</option>
+        <option value="original">Original</option>
+        <option value="pokemon">Pokemon</option>
+      </select>
+      <script>
+        var sel = document.getElementById('themeSelector');
+        var cur = document.documentElement.getAttribute('data-theme') || 'hacker';
+        if(sel) sel.value = cur;
+      </script>
       {% if session.get('pve_user') %}
         <span class="muted">{{ session.get('pve_user') }}</span> |
         <a href="{{ url_for('logout') }}">Logout</a>
@@ -243,7 +427,6 @@ TPL_BASE = """
   </div>
   <div class="card">
     {% block content %}{% endblock %}
-  <!-- Footer removed per user request -->
   </div>
   <div id="progressOverlay" class="progress-overlay" role="dialog" aria-modal="true" aria-live="polite" aria-hidden="true">
     <div class="progress-card">
@@ -293,7 +476,7 @@ TPL_LOGIN = """
   <input id="usernameInput" name="username" placeholder="e.g. root or root@pam" value="{{ username or '' }}" required />
   <label>Password</label>
   <input name="password" type="password" required />
-  <details style="margin:.6rem 0 .2rem; border:1px solid #cfd9e3; padding:.6rem .75rem .75rem; border-radius:8px; background:#fff">
+  <details style="margin:.6rem 0 .2rem; border:1px solid var(--border); padding:.6rem .75rem .75rem; border-radius:8px; background:var(--panel)">
     <summary style="cursor:pointer; font-weight:600; outline:none">Advanced</summary>
     <div style="display:grid; gap:.55rem; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-top:.65rem">
       <div>
@@ -310,9 +493,9 @@ TPL_LOGIN = """
       </div>
       <div style="display:flex; flex-direction:column; justify-content:flex-start;">
         <label style="font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; font-weight:600; margin:0 0 .42rem;">Verify SSL</label>
-        <div style="display:flex; align-items:center; padding:.48rem .55rem; border:1px solid #cfd9e3; border-radius:8px; background:#fff; height:38px; line-height:1;">
+        <div style="display:flex; align-items:center; padding:.48rem .55rem; border:1px solid var(--border); border-radius:8px; background:var(--input-bg); height:38px; line-height:1;">
           <input id="verifyBox" aria-label="Verify SSL" type="checkbox" name="verify_ssl" value="1" {% if verify_ssl %}checked{% endif %} style="margin:0; width:1.05rem; height:1.05rem; cursor:pointer;"/>
-          <span style="font-size:.62rem; margin-left:.55rem; color:#576b7a; font-weight:500;">Uncheck only for self-signed certs</span>
+          <span style="font-size:.62rem; margin-left:.55rem; color:var(--muted); font-weight:500;">Uncheck only for self-signed certs</span>
         </div>
       </div>
     </div>
