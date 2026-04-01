@@ -53,6 +53,7 @@ SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "change-me-now")
 EMBED_ALLOW = os.environ.get("EMBED_ALLOW", "true").lower() in ("1","true","yes","y")
 EMBED_ALLOW_ORIGINS = os.environ.get("EMBED_ALLOW_ORIGINS", "*")  # space or comma separated
 EMBED_COOKIES = os.environ.get("EMBED_COOKIES", "true").lower() in ("1","true","yes","y")
+APP_DEFAULT_THEME = os.environ.get("DEFAULT_THEME", "pokemon").strip()
 
 # Logging/Debug configuration
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
@@ -112,7 +113,7 @@ TPL_BASE = """
 <title>{{ title or "AccessForge" }}</title>
 <script>
   (function() {
-    var storedTheme = localStorage.getItem('accessforge-theme') || 'hacker';
+    var storedTheme = localStorage.getItem('accessforge-theme') || '__DEFAULT_THEME__';
     document.documentElement.setAttribute('data-theme', storedTheme);
   })();
   function changeTheme(theme) {
@@ -278,10 +279,17 @@ TPL_BASE = """
     --btn-sec-hov: #eeeeee;
   }
   
-  [data-theme="pokemon"] .topbar { color: #ffffff; border-bottom: 3px solid #000; }
-  [data-theme="pokemon"] .topbar a { color: #ffcb05; text-shadow: 1px 1px 0 #000; }
-  [data-theme="pokemon"] .topbar strong { color: #ffffff !important; text-shadow: 1px 1px 0 #000 !important; }
+  [data-theme="pokemon"] .topbar { color: #ffffff; border-bottom: 4px solid #111; background: linear-gradient(135deg, #cc0000 0%, #aa0000 100%); box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+  [data-theme="pokemon"] .topbar a { color: #ffcb05; text-shadow: 1px 1px 0 #111; font-weight: 800; }
+  [data-theme="pokemon"] .topbar strong { color: #ffffff !important; text-shadow: 1px 1px 0 #111 !important; }
+  [data-theme="pokemon"] .topbar strong::after { content: " 🔴"; text-shadow: none; font-size: 1.1em; }
   [data-theme="pokemon"] .topbar .muted { color: #eeeeee; }
+  [data-theme="pokemon"] button { border-radius: 20px; border: 2px solid #111; box-shadow: 2px 2px 0px #111; font-weight: 800; transition: transform 0.1s, box-shadow 0.1s; }
+  [data-theme="pokemon"] button:active { box-shadow: 0 0 0px #111; transform: translateY(2px) translateX(2px); }
+  [data-theme="pokemon"] .card { border-radius: 12px; border: 3px solid #111; border-top: 15px solid #cc0000; box-shadow: 0 8px 16px rgba(0,0,0,0.2); }
+  [data-theme="pokemon"] .vm-item { border-radius: 8px; border: 2px solid #ddd; }
+  [data-theme="pokemon"] .vm-item:hover { border-color: #ffcb05; box-shadow: 0 4px 8px rgba(255,203,5,0.4); }
+  [data-theme="pokemon"] .vm-status.running { background: #ffcb05; color: #111; border: 2px solid #111; box-shadow: none; font-weight: 800; }
 
   * { box-sizing: border-box; }
   html, body { height:100%; }
@@ -416,7 +424,7 @@ TPL_BASE = """
       </select>
       <script>
         var sel = document.getElementById('themeSelector');
-        var cur = document.documentElement.getAttribute('data-theme') || 'hacker';
+        var cur = document.documentElement.getAttribute('data-theme') || '__DEFAULT_THEME__';
         if(sel) sel.value = cur;
       </script>
       {% if session.get('pve_user') %}
@@ -440,7 +448,7 @@ TPL_BASE = """
 """
 
 # Register in-memory base template for Jinja to resolve `{% extends "base.html" %}`
-app.jinja_loader = DictLoader({"base.html": TPL_BASE})
+app.jinja_loader = DictLoader({"base.html": TPL_BASE.replace("__DEFAULT_THEME__", APP_DEFAULT_THEME)})
 
 @app.after_request
 def _allow_iframe(resp):

@@ -37,6 +37,7 @@ services:
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-now}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEBUG_HTTP=${DEBUG_HTTP:-false}
+      - DEFAULT_THEME=${DEFAULT_THEME:-pokemon}
   # NOTE: Removed extra_hosts override that mapped PROXMOX_HOST to "host-gateway".
   # On Docker Desktop (macOS/Windows) the special token 'host-gateway' may not resolve,
   # producing "Temporary failure in name resolution" when Python tries to resolve the host.
