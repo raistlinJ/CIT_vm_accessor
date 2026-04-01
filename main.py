@@ -410,6 +410,60 @@ TPL_BASE = """
   .confirm-actions { display:flex; gap:.6rem; justify-content:center; }
   .btn-secondary { border-color:var(--muted); background:var(--btn-sec); box-shadow:none; color:var(--muted); text-shadow:none; }
   .btn-secondary:hover { background:var(--btn-sec-hov); border-color:var(--accent); color:var(--accent); box-shadow:0 0 8px var(--muted); }
+  
+  /* Backend Health Indicator */
+  .backend-health-indicator {
+    margin-left: 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0;
+    display: inline-block;
+    border: 1px solid var(--muted);
+    background-color: var(--status-bg);
+    color: var(--muted);
+  }
+  .backend-health-indicator.health-running {
+    background-color: var(--status-run);
+    color: var(--ok);
+    border-color: var(--ok);
+  }
+  [data-theme="hacker"] .backend-health-indicator.health-running { text-shadow: 0 0 2px var(--ok); }
+  
+  .backend-health-indicator.health-error {
+    background-color: var(--status-stop);
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  [data-theme="hacker"] .backend-health-indicator.health-error { text-shadow: 0 0 2px var(--danger); }
+  
+  .backend-health-indicator.health-warn {
+    background-color: var(--status-bg);
+    color: var(--warn);
+    border-color: var(--warn);
+  }
+  
+  /* Login Page Advanced Section */
+  .login-advanced-details {
+    margin: .6rem 0 .2rem;
+    border: 1px solid var(--border);
+    padding: .6rem .75rem .75rem;
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  [data-theme="pokemon"] .login-advanced-details { border-width: 2px; border-color: #111; }
+  
+  .ssl-checkbox-wrapper {
+    display: flex;
+    align-items: center;
+    padding: .48rem .55rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--input-bg);
+    height: 38px;
+    line-height: 1;
+  }
+  [data-theme="pokemon"] .ssl-checkbox-wrapper { border-width: 2px; border-color: #111; }
 </style>
 </head>
 <body>
@@ -484,7 +538,7 @@ TPL_LOGIN = """
   <input id="usernameInput" name="username" placeholder="e.g. root or root@pam" value="{{ username or '' }}" required />
   <label>Password</label>
   <input name="password" type="password" required />
-  <details style="margin:.6rem 0 .2rem; border:1px solid var(--border); padding:.6rem .75rem .75rem; border-radius:8px; background:var(--panel)">
+  <details class="login-advanced-details">
     <summary style="cursor:pointer; font-weight:600; outline:none">Advanced</summary>
     <div style="display:grid; gap:.55rem; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-top:.65rem">
       <div>
@@ -501,7 +555,7 @@ TPL_LOGIN = """
       </div>
       <div style="display:flex; flex-direction:column; justify-content:flex-start;">
         <label style="font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; font-weight:600; margin:0 0 .42rem;">Verify SSL</label>
-        <div style="display:flex; align-items:center; padding:.48rem .55rem; border:1px solid var(--border); border-radius:8px; background:var(--input-bg); height:38px; line-height:1;">
+        <div class="ssl-checkbox-wrapper">
           <input id="verifyBox" aria-label="Verify SSL" type="checkbox" name="verify_ssl" value="1" {% if verify_ssl %}checked{% endif %} style="margin:0; width:1.05rem; height:1.05rem; cursor:pointer;"/>
           <span style="font-size:.62rem; margin-left:.55rem; color:var(--muted); font-weight:500;">Uncheck only for self-signed certs</span>
         </div>
@@ -605,7 +659,7 @@ TPL_HOME = """
         <span class="scenario-count">{{ group_vms|length }}</span>
         {% if backend_health.get(scenario) %}
           {% set b_health = backend_health[scenario] %}
-          <span id="health-{{ scenario|replace(' ', '-') }}" class="backend-health-indicator" style="margin-left: 10px; font-size: 0.75rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 0; {% if b_health == 'Running' %}background-color: #001a00; color: #00ff41; border: 1px solid #00ff41; text-shadow: 0 0 2px #00ff41;{% elif 'ERROR' in b_health %}background-color: #1a0000; color: #ff003c; border: 1px solid #ff003c; text-shadow: 0 0 2px #ff003c;{% else %}background-color: #1a1100; color: #ffb000; border: 1px solid #ffb000;{% endif %}">
+          <span id="health-{{ scenario|replace(' ', '-') }}" class="backend-health-indicator {% if b_health == 'Running' %}health-running{% elif 'ERROR' in b_health %}health-error{% else %}health-warn{% endif %}">
             Backend Network: <span class="health-text">{{ b_health }}</span>
           </span>
         {% endif %}

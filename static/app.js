@@ -338,20 +338,15 @@
             const oldHealth = textEl ? textEl.textContent : '';
             if (oldHealth !== newHealth) {
               if (textEl) textEl.textContent = newHealth;
+              el.classList.remove('health-running', 'health-error', 'health-warn');
               if (newHealth === 'Running') {
-                el.style.backgroundColor = '#d0f4e4';
-                el.style.color = '#055230';
-                el.style.border = '1px solid #07b36d';
+                el.classList.add('health-running');
               } else if (newHealth.includes('ERROR')) {
-                el.style.backgroundColor = '#fce4e4';
-                el.style.color = '#cc0000';
-                el.style.border = '1px solid #ff3333';
+                el.classList.add('health-error');
               } else {
-                el.style.backgroundColor = '#ffe4d5';
-                el.style.color = '#7c2b00';
-                el.style.border = '1px solid #ff924d';
+                el.classList.add('health-warn');
               }
-              el.classList.add('changed'); // using the same trick
+              el.classList.add('changed'); 
               setTimeout(() => { el.classList.remove('changed'); }, 1200);
               updated++;
             }
@@ -477,11 +472,11 @@
           if (user || pass) {
             notesText = `<div style="font-family:system-ui; font-size:0.85rem; line-height:1.5;">` +
               `<div style="margin-bottom:0.4rem;">` +
-              `<span style="display:inline-block; width:80px; font-weight:600; color:#9feaf9; letter-spacing:0.3px;">Username:</span>` +
-              `<span style="font-family:'SFMono-Regular',monospace; background:#1c3140; padding:1px 6px; border-radius:4px; color:#fff;">${user}</span>` +
+              `<span style="display:inline-block; width:80px; font-weight:600; color:var(--accent); letter-spacing:0.3px;">Username:</span>` +
+              `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${user}</span>` +
               `</div><div>` +
-              `<span style="display:inline-block; width:80px; font-weight:600; color:#9feaf9; letter-spacing:0.3px;">Password:</span>` +
-              `<span style="font-family:'SFMono-Regular',monospace; background:#1c3140; padding:1px 6px; border-radius:4px; color:#fff;">${pass}</span>` +
+              `<span style="display:inline-block; width:80px; font-weight:600; color:var(--accent); letter-spacing:0.3px;">Password:</span>` +
+              `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${pass}</span>` +
               `</div></div>`;
           } else {
             // Fallback for non-auth JSON
