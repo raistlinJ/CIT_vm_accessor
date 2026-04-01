@@ -278,6 +278,58 @@ TPL_BASE = """
     --btn-sec: #f5f5f5;
     --btn-sec-hov: #eeeeee;
   }
+  [data-theme="mario"] {
+    --bg: #5c94fc; /* sky blue */
+    --panel: #ffffff;
+    --border: #000000;
+    --accent: #e4000f; /* mario red */
+    --accent-glow: 0 0 0 transparent;
+    --danger: #c84c0c; /* brick brown */
+    --warn: #fbd000; /* coin yellow */
+    --ok: #00b139; /* luigi green */
+    --text: #000000;
+    --muted: #767676;
+    --mono: "Courier New", Courier, monospace;
+    
+    --topbar-bg: #e4000fdd; /* red topbar */
+    --shadow-base: rgba(0,0,0,0.3);
+    --shadow-dim: rgba(0,0,0,0.2);
+    --input-bg: #ffffff;
+    --input-focus: #fbd000; /* yellow focus */
+    --btn-bg: #ffffff;
+    --btn-hover: #eeeeee;
+    --danger-bg: #ffffff;
+    --danger-hover: #eeeeee;
+    --danger-border-hover: #c84c0c;
+    --notice-bg: #fbd00055;
+    --item-bg: #ffffff;
+    --item-hover: #eeeeee;
+    --scenario-bg: #ffffff;
+    --scenario-shadow: rgba(0,0,0,0.1);
+    --count-bg: #eeeeee;
+    --info-btn-bg: #ffffff;
+    --info-btn-hover: #eeeeee;
+    --info-btn-focus: #dddddd;
+    --info-btn-shadow: #000000;
+    --pop-bg: #ffffff;
+    --pop-shadow: rgba(0,0,0,0.4);
+    --status-bg: #eeeeee;
+    --status-run: #d4f8d4;
+    --status-stop: #f8d4d4;
+    --action-bg: #ffffffdd;
+    --dock-bg: #ffffff;
+    --dock-hdr: #eeeeee;
+    --dock-hov: #dddddd;
+    --log-bg: #ffffff;
+    --log-succ: #d4f8d4;
+    --log-warn: #fff4d4;
+    --log-err: #f8d4d4;
+    --prog-over: rgba(92,148,252,.8);
+    --prog-card: #ffffff;
+    --prog-bar-bg: #eeeeee;
+    --btn-sec: #ffffff;
+    --btn-sec-hov: #eeeeee;
+  }
   
   [data-theme="pokemon"] .topbar { color: #ffffff; border-bottom: 4px solid #111; background: linear-gradient(135deg, #cc0000 0%, #aa0000 100%); box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
   [data-theme="pokemon"] .topbar a { color: #ffcb05; text-shadow: 1px 1px 0 #111; font-weight: 800; }
@@ -290,6 +342,25 @@ TPL_BASE = """
   [data-theme="pokemon"] .vm-item { border-radius: 8px; border: 2px solid #ddd; }
   [data-theme="pokemon"] .vm-item:hover { border-color: #ffcb05; box-shadow: 0 4px 8px rgba(255,203,5,0.4); }
   [data-theme="pokemon"] .vm-status.running { background: #ffcb05; color: #111; border: 2px solid #111; box-shadow: none; font-weight: 800; }
+  
+  /* Mario Specific Styles */
+  [data-theme="mario"] .topbar { color: #ffffff; border-bottom: 4px solid #000; background: #e4000f; box-shadow: 0 4px 0px rgba(0,0,0,0.4); }
+  [data-theme="mario"] .topbar a { color: #ffffff; text-decoration: underline; font-weight: 800; }
+  [data-theme="mario"] .topbar strong { color: #ffffff !important; font-size: 1.2em; text-shadow: 2px 2px 0px #000 !important; }
+  [data-theme="mario"] .topbar strong::before { content: "🍄 "; font-size: 1em; }
+  [data-theme="mario"] button { border-radius: 0; border: 3px solid #000; box-shadow: 4px 4px 0px #000; font-weight: 800; transition: transform 0.1s, box-shadow 0.1s; background: #ffffff; color: #000; }
+  [data-theme="mario"] button:hover { background: #fbd000; transform: translate(-1px, -1px); box-shadow: 5px 5px 0px #000; }
+  [data-theme="mario"] button:active { box-shadow: 0px 0px 0px #000; transform: translate(4px, 4px); }
+  [data-theme="mario"] button:disabled { box-shadow: 2px 2px 0px #000; transform: none; opacity: 0.6; }
+  [data-theme="mario"] .card { border-radius: 0; border: 4px solid #000; box-shadow: 8px 8px 0px rgba(0,0,0,0.2); }
+  [data-theme="mario"] .vm-item { border-radius: 0; border: 3px solid #000; margin-bottom: 4px; box-shadow: 3px 3px 0px rgba(0,0,0,0.1); }
+  [data-theme="mario"] .vm-item:hover { background: #fbd00022; border-color: #e4000f; box-shadow: 4px 4px 0px rgba(228,0,15,0.2); }
+  [data-theme="mario"] .vm-status.running { background: #00b139; color: #fff; border: 2px solid #000; box-shadow: 2px 2px 0px #000; font-weight: 800; }
+  [data-theme="mario"] .vm-status.stopped { background: #c84c0c; color: #fff; border: 2px solid #000; box-shadow: 2px 2px 0px #000; }
+  [data-theme="mario"] .scenario-section { border: 4px solid #000; background: #ffffff; box-shadow: 6px 6px 0px rgba(0,0,0,0.1); }
+  [data-theme="mario"] .scenario-header { border-bottom: 4px solid #000; color: #e4000f; font-weight: 900; }
+  [data-theme="mario"] .backend-health-indicator.health-running { background: #00b139; color: #fff; border: 2px solid #000; box-shadow: 2px 2px 0px #000; }
+  [data-theme="mario"] .backend-health-indicator.health-error { background: #c84c0c; color: #fff; border: 2px solid #000; box-shadow: 2px 2px 0px #000; }
 
   * { box-sizing: border-box; }
   html, body { height:100%; }
@@ -475,6 +546,7 @@ TPL_BASE = """
         <option value="hacker">Hacker (Default)</option>
         <option value="original">Original</option>
         <option value="pokemon">Pokemon</option>
+        <option value="mario">Super Mario</option>
       </select>
       <script>
         var sel = document.getElementById('themeSelector');
