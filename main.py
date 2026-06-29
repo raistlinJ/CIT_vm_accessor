@@ -745,7 +745,7 @@ TPL_HOME = """
           <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
 
           <button type="button" class="vm-info-btn" title="View notes" aria-label="View notes" data-node="{{ vm.get('node') }}" data-type="{{ vm.get('type') }}" data-vmid="{{ vm.get('vmid') }}">📄</button>
-          <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
+          <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}&vtype={{ vm.get('type') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}" data-vtype="{{ vm.get('type') }}">
             <span class="vm-id-line">#{{ vm.get('vmid') }} - {{ vm.get('node') }}</span>
             <span class="vm-name">{{ vm.get('name','') or '(no name)' }}</span>
             <span class="vm-status {{ vm.get('status') }}" id="vm-status-{{ vm.get('node') }}-{{ vm.get('vmid') }}">{{ vm.get('status') }}</span>
@@ -1361,17 +1361,21 @@ def open_console():
   if request.method == "POST":
     node = (request.form.get("node") or "").strip()
     vmid = (request.form.get("vmid") or "").strip()
+    vtype = (request.form.get("vtype") or "").strip()
   else:
     node = (request.args.get("node") or "").strip()
     vmid = (request.args.get("vmid") or "").strip()
+    vtype = (request.args.get("vtype") or "").strip()
 
   if not node or not vmid.isdigit():
     return redirect(url_for("home"))
 
+  console_type = "lxc" if vtype == "lxc" else "kvm"
+
   # Route the console through our nginx proxy on this same origin using /proxmox/
   # This avoids the browser needing to reach host.docker.internal or non-443 ports.
   qs = urllib.parse.urlencode({
-    "console": "kvm",
+    "console": console_type,
     "novnc": "1",
     "node": node,
     "vmid": vmid,
