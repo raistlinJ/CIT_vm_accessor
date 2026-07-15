@@ -1378,13 +1378,13 @@ def open_console():
     "console": console_type,
     "node": node,
     "vmid": vmid,
-    "resize": "scale",
   }
   
   if console_type == "lxc":
     qs_dict["xtermjs"] = "1"
   else:
     qs_dict["novnc"] = "1"
+    qs_dict["resize"] = "scale"
     
   qs = urllib.parse.urlencode(qs_dict)
   console_url = f"/proxmox/?{qs}"
