@@ -1374,13 +1374,19 @@ def open_console():
 
   # Route the console through our nginx proxy on this same origin using /proxmox/
   # This avoids the browser needing to reach host.docker.internal or non-443 ports.
-  qs = urllib.parse.urlencode({
+  qs_dict = {
     "console": console_type,
-    "novnc": "1",
     "node": node,
     "vmid": vmid,
     "resize": "scale",
-  })
+  }
+  
+  if console_type == "lxc":
+    qs_dict["xtermjs"] = "1"
+  else:
+    qs_dict["novnc"] = "1"
+    
+  qs = urllib.parse.urlencode(qs_dict)
   console_url = f"/proxmox/?{qs}"
   logger.info(f"[{req_id()}] Redirecting to console via proxy vmid={vmid} node={node} -> {console_url}")
   return redirect(console_url, code=302)
