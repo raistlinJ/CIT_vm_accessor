@@ -398,7 +398,7 @@
         }
         // Clear query parameters from URL to prevent re-triggering on manual refresh
         if (window.location.search) {
-          window.location.replace(window.location.pathname);
+          window.history.replaceState(null, '', window.location.pathname);
         }
       });
   } else if (params.get('refresh') === '1') {
@@ -413,7 +413,7 @@
         }
         // Clear query parameters from URL to prevent re-triggering on manual refresh
         if (window.location.search) {
-          window.location.replace(window.location.pathname);
+          window.history.replaceState(null, '', window.location.pathname);
         }
       });
   }

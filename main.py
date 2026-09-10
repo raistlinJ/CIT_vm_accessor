@@ -705,7 +705,7 @@ TPL_HOME = """
  <div class="notice">
    Bulk {{ request.args.get('bulk') }}: {{ request.args.get('done','0') }} success, {{ request.args.get('failed','0') }} failed.
    {% if request.args.get('fail_list') or request.args.get('success_list') %}
-     <details style="margin-top:.4rem">
+     <details {% if request.args.get('failed', '0') != '0' %}open{% endif %} style="margin-top:.4rem">
        <summary style="cursor:pointer">Details</summary>
        <ul style="margin:.4rem 0 0 .8rem; padding:0; list-style:disc">
          {% if request.args.get('success_list') %}
@@ -1436,6 +1436,17 @@ def bulk_action():
   except Exception:
     logger.warning(f"[{req_id()}] Could not prefetch VM statuses for skip logic")
 
+  def _response_error(resp):
+    reason = f"HTTP {resp.status_code}"
+    try:
+      payload = resp.json()
+      detail = payload.get("errors") or payload.get("message")
+      if detail:
+        reason += ": " + (json.dumps(detail) if isinstance(detail, dict) else str(detail))[:300]
+    except (ValueError, AttributeError):
+      pass
+    return reason
+
   def _get_newest_snapshot(node: str, vtype: str, vmid: str):
     if vtype == "qemu":
       path = f"/nodes/{node}/qemu/{vmid}/snapshot"
@@ -1451,7 +1462,7 @@ def bulk_action():
         return "__unauthorized__"
       if not rsn.ok:
         logger.warning(f"[{req_id()}] Snapshot list failed vmid={vmid} node={node} status={rsn.status_code} body={rsn.text[:180]!r}")
-        return None
+        raise RuntimeError("snapshot lookup failed (" + _response_error(rsn) + ")")
       data = rsn.json().get("data", [])
       # Exclude the implicit 'current' marker
       snaps = [s for s in data if s.get("name") and s.get("name") != "current"]
@@ -1466,7 +1477,7 @@ def bulk_action():
       return snaps_sorted[0].get("name")
     except Exception:
       logger.exception(f"[{req_id()}] Snapshot list exception vmid={vmid} node={node}")
-      return None
+      raise
   def _get_lock_state(node: str, vtype: str, vmid: str):
     if vtype == "qemu":
       path = f"/nodes/{node}/qemu/{vmid}/status/current"
@@ -1774,12 +1785,18 @@ def bulk_action():
         # Roll back to a named snapshot or auto-pick newest
         snap_name = snapshot
         if not snap_name:
-          snap_name = _get_newest_snapshot(node, vtype, vmid)
+          try:
+            snap_name = _get_newest_snapshot(node, vtype, vmid)
+          except Exception as exc:
+            failed += 1
+            reason = str(exc) if isinstance(exc, RuntimeError) else "snapshot lookup unavailable; check server logs"
+            failure_details.append(f"{node}/{vmid} restore failed ({reason})")
+            continue
           if snap_name == "__unauthorized__":
             return redirect(url_for("session_reset", reason="invalid"))
         if not snap_name:
-          skipped += 1
-          skip_details.append(f"{node}/{vmid} skipped (no snapshots)")
+          failed += 1
+          failure_details.append(f"{node}/{vmid} restore failed (no snapshots available; a reset snapshot must exist first)")
           continue
         if vtype == "qemu":
           path = f"/nodes/{node}/qemu/{vmid}/snapshot/{snap_name}/rollback"
@@ -1802,10 +1819,10 @@ def bulk_action():
           continue
         if r and r.ok:
           done += 1
-          success_details.append(f"{node}/{vmid} restore ok")
+          success_details.append(f"{node}/{vmid} restored snapshot {snap_name}")
         else:
           failed += 1
-          reason = f"HTTP {r.status_code}" if r is not None else "unknown"
+          reason = _response_error(r) if r is not None else "unknown"
           failure_details.append(f"{node}/{vmid} restore failed ({reason})")
           if r is not None:
             logger.warning(f"[{req_id()}] Restore failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
