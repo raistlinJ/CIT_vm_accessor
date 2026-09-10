@@ -131,6 +131,20 @@
   let notesPop = null;
   let activeNotesButton = null;
   let notesRequest = 0;
+  let notesPinned = false;
+  let notesHideTimer = null;
+  function cancelNotesHide() {
+    clearTimeout(notesHideTimer);
+    notesHideTimer = null;
+  }
+  function scheduleNotesHide() {
+    cancelNotesHide();
+    if (notesPinned) return;
+    // Allow the pointer to cross the gap between the button and popup.
+    notesHideTimer = setTimeout(() => {
+      if (!notesPinned) hideNotes();
+    }, 180);
+  }
   function escapeNotes(value) {
     const span = document.createElement('span');
     span.textContent = String(value);
@@ -143,6 +157,12 @@
     notesPop.id = 'vmLoginDetails';
     notesPop.innerHTML = '<h5>Login details <button type="button" class="vm-notes-close" aria-label="Close notes">Close</button></h5><div id="vmNotesBody" style="font-family:inherit; white-space:normal; color:var(--text); overflow-wrap:anywhere;" aria-live="polite">Loading...</div>';
     document.body.appendChild(notesPop);
+    notesPop.addEventListener('mouseenter', cancelNotesHide);
+    notesPop.addEventListener('mouseleave', scheduleNotesHide);
+    notesPop.addEventListener('focusin', cancelNotesHide);
+    notesPop.addEventListener('focusout', (ev) => {
+      if (!notesPop.contains(ev.relatedTarget) && ev.relatedTarget !== activeNotesButton) scheduleNotesHide();
+    });
     const closeBtn = notesPop.querySelector('.vm-notes-close');
     closeBtn && closeBtn.addEventListener('click', () => hideNotes());
     return notesPop;
@@ -173,6 +193,8 @@
     });
   }
   function hideNotes() {
+    cancelNotesHide();
+    notesPinned = false;
     notesRequest++;
     if (activeNotesButton) activeNotesButton.setAttribute('aria-expanded', 'false');
     activeNotesButton = null;
@@ -435,7 +457,10 @@
   // Open immediately on hover or keyboard focus; clicks also support touch screens.
   const infoButtons = document.querySelectorAll('.vm-info-btn');
   infoButtons.forEach(btn => {
-    const openLoginDetails = async () => {
+    const openLoginDetails = async (pin = false) => {
+      if (notesPinned && !pin) return;
+      cancelNotesHide();
+      if (pin) notesPinned = true;
       if (activeNotesButton === btn) return;
       const requestId = ++notesRequest;
       const node = btn.getAttribute('data-node');
@@ -507,12 +532,18 @@
         if (requestId === notesRequest) showNotesPopup(btn, 'Failed to load login details: ' + escapeNotes(e.message));
       }
     };
-    btn.addEventListener('mouseenter', openLoginDetails);
-    btn.addEventListener('focus', openLoginDetails);
+    btn.addEventListener('mouseenter', () => openLoginDetails());
+    btn.addEventListener('focus', () => openLoginDetails());
+    btn.addEventListener('mouseleave', () => {
+      if (activeNotesButton === btn) scheduleNotesHide();
+    });
+    btn.addEventListener('blur', (ev) => {
+      if (activeNotesButton === btn && !(notesPop && notesPop.contains(ev.relatedTarget))) scheduleNotesHide();
+    });
     btn.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      openLoginDetails();
+      openLoginDetails(true);
     });
   });
 
