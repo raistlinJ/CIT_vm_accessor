@@ -129,11 +129,19 @@
     });
   }
   let notesPop = null;
+  let activeNotesButton = null;
+  let notesRequest = 0;
+  function escapeNotes(value) {
+    const span = document.createElement('span');
+    span.textContent = String(value);
+    return span.innerHTML;
+  }
   function ensureNotesPop() {
     if (notesPop) return notesPop;
     notesPop = document.createElement('div');
     notesPop.className = 'vm-notes-pop';
-    notesPop.innerHTML = '<h5>VM Notes <button type="button" class="vm-notes-close" aria-label="Close notes">Close</button></h5><div id="vmNotesBody" style="font-family:inherit; white-space:normal; color:#e2f2ff;">Loading...</div>';
+    notesPop.id = 'vmLoginDetails';
+    notesPop.innerHTML = '<h5>Login details <button type="button" class="vm-notes-close" aria-label="Close notes">Close</button></h5><div id="vmNotesBody" style="font-family:inherit; white-space:normal; color:var(--text); overflow-wrap:anywhere;" aria-live="polite">Loading...</div>';
     document.body.appendChild(notesPop);
     const closeBtn = notesPop.querySelector('.vm-notes-close');
     closeBtn && closeBtn.addEventListener('click', () => hideNotes());
@@ -141,6 +149,9 @@
   }
   function showNotesPopup(btn, content) {
     const pop = ensureNotesPop();
+    if (activeNotesButton) activeNotesButton.setAttribute('aria-expanded', 'false');
+    activeNotesButton = btn;
+    btn.setAttribute('aria-expanded', 'true');
     const body = pop.querySelector('#vmNotesBody');
     if (body) { body.innerHTML = content || 'No notes.'; }
     pop.classList.add('visible');
@@ -162,13 +173,16 @@
     });
   }
   function hideNotes() {
+    notesRequest++;
+    if (activeNotesButton) activeNotesButton.setAttribute('aria-expanded', 'false');
+    activeNotesButton = null;
     if (notesPop) { notesPop.classList.remove('visible'); }
   }
   document.addEventListener('click', (ev) => {
     if (!notesPop || !notesPop.classList.contains('visible')) return;
     const target = ev.target;
     if (notesPop.contains(target)) return;
-    if (target && target.classList && target.classList.contains('vm-info-btn')) return;
+    if (target && target.closest && target.closest('.vm-info-btn')) return;
     hideNotes();
   });
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') hideNotes(); });
@@ -393,7 +407,7 @@
       .finally(() => {
         setBusy(false);
         hideProgress();
-        if (params.get('bulk') === 'factory-reset-scenario') {
+        if (params.get('bulk') === 'factory-reset-scenario' && Number(params.get('failed')) === 0 && Number(params.get('done')) > 0) {
           setTimeout(() => alert("Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
         }
         // Clear query parameters from URL to prevent re-triggering on manual refresh
@@ -408,7 +422,7 @@
       .finally(() => {
         setBusy(false);
         hideProgress();
-        if (params.get('bulk') === 'factory-reset-scenario') {
+        if (params.get('bulk') === 'factory-reset-scenario' && Number(params.get('failed')) === 0 && Number(params.get('done')) > 0) {
           setTimeout(() => alert("Reset Network Backend completed.\n\nPlease note: Some backend processes or services may take up to 2 minutes to fully start and function properly."), 100);
         }
         // Clear query parameters from URL to prevent re-triggering on manual refresh
@@ -418,12 +432,12 @@
       });
   }
 
-  // VM notes popup via info icon
+  // Open immediately on hover or keyboard focus; clicks also support touch screens.
   const infoButtons = document.querySelectorAll('.vm-info-btn');
   infoButtons.forEach(btn => {
-    btn.addEventListener('click', async (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
+    const openLoginDetails = async () => {
+      if (activeNotesButton === btn) return;
+      const requestId = ++notesRequest;
       const node = btn.getAttribute('data-node');
       const vmid = btn.getAttribute('data-vmid');
       const type = btn.getAttribute('data-type');
@@ -438,12 +452,14 @@
             const data = await r.json();
             if (data && data.redirect) { redirectTarget = data.redirect; }
           } catch (ignore) { }
+          if (requestId !== notesRequest) return;
           showNotesPopup(btn, 'Session expired. Redirecting...');
           setTimeout(() => { window.location.href = redirectTarget; }, 250);
           return;
         }
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
+        if (requestId !== notesRequest) return;
         let notesText = (data && typeof data.notes === 'string') ? data.notes : '';
 
         // Try to parse JSON to show formatted User/Pass
@@ -473,14 +489,14 @@
             notesText = `<div style="font-family:system-ui; font-size:0.85rem; line-height:1.5;">` +
               `<div style="margin-bottom:0.4rem;">` +
               `<span style="display:inline-block; width:80px; font-weight:600; color:var(--accent); letter-spacing:0.3px;">Username:</span>` +
-              `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${user}</span>` +
+              `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${escapeNotes(user)}</span>` +
               `</div><div>` +
               `<span style="display:inline-block; width:80px; font-weight:600; color:var(--accent); letter-spacing:0.3px;">Password:</span>` +
-              `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${pass}</span>` +
+              `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${escapeNotes(pass)}</span>` +
               `</div></div>`;
           } else {
             // Fallback for non-auth JSON
-            notesText = `<pre style="margin:0">${notesText}</pre>`;
+            notesText = `<pre style="margin:0">${escapeNotes(notesText)}</pre>`;
           }
         } catch (e) {
           // Not JSON or parsing failed, show detailed raw text
@@ -488,8 +504,15 @@
 
         showNotesPopup(btn, notesText || 'No notes.');
       } catch (e) {
-        showNotesPopup(btn, 'Failed to load notes: ' + e.message);
+        if (requestId === notesRequest) showNotesPopup(btn, 'Failed to load login details: ' + escapeNotes(e.message));
       }
+    };
+    btn.addEventListener('mouseenter', openLoginDetails);
+    btn.addEventListener('focus', openLoginDetails);
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openLoginDetails();
     });
   });
 
@@ -614,7 +637,7 @@
       if (!section) return;
 
       // 2. Collect visible VM IDs to exclude from reset
-      const myChecks = section.querySelectorAll('.vm-item');
+      const myChecks = document.querySelectorAll('.vm-item');
       const visibleIds = [];
       myChecks.forEach(item => {
         const vmid = item.getAttribute('data-vmid');

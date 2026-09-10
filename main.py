@@ -392,7 +392,7 @@ TPL_BASE = """
   [data-theme="original"] .error, [data-theme="pokemon"] .error { text-shadow:none; }
   .notice { background:var(--notice-bg); border:1px solid var(--border); padding:.6rem .75rem; border-radius:0; margin-bottom:1rem; font-size:.9rem; text-shadow:none; }
   .vm-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:.65rem; margin:0 0 1rem; }
-  .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--muted); border-radius:0; padding:.55rem 3.1rem .55rem 2.2rem; background:var(--item-bg); min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
+  .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--muted); border-radius:0; padding:.55rem .65rem .55rem 2.2rem; flex-wrap:wrap; background:var(--item-bg); min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
   .vm-item:hover { border-color:var(--border); background:var(--item-hover); box-shadow:0 0 8px var(--shadow-base); }
   .scenario-section { border: 1px solid var(--muted); background: var(--scenario-bg); border-radius: 0; padding: 1rem; margin-bottom: 2rem; box-shadow: inset 0 0 10px var(--scenario-shadow); }
   .scenario-header { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.8rem 0.2rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--muted); display: flex; align-items: center; gap: 0.5rem; text-shadow:0 0 2px var(--accent); }
@@ -402,10 +402,9 @@ TPL_BASE = """
   .scenario-btn:hover { background: var(--danger-hover); box-shadow: 0 0 8px var(--danger); transform: translateY(-1px); border-color:var(--danger-border-hover); }
   .scenario-count { background: var(--count-bg); color: var(--text); padding: 0.1rem 0.4rem; border-radius: 0; border:1px solid var(--muted); font-size: 0.7rem; }
   .vm-item input[type=checkbox] { position:absolute; left:.65rem; top:.75rem; width:1.05rem; height:1.05rem; margin:0; accent-color: var(--accent); cursor:pointer; }
-  .vm-info-btn { position:absolute; top:0; right:0; height:100%; width:2.6rem; border:0; border-left:1px solid var(--muted); background:var(--info-btn-bg); color:var(--text); font-weight:700; font-size:1.4rem; display:flex; align-items:center; justify-content:center; cursor:pointer; transition: all .2s; box-shadow:inset 0 0 0 1px var(--info-btn-shadow); }
-  .vm-info-btn:hover { background:var(--info-btn-hover); color:var(--accent); text-shadow: var(--accent-glow); border-left-color:var(--accent); }
-  [data-theme="original"] .vm-info-btn:hover, [data-theme="pokemon"] .vm-info-btn:hover { text-shadow:none; }
-  .vm-info-btn:focus { outline:1px solid var(--accent); background:var(--info-btn-focus); outline-offset:1px; }
+  .vm-info-btn { order:2; position:static; min-height:44px; padding:.5rem .75rem; border:1px solid var(--accent); border-radius:6px; background:var(--notice-bg); color:var(--text); font-weight:700; font-size:.8rem; display:inline-flex; gap:.4rem; align-items:center; justify-content:center; cursor:pointer; }
+  .vm-info-btn:hover, .vm-info-btn[aria-expanded="true"] { background:var(--info-btn-hover); border-color:var(--accent); box-shadow:0 0 0 2px var(--accent); }
+  .vm-info-btn:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
   .vm-notes-pop { position:fixed; z-index:12000; background:var(--pop-bg); color:var(--text); border:1px solid var(--border); border-radius:0; padding:.65rem .75rem .7rem; width:320px; max-width:80vw; box-shadow:0 0 20px var(--pop-shadow); display:none; }
   .vm-notes-pop.visible { display:block; }
   .vm-notes-pop h5 { margin:0 0 .35rem; font-size:.72rem; letter-spacing:.5px; text-transform:uppercase; color:var(--accent); display:flex; justify-content:space-between; align-items:center; text-shadow:0 0 3px var(--accent); }
@@ -413,7 +412,7 @@ TPL_BASE = """
   .vm-notes-pop pre { margin:0; white-space:pre-wrap; font-family:var(--mono); font-size:.72rem; color:var(--text); text-shadow:none; }
   .vm-notes-close { background:transparent; border:1px solid var(--border); color:var(--accent); font-size:.65rem; padding:.1rem .35rem; border-radius:0; cursor:pointer; text-transform:uppercase; }
   .vm-notes-close:hover { background:var(--info-btn-hover); box-shadow:var(--accent-glow); }
-  .vm-item a { display:flex; flex-direction:column; gap:.25rem; color:inherit; flex:1; text-decoration:none; }
+  .vm-item a { min-width:0; overflow-wrap:anywhere; flex-basis:100%; display:flex; flex-direction:column; gap:.25rem; color:inherit; flex:1 1 100%; text-decoration:none; }
   .vm-id-line { font:600 .85rem var(--mono); letter-spacing:.5px; color:var(--muted); text-shadow:none; }
   .vm-name { font-weight:600; font-size:.95rem; line-height:1.1; margin-top:0.2rem; }
   .vm-status { font-size:.72rem; font-weight:600; letter-spacing:1px; text-transform:uppercase; display:inline-block; padding:.17rem .45rem; border-radius:0; background:var(--status-bg); color:var(--muted); box-shadow:inset 0 0 0 1px var(--muted); margin-top:0.2rem; }
@@ -744,7 +743,7 @@ TPL_HOME = """
         <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
           <input type="checkbox" name="vms" value="{{ vm.get('node') }}|{{ vm.get('type') }}|{{ vm.get('vmid') }}" />
 
-          <button type="button" class="vm-info-btn" title="View notes" aria-label="View notes" data-node="{{ vm.get('node') }}" data-type="{{ vm.get('type') }}" data-vmid="{{ vm.get('vmid') }}">📄</button>
+          <button type="button" class="vm-info-btn" aria-label="Login details for VM {{ vm.get('vmid') }}" aria-expanded="false" aria-controls="vmLoginDetails" data-node="{{ vm.get('node') }}" data-type="{{ vm.get('type') }}" data-vmid="{{ vm.get('vmid') }}"><span aria-hidden="true">🔑</span> Login details</button>
           <a href="{{ url_for('open_console') }}?node={{ vm.get('node') }}&vmid={{ vm.get('vmid') }}&vtype={{ vm.get('type') }}" target="_blank" rel="noopener" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}" data-vtype="{{ vm.get('type') }}">
             <span class="vm-id-line">#{{ vm.get('vmid') }} - {{ vm.get('node') }}</span>
             <span class="vm-name">{{ vm.get('name','') or '(no name)' }}</span>
@@ -1646,7 +1645,7 @@ def bulk_action():
                           if isinstance(backend_ids, list):
                             for bid in backend_ids:
                               backend_vm = all_vms_by_id.get(str(bid))
-                              if backend_vm:
+                              if backend_vm and str(bid) not in visible_vmid_set:
                                 backend_vms_to_reset[str(bid)] = backend_vm
                       except Exception:
                         pass
@@ -1711,7 +1710,7 @@ def bulk_action():
       failure_details.append("scenario-reset exception")
       logger.exception(f"[{req_id()}] Scenario reset exception")
 
-  for item in selections:
+  for item in ([] if action == "factory-reset-scenario" else selections):
     try:
       node, vtype, vmid = item.split("|")
       current_status = status_map.get((node, vmid))

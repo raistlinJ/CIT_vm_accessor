@@ -88,3 +88,47 @@ def test_expired_session_does_not_reset():
     result, post = run_reset(lookup_status=401)
     assert result['reason'] == ['invalid']
     post.assert_not_called()
+
+
+@pytest.mark.parametrize('vtype,status,operation', [
+    ('qemu', 'running', 'reset'), ('lxc', 'running', 'reboot'),
+    ('qemu', 'stopped', 'start'), ('lxc', 'stopped', 'start'),
+])
+@pytest.mark.parametrize('task_exit', ['OK', 'reset failed'])
+def test_backend_reset_excludes_visible_vms_and_tracks_task(vtype, status, operation, task_exit):
+    vms = [
+        {'node': 'pve', 'vmid': 101, 'type': vtype, 'status': 'running'},
+        {'node': 'pve', 'vmid': 102, 'type': vtype, 'status': status},
+        {'node': 'pve', 'vmid': 103, 'type': vtype, 'status': 'running'},
+    ]
+
+    def get(path, **kwargs):
+        if path == '/cluster/resources':
+            return response({'data': vms})
+        if '/tasks/' in path:
+            return response({'data': {'status': 'stopped', 'exitstatus': task_exit}})
+        if path.endswith('/status/current'):
+            return response({'data': {'status': status}})
+        raise AssertionError(path)
+
+    def notes(vm, *args):
+        # The backend list mistakenly references visible VMs, including one in another scenario.
+        return vm['vmid'], json.dumps({'Scenario': 'lab' if vm['vmid'] != 103 else 'other',
+                                       'BackendVMs': [101, 102, 103] if vm['vmid'] == 101 else []})
+
+    with main.app.test_client() as client:
+        with client.session_transaction() as session:
+            session['pve_ticket'] = 'test-ticket'
+            session['pve_csrf'] = 'test-csrf'
+        with patch.object(main, 'proxmox_get', side_effect=get), patch.object(
+            main, 'fetch_vm_notes', side_effect=notes
+        ), patch.object(main, 'proxmox_post', return_value=response({'data': 'UPID:test'})) as post:
+            result = client.post('/bulk', data={
+                'action': 'factory-reset-scenario', 'scenario': 'lab',
+                'vms_visible': '101,103', 'vms': f'pve|{vtype}|101',
+            })
+        summary = parse_qs(urlparse(result.location).query)
+        post.assert_called_once()
+        assert post.call_args.args == (f'/nodes/pve/{vtype}/102/status/{operation}',)
+        assert summary['done'] == ['1' if task_exit == 'OK' else '0']
+        assert summary['failed'] == ['0' if task_exit == 'OK' else '1']
