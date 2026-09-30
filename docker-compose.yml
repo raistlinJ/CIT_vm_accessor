@@ -30,6 +30,11 @@ services:
     environment:
       # App listens on plain HTTP 8080 inside container
       - PORT=8080
+      - SPICE_BRIDGE_HOST=0.0.0.0
+      - SPICE_BRIDGE_PORT=8081
+      # Default to the same cluster entry point used for API access.
+      - SPICE_PROXY_HOST=${SPICE_PROXY_HOST:-}
+      - SPICE_PROXY_PORT=${SPICE_PROXY_PORT:-3128}
       - PROXMOX_HOST=${PROXMOX_HOST:-arlsouth4.utep.edu}
       - PROXMOX_PORT=${PROXMOX_PORT:-8006}
       - PROXMOX_REALM=${PROXMOX_REALM:-pam}
@@ -47,6 +52,7 @@ services:
     # Bind service on host loopback so nginx (host network) can reach it.
     ports:
       - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
     # Note: TLS termination should be handled by a reverse proxy (e.g. nginx) — waitress doesn't serve HTTPS.
     restart: unless-stopped
   # If Proxmox is only bound to 127.0.0.1 or a host-only interface, consider host networking instead:
@@ -71,4 +77,3 @@ services:
     privileged: true
     command: ["nginx", "-g", "master_process off; daemon off;"]
     restart: unless-stopped
-

@@ -25,13 +25,14 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip check || true
 
 # Copy application (single-file app plus static assets)
-COPY main.py ./
+COPY main.py spice_bridge.py ./
 COPY static ./static
+COPY templates ./templates
 
 # (Optional) Copy templates/static if later split out; currently all inline.
 
 # Expose both common ports (8080 default; 8443 used when PORT overridden)
-EXPOSE 8080 8443
+EXPOSE 8080 8081 8443
 
 # Basic healthcheck hitting /healthz (works once the app is up)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

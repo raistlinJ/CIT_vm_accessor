@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>VM {{ vmid }} · AccessForge</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css') }}">
+  <script type="module" src="{{ url_for('static', filename='spice-console.js') }}"></script>
+</head>
+<body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-csrf="{{ csrf }}">
+  <header>
+    <a href="{{ url_for('home') }}" class="brand">AccessForge</a>
+    <strong id="console-title">VM {{ vmid }}</strong>
+    <span class="badge">SPICE</span>
+    <nav aria-label="Console controls">
+      <button id="reconnect" type="button">Reconnect</button>
+      <button id="disconnect" type="button" disabled>Disconnect</button>
+      <button id="ctrl-alt-del" type="button" disabled>Ctrl+Alt+Del</button>
+      <button id="clipboard-toggle" type="button" aria-controls="clipboard-panel" aria-expanded="false">Clipboard</button>
+      <button id="fullscreen" type="button">Fullscreen</button>
+      <a id="fallback" {% if fallback %}href="{{ fallback }}"{% else %}hidden{% endif %}>Use noVNC</a>
+    </nav>
+  </header>
+  <div id="status" role="status" aria-live="polite">Connecting…</div>
+  <section id="clipboard-panel" aria-label="Clipboard" hidden>
+    <p id="clipboard-status" role="status" aria-live="polite">Clipboard sharing requires a connected SPICE guest agent.</p>
+    <div class="clipboard-columns">
+      <div>
+        <label for="clipboard-send">Text to send to the VM</label>
+        <textarea id="clipboard-send" rows="4" spellcheck="false" placeholder="Paste or type text here"></textarea>
+        <div class="clipboard-actions">
+          <button id="clipboard-paste" type="button">Paste from computer</button>
+          <button id="clipboard-send-button" type="button" disabled>Send to VM</button>
+        </div>
+      </div>
+      <div>
+        <label for="clipboard-receive">Text copied inside the VM</label>
+        <textarea id="clipboard-receive" rows="4" spellcheck="false" readonly placeholder="Copy text inside the VM to see it here"></textarea>
+        <div class="clipboard-actions">
+          <button id="clipboard-copy" type="button" disabled>Copy from VM</button>
+        </div>
+      </div>
+    </div>
+    <p class="clipboard-help">Text only, up to 1 MiB. After sending, paste inside the VM. If browser clipboard access is blocked, use the text boxes to paste or copy manually.</p>
+  </section>
+  <main id="spice-area" aria-label="Virtual machine display">
+    <div id="spice-screen"></div>
+  </main>
+  <div id="message-div" hidden></div>
+  <div id="debug-div" hidden></div>
+  <noscript>This console requires JavaScript.</noscript>
+</body>
+</html>
