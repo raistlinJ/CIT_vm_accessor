@@ -132,6 +132,15 @@ Open **Clipboard** in the console toolbar. Sharing requires a running SPICE gues
 
 ## Troubleshooting and validation
 
+- **`ModuleNotFoundError: No module named 'cryptography'` (or `websockets`):** the container image is missing the new dependencies. Compose bind-mounts the source, so pulling new code or restarting the container can load the new code while keeping the old Python packages. Rebuild and recreate the app; a restart alone does not install dependencies:
+
+  ```bash
+  docker compose build --no-cache proxclient
+  docker compose up -d --force-recreate proxclient
+  docker compose exec proxclient python -c "from cryptography import x509; from websockets.asyncio.server import serve; print('SPICE dependencies OK')"
+  ```
+
+  The Dockerfile now fails on installation errors and verifies application imports during the build. If the build fails, resolve that error before recreating the container.
 - **Bridge unavailable:** use `python main.py` and confirm the 8081 listener starts. Rebuild the Docker image after dependency changes.
 - **WebSocket fails:** reload Nginx with the new `/spice/ws` route; verify AccessForge can reach the configured proxy on 3128 and that inter-node 3128 is allowed. Working API access on 8006 alone does not prove this.
 - **VM unavailable:** check that it is running, its display supports SPICE, and the user has `VM.Audit` and `VM.Console`. Try the noVNC link.

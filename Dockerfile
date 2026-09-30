@@ -21,8 +21,8 @@ WORKDIR /app
 
 # Copy requirements separately for better layer caching
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip check || true
+RUN python -m pip install --no-cache-dir -r requirements.txt \
+    && python -m pip check
 
 # Copy application (single-file app plus static assets)
 COPY main.py spice_bridge.py ./
@@ -40,6 +40,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 # Drop privileges
 USER appuser
+
+# Fail the image build if runtime dependencies are missing or cannot import.
+RUN python -c "import main; from spice_bridge import SpiceBridge, Target, session_owner"
 
 # Entrypoint simply runs the embedded waitress runner in main.py
 # (PORT env variable controls listening port inside container)
