@@ -7,11 +7,13 @@ session-bound grants can open tunnels; clients cannot choose a TCP destination.
 import asyncio
 from collections import Counter
 from dataclasses import dataclass, field
+import errno
 import hashlib
 from http import HTTPStatus
 import logging
 import re
 import secrets
+import socket
 import ssl
 import threading
 import time
@@ -25,6 +27,71 @@ logger = logging.getLogger(__name__)
 # WebSocket debug logging includes cookies and grant URLs.
 wire_logger = logging.getLogger("accessforge.spice.transport")
 wire_logger.setLevel(logging.WARNING)
+
+
+def _loopback_socketpair():
+    """Create the event loop's internal wakeup pair without AF_UNIX.
+
+    Some container policies deny Unix socket pairs while permitting TCP. The
+    temporary listener binds only to loopback and closes before this returns.
+    This connection carries wakeup bytes, not SPICE traffic or credentials.
+    """
+    client = reader = None
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.settimeout(3)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.settimeout(3)
+            client.connect(listener.getsockname())
+            reader, peer = listener.accept()
+            if peer != client.getsockname():
+                raise OSError("Unexpected peer on internal event-loop connection")
+            for endpoint in (reader, client):
+                endpoint.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            return reader, client
+    except BaseException:
+        for endpoint in (reader, client):
+            if endpoint is not None:
+                endpoint.close()
+        raise
+
+
+class _BridgeSelectorLoop(asyncio.SelectorEventLoop):
+    """Selector loop with a pre-created wakeup pair, scoped to this bridge.
+
+    _make_self_pipe is CPython's selector-loop hook (Python 3.11–3.14). Keeping
+    this override local avoids monkey-patching socket.socketpair process-wide.
+    """
+    def __init__(self, wakeup_pair):
+        self._wakeup_pair = wakeup_pair
+        super().__init__()
+
+    def _make_self_pipe(self):
+        self._ssock, self._csock = self._wakeup_pair
+        self._ssock.setblocking(False)
+        self._csock.setblocking(False)
+        self._internal_fds += 1
+        self._add_reader(self._ssock.fileno(), self._read_from_self)
+
+
+def _new_bridge_loop():
+    # Create sockets before constructing the loop so a denied fallback cannot
+    # leave a half-initialized event loop with a failing __del__ method.
+    try:
+        pair = socket.socketpair()
+    except OSError as exc:
+        if exc.errno not in (errno.EACCES, errno.EPERM, errno.EAFNOSUPPORT, errno.EOPNOTSUPP):
+            raise
+        logger.warning("Native socketpair unavailable; using loopback TCP for SPICE event-loop wakeups")
+        pair = _loopback_socketpair()
+    try:
+        return _BridgeSelectorLoop(pair)
+    except BaseException:
+        for endpoint in pair:
+            endpoint.close()
+        raise
 
 
 def session_owner(ticket):
@@ -235,10 +302,13 @@ class SpiceBridge:
     def start(self, host="127.0.0.1", port=8081):
         ready = threading.Event()
         errors = []
+        stage = "initialize its event loop"
 
         async def run():
+            nonlocal stage
             self.loop = asyncio.get_running_loop()
             self.stop_event = asyncio.Event()
+            stage = f"bind its WebSocket listener on {host}:{port}"
             async with serve(
                 self.relay, host, port, subprotocols=["binary"],
                 process_request=self.authorize, compression=None,
@@ -256,7 +326,10 @@ class SpiceBridge:
 
         def worker():
             try:
-                asyncio.run(run())
+                # Enter Runner before creating the coroutine. If event-loop
+                # initialization fails, there is no unawaited coroutine to leak.
+                with asyncio.Runner(loop_factory=_new_bridge_loop) as runner:
+                    runner.run(run())
             except Exception as exc:
                 errors.append(exc)
                 ready.set()
@@ -268,7 +341,7 @@ class SpiceBridge:
         if not ready.wait(10):
             raise RuntimeError("SPICE bridge did not start")
         if errors:
-            raise RuntimeError("SPICE bridge could not bind its listener") from errors[0]
+            raise RuntimeError(f"SPICE bridge could not {stage}: {errors[0]}") from errors[0]
 
     def stop(self):
         if self.loop and self.loop.is_running():

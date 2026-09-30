@@ -1,5 +1,8 @@
 import datetime
+import errno
+import gc
 import json
+import socket
 import socketserver
 import ssl
 import threading
@@ -18,6 +21,7 @@ from websockets.sync.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 import main
+import spice_bridge as bridge_module
 from spice_bridge import SpiceBridge, Target, check_subject, session_owner
 
 
@@ -348,3 +352,77 @@ def test_session_and_channel_limits(certificates):
     bridge.grants[token].connections.add("existing-channel")
     request = SimpleNamespace(path=f"/spice/ws?token={token}", headers={"Origin": "https://accessforge.test"})
     assert bridge._lookup(request) is None
+
+
+@pytest.mark.parametrize("denied_errno", [errno.EACCES, errno.EPERM])
+def test_bridge_relays_and_shuts_down_when_native_socketpair_is_denied(certificates, proxy, denied_errno):
+    bridge = SpiceBridge(lambda cookie: "owner" if cookie == "session=valid" else None)
+    try:
+        with patch.object(bridge_module.socket, "socketpair", side_effect=PermissionError(denied_errno, "denied")):
+            bridge.start(port=0)
+        assert bridge.loop._ssock.family == socket.AF_INET
+        assert bridge.loop._ssock.getsockname()[0] == "127.0.0.1"
+        port = bridge.server.sockets[0].getsockname()[1]
+        target = Target.from_config(certificates.config, "127.0.0.1", proxy.port)
+        token = bridge.issue(target, "owner", "https://accessforge.test", 60)
+        with websocket(f"ws://127.0.0.1:{port}/spice/ws?token={token}") as ws:
+            assert ws.recv(timeout=5) == b"server hello"
+            payload = bytes(range(256)) * 1024
+            ws.send(payload)
+            assert read_bytes(ws, len(payload)) == payload
+            # Revocation schedules a coroutine from the Flask thread. It must
+            # wake the loop through the TCP pair, then close the active tunnel.
+            bridge.revoke("owner")
+            with pytest.raises(ConnectionClosed):
+                ws.recv(timeout=5)
+    finally:
+        bridge.stop()
+    assert not bridge.running
+    assert bridge.loop.is_closed()
+    assert proxy.closed.wait(5)
+
+
+def test_native_socketpair_remains_the_default():
+    bridge = SpiceBridge(lambda _: None)
+    try:
+        with patch.object(bridge_module, "_loopback_socketpair") as fallback:
+            bridge.start(port=0)
+        fallback.assert_not_called()
+    finally:
+        bridge.stop()
+
+
+def test_event_loop_failure_is_reported_without_coroutine_or_destructor_warnings(recwarn):
+    bridge = SpiceBridge(lambda _: None)
+    denied = PermissionError(errno.EACCES, "denied")
+    with patch.object(bridge_module.socket, "socketpair", side_effect=denied), \
+            patch.object(bridge_module, "_loopback_socketpair", side_effect=denied):
+        with pytest.raises(RuntimeError, match="initialize its event loop") as exc:
+            bridge.start(port=0)
+    assert isinstance(exc.value.__cause__, PermissionError)
+    bridge.thread.join(timeout=2)
+    assert not bridge.running
+    gc.collect()
+    assert not list(recwarn)
+
+
+def test_resource_exhaustion_does_not_trigger_socketpair_fallback():
+    bridge = SpiceBridge(lambda _: None)
+    with patch.object(bridge_module.socket, "socketpair", side_effect=OSError(errno.EMFILE, "too many files")), \
+            patch.object(bridge_module, "_loopback_socketpair") as fallback:
+        with pytest.raises(RuntimeError, match="initialize its event loop"):
+            bridge.start(port=0)
+    fallback.assert_not_called()
+
+
+def test_listener_bind_failure_is_reported_separately():
+    bridge = SpiceBridge(lambda _: None)
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen(1)
+        port = occupied.getsockname()[1]
+        with pytest.raises(RuntimeError, match=f"bind its WebSocket listener on 127.0.0.1:{port}"):
+            bridge.start(port=port)
+    bridge.thread.join(timeout=2)
+    assert not bridge.running
+    assert bridge.loop.is_closed()
