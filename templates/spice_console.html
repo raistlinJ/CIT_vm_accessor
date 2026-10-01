@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css') }}">
   <script type="module" src="{{ url_for('static', filename='spice-console.js') }}"></script>
 </head>
-<body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-csrf="{{ csrf }}" data-vmid="{{ vmid }}">
+<body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-power-url="{{ url_for('console_power', vmid=vmid) }}" data-csrf="{{ csrf }}" data-vmid="{{ vmid }}">
   <div id="controls-drawer">
     <button id="controls-toggle" type="button" aria-controls="console-controls" aria-expanded="false" aria-label="Open console controls" title="Open console controls"><span aria-hidden="true">☰</span></button>
     <aside id="console-controls" aria-label="Console controls" hidden>
@@ -17,6 +17,8 @@
         <span class="badge">SPICE</span>
       </header>
       <nav aria-label="Console controls">
+        <button id="start-vm" type="button">Start VM</button>
+        <button id="restart-vm" type="button" title="Gracefully reboot the VM">Restart VM</button>
         <button id="reconnect" type="button">Reconnect</button>
         <button id="disconnect" type="button" disabled>Disconnect</button>
         <button id="ctrl-alt-del" type="button" disabled>Ctrl+Alt+Del</button>
@@ -26,6 +28,7 @@
         <a id="fallback" {% if fallback %}href="{{ fallback }}"{% else %}hidden{% endif %}>Use noVNC</a>
       </nav>
       <div id="status" role="status" aria-live="polite">Connecting…</div>
+      <div id="power-status" role="status" aria-live="polite" hidden></div>
       <section id="clipboard-panel" aria-label="Clipboard">
         <p id="clipboard-status" role="status" aria-live="polite">Clipboard sharing requires a connected SPICE guest agent.</p>
         <div class="clipboard-columns">

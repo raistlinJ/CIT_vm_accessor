@@ -159,15 +159,34 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
 
     bridge = SpiceBridge(main.spice_cookie_owner)
     monkeypatch.setattr(main, "spice_bridge", bridge)
+    vm_state = {"status": "running", "task_polls": 0, "deny_power": False}
+    power_actions = []
+
     def proxmox_get(path, **kwargs):
         if path == "/cluster/resources":
-            return response([{"vmid": 101, "type": "qemu", "node": "node-b", "status": "running"}])
+            return response([{"vmid": 101, "type": "qemu", "node": "node-b", "status": vm_state["status"]}])
+        if path.startswith("/nodes/node-b/tasks/"):
+            vm_state["task_polls"] += 1
+            if vm_state["task_polls"] == 1:
+                return response({"status": "running"})
+            vm_state["status"] = "running"
+            return response({"status": "stopped", "exitstatus": "OK"})
         assert path == "/nodes/node-b/qemu/101/config"
         assert kwargs["params"] == {"current": 1}
         return response({"vga": "qxl,memory=128"})
 
+    def proxmox_post(path, **kwargs):
+        if path.endswith("/spiceproxy"):
+            return response(certificates.config)
+        if vm_state["deny_power"]:
+            return response(None, 403)
+        assert path in ("/nodes/node-b/qemu/101/status/start", "/nodes/node-b/qemu/101/status/reboot")
+        power_actions.append(path.rsplit("/", 1)[-1])
+        vm_state["task_polls"] = 0
+        return response("UPID:node-b:power-task:")
+
     monkeypatch.setattr(main, "proxmox_get", proxmox_get)
-    monkeypatch.setattr(main, "proxmox_post", lambda *a, **kw: response(certificates.config))
+    monkeypatch.setattr(main, "proxmox_post", proxmox_post)
     monkeypatch.setenv("SPICE_PROXY_HOST", "127.0.0.1")
     original_session = main.app.view_functions["spice_session"]
 
@@ -419,6 +438,22 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.locator("canvas").evaluate("c => c.sc.ws.close()")
                 expect(page.locator("#console-controls")).to_be_visible()
                 expect(page.locator("#status")).to_contain_text("Connection lost")
+                vm_state["status"] = "stopped"
+                for label, status_text in [("Start VM", "VM started."), ("Restart VM", "VM restarted.")]:
+                    channel_count = len(authenticated_channels)
+                    page.get_by_role("button", name=label, exact=True).click()
+                    expect(page.get_by_role("button", name="Start VM", exact=True)).to_be_disabled()
+                    expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_disabled()
+                    expect(page.locator("#power-status")).to_have_text(status_text, timeout=10000)
+                    expect(page.locator("canvas")).to_be_visible(timeout=15000)
+                    expect(page.locator("#status")).to_contain_text("Connected")
+                    assert len(authenticated_channels) >= channel_count + 3
+                assert power_actions == ["start", "reboot"]
+                vm_state["deny_power"] = True
+                page.get_by_role("button", name="Restart VM", exact=True).click()
+                expect(page.locator("#power-status")).to_contain_text("VM.PowerMgmt")
+                expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_enabled()
+                expect(page.locator("canvas")).to_be_visible()
                 assert not errors
                 assert not failures
                 browser.close()

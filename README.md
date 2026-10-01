@@ -85,6 +85,10 @@ The bridge verifies the VM server's certificate chain and exact subject using th
 
 The vendored client is pinned in `static/vendor/spice-html5/UPSTREAM.md`; assets are served locally without a CDN. Console controls are tucked into a drawer, opened with the tab on the left edge. The drawer overlays the display without changing the guest resolution; close it with the tab or press Escape while focused inside it. Connection errors open the drawer automatically. The display automatically fits inside the popup while preserving its aspect ratio, including when the guest agent cannot resize the desktop. With an agent connected, AccessForge also requests a matching guest resolution. **Fit to window** immediately recalculates the fit and resends that request without disconnecting or rebooting the VM. Browser SPICE has upstream feature limits, including multiple displays, USB redirection, and some graphics/video formats; it is not guaranteed to match native-client performance. Keep noVNC available while evaluating your workloads.
 
+## VM power controls
+
+The SPICE drawer includes **Start VM** and **Restart VM**. Restart requests a graceful Proxmox reboot, which applies pending VM configuration changes. Actions use the signed-in user's `VM.PowerMgmt` permission and resolve the VM's current cluster node. The drawer shows task progress and reconnects the console after completion, unless you manually disconnect or reconnect while the task runs. If an action fails or takes longer than three minutes, check its status in Proxmox before retrying.
+
 ## Screenshots
 
 Use **Take screenshot** in the controls drawer to download a PNG of the VM display at its full guest resolution, even when the popup is scaled down. The filename includes the VM ID and UTC timestamp. Screenshots are generated locally in the browser and exclude the controls drawer and mouse pointer.
@@ -135,6 +139,8 @@ The clipboard panel is always available inside the left-edge controls drawer. Sh
 - `GET/POST /open` — automatically selects VM SPICE/noVNC from display and clipboard settings, or container xterm.js; `console=novnc` explicitly selects the VM fallback
 - `GET /console/spice/<vmid>` — browser SPICE console
 - `POST /api/spice/<vmid>/session` — authorized, fresh SPICE connection details
+- `POST /api/spice/<vmid>/power` — start or gracefully restart a VM
+- `GET /api/spice/<vmid>/power-task` — poll a signed, session-bound power task
 - `/spice/ws` — WebSocket route served by the bridge through Nginx
 - `GET /logout` — close SPICE sessions and clear login cookies
 - `GET /healthz` — application health and basic configuration

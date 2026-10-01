@@ -15,7 +15,7 @@ import ssl
 from flask import Flask, request, redirect, session, make_response, render_template, render_template_string, url_for, g, jsonify, send_from_directory
 from waitress import serve
 from jinja2 import ChoiceLoader, DictLoader, FileSystemLoader
-from itsdangerous import BadSignature
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.http import parse_cookie
 from spice_bridge import SpiceBridge, Target, session_owner
 import concurrent.futures
@@ -1480,9 +1480,7 @@ def spice_console(vmid):
   return render_template("spice_console.html", vmid=vmid, csrf=csrf, fallback=fallback)
 
 
-@app.route("/api/spice/<int:vmid>/session", methods=["POST"])
-@require_session(api=True)
-def spice_session(vmid):
+def validate_console_request():
   # Require a page-issued token as well as a same-origin browser request. This
   # app allows iframe embedding, so cookies alone don't prevent console CSRF.
   csrf = session.get("spice_csrf", "")
@@ -1502,6 +1500,99 @@ def spice_session(vmid):
       request.host[:256], scheme[:16],
     )
     return jsonify(error="Invalid request origin."), 403
+  return None
+
+
+def console_task_signer():
+  return URLSafeTimedSerializer(app.secret_key, salt="console-power-task")
+
+
+@app.route("/api/spice/<int:vmid>/power", methods=["POST"])
+@require_session(api=True)
+def console_power(vmid):
+  rejected = validate_console_request()
+  if rejected is not None:
+    return rejected
+  payload = request.get_json(silent=True)
+  action = payload.get("action") if isinstance(payload, dict) else None
+  if action not in ("start", "restart"):
+    return jsonify(error="Choose Start VM or Restart VM."), 400
+  cookies = {"PVEAuthCookie": session["pve_ticket"]}
+  headers = {"CSRFPreventionToken": session.get("pve_csrf")}
+  try:
+    resources = proxmox_get("/cluster/resources", params={"type": "vm"},
+                            cookies=cookies, headers=headers, timeout=10)
+    if resources.status_code in (401, 403):
+      return jsonify(error="Sign in again or check your VM permissions."), resources.status_code
+    resources.raise_for_status()
+    rows = resources.json()["data"]
+    if not isinstance(rows, list):
+      raise ValueError("Invalid cluster response")
+    vm = next((v for v in rows if isinstance(v, dict) and
+               str(v.get("vmid")) == str(vmid) and v.get("type") == "qemu"), None)
+    if not vm:
+      return jsonify(error="This VM is unavailable or you do not have permission to view it."), 404
+    node = vm.get("node")
+    if not isinstance(node, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", node):
+      raise ValueError("Invalid node")
+    if action == "start" and vm.get("status") == "running":
+      return jsonify(done=True, message="VM is already running.")
+    if action == "restart" and vm.get("status") != "running":
+      return jsonify(error="The VM is not running. Use Start VM first."), 409
+    operation = "reboot" if action == "restart" else "start"
+    result = proxmox_post(f"/nodes/{node}/qemu/{vmid}/status/{operation}", data={},
+                          cookies=cookies, headers=headers, timeout=15)
+    if result.status_code in (401, 403):
+      return jsonify(error="Sign in again or check your VM.PowerMgmt permission."), result.status_code
+    result.raise_for_status()
+    upid = result.json()["data"]
+    if not isinstance(upid, str) or not upid.startswith("UPID:"):
+      raise ValueError("Missing task ID")
+    token = console_task_signer().dumps({"vmid": vmid, "node": node, "upid": upid,
+                                       "owner": session_owner(session["pve_ticket"])})
+    return jsonify(done=False, task_url=url_for("console_power_task", vmid=vmid, task=token)), 202
+  except (requests.RequestException, ValueError, KeyError, TypeError):
+    logger.warning("Console power request failed for VM %s", vmid)
+    return jsonify(error="Could not confirm the power request. Check the VM state in Proxmox before trying again."), 502
+
+
+@app.route("/api/spice/<int:vmid>/power-task")
+@require_session(api=True)
+def console_power_task(vmid):
+  try:
+    task = console_task_signer().loads(request.args.get("task", ""), max_age=600)
+    if task["vmid"] != vmid or task["owner"] != session_owner(session["pve_ticket"]):
+      raise ValueError("Task owner mismatch")
+  except (BadSignature, ValueError, KeyError, TypeError):
+    return jsonify(error="This power task has expired or belongs to another session."), 403
+  try:
+    upid = urllib.parse.quote(task["upid"], safe="")
+    result = proxmox_get(f"/nodes/{task['node']}/tasks/{upid}/status",
+                         cookies={"PVEAuthCookie": session["pve_ticket"]},
+                         headers={"CSRFPreventionToken": session.get("pve_csrf")}, timeout=10)
+    if result.status_code in (401, 403):
+      return jsonify(error="Sign in again or check your task permissions."), result.status_code
+    result.raise_for_status()
+    data = result.json()["data"]
+    if data["status"] == "stopped":
+      if data.get("exitstatus") != "OK":
+        return jsonify(error="The VM power task failed. Check the Proxmox task log for details."), 502
+    elif data["status"] != "running":
+      raise ValueError("Unknown task state")
+    result = jsonify(done=data["status"] == "stopped")
+    result.headers["Cache-Control"] = "no-store"
+    return result
+  except (requests.RequestException, ValueError, KeyError, TypeError):
+    return jsonify(error="Could not check the power task. Check the VM state in Proxmox before trying again."), 502
+
+
+@app.route("/api/spice/<int:vmid>/session", methods=["POST"])
+@require_session(api=True)
+def spice_session(vmid):
+  rejected = validate_console_request()
+  if rejected is not None:
+    return rejected
+  origin = f"{request.scheme}://{request.host}"
   if not spice_bridge.running:
     return jsonify(error="The SPICE console service is unavailable. Try noVNC or contact your administrator."), 503
 
@@ -1524,7 +1615,7 @@ def spice_session(vmid):
       raise ValueError("Invalid node in cluster response")
     fallback = url_for("open_console", node=node, vmid=vmid, vtype="qemu", console="novnc")
     if vm.get("status") != "running":
-      return jsonify(error="This VM is stopped. Start it from AccessForge, then reconnect.", fallback=fallback), 409
+      return jsonify(error="This VM is stopped. Use Start VM in the controls drawer.", fallback=fallback), 409
     proxy_host = os.environ.get("SPICE_PROXY_HOST") or session.get("pve_host", PROXMOX_HOST)
     config_response = proxmox_post(f"/nodes/{node}/qemu/{vmid}/spiceproxy",
                                   data={"proxy": proxy_host}, cookies=cookies,

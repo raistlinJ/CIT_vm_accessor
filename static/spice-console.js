@@ -11,6 +11,9 @@ const area = document.getElementById('spice-area');
 const viewport = document.getElementById('spice-viewport');
 const fitWindow = document.getElementById('fit-window');
 const screenshotButton = document.getElementById('take-screenshot');
+const startVM = document.getElementById('start-vm');
+const restartVM = document.getElementById('restart-vm');
+const powerStatus = document.getElementById('power-status');
 const reconnect = document.getElementById('reconnect');
 const disconnect = document.getElementById('disconnect');
 const keys = document.getElementById('ctrl-alt-del');
@@ -29,6 +32,63 @@ let connectTimer;
 let guestClipboard = null;
 let lastGuestSize = null;
 let takingScreenshot = false;
+let powerRequest = null;
+let connectionIntent = 0;
+
+async function powerVM(action) {
+  if (powerRequest) return;
+  const controller = new AbortController();
+  powerRequest = controller;
+  const intent = connectionIntent;
+  startVM.disabled = restartVM.disabled = true;
+  powerStatus.hidden = false;
+  powerStatus.dataset.error = 'false';
+  powerStatus.textContent = action === 'start' ? 'Starting VM…' : 'Restarting VM…';
+  const timeout = setTimeout(() => controller.abort('timeout'), 180000);
+  try {
+    async function requestJSON(url, options = {}) {
+      const response = await fetch(url, {
+        credentials: 'same-origin', cache: 'no-store', signal: controller.signal, ...options,
+      });
+      if (!response.headers.get('Content-Type')?.includes('application/json')) {
+        throw new Error('The console service is unavailable. Reload this page or sign in again.');
+      }
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'The VM power request failed.');
+      return data;
+    }
+    const result = await requestJSON(document.body.dataset.powerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Console-CSRF': document.body.dataset.csrf },
+      body: JSON.stringify({ action }),
+    });
+    if (!result.done) {
+      if (!result.task_url) throw new Error('No task was returned. Check the VM state in Proxmox.');
+      while (true) {
+        const task = await requestJSON(result.task_url);
+        if (task.done) break;
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    powerStatus.textContent = result.message || (action === 'start' ? 'VM started.' : 'VM restarted.');
+    // A manual disconnect/reconnect during the task overrides auto-reconnect.
+    if (intent === connectionIntent && !controller.signal.aborted) connect();
+  } catch (error) {
+    if (controller.signal.reason === 'pagehide') return;
+    powerStatus.dataset.error = 'true';
+    powerStatus.textContent = controller.signal.aborted
+      ? 'The power task is taking longer than expected. Check its status in Proxmox before trying again.'
+      : error.message || 'Could not confirm the power request. Check the VM state in Proxmox before trying again.';
+    setControlsOpen(true);
+  } finally {
+    clearTimeout(timeout);
+    powerRequest = null;
+    startVM.disabled = restartVM.disabled = false;
+  }
+}
+
+startVM.addEventListener('click', () => powerVM('start'));
+restartVM.addEventListener('click', () => powerVM('restart'));
 
 function setControlsOpen(open) {
   consoleControls.hidden = !open;
@@ -200,8 +260,8 @@ async function connect() {
   }
 }
 
-reconnect.addEventListener('click', connect);
-disconnect.addEventListener('click', () => { stop(); showStatus('Disconnected.'); });
+reconnect.addEventListener('click', () => { connectionIntent++; connect(); });
+disconnect.addEventListener('click', () => { connectionIntent++; stop(); showStatus('Disconnected.'); });
 fallback.addEventListener('click', stop);
 screenshotButton.addEventListener('click', async () => {
   const canvas = screen.querySelector('canvas');
@@ -329,6 +389,6 @@ new MutationObserver(fitDisplay).observe(screen, {
   childList: true, subtree: true, attributes: true, attributeFilter: ['width', 'height'],
 });
 document.addEventListener('fullscreenchange', resize);
-window.addEventListener('pagehide', stop);
+window.addEventListener('pagehide', () => { powerRequest?.abort('pagehide'); stop(); });
 window.addEventListener('pageshow', event => { if (event.persisted) connect(); });
 connect();

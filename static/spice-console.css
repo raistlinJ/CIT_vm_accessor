@@ -15,8 +15,8 @@ button, nav a { font: inherit; border: 1px solid #46566b; border-radius: 5px; pa
 button:hover:not(:disabled), nav a:hover { background: #344860; }
 button:disabled { opacity: .45; cursor: default; }
 :focus-visible { outline: 2px solid #9bcaff; outline-offset: 2px; }
-#status { padding: 8px 16px; color: #aabbd0; background: #131c29; flex-shrink: 0; }
-#status[data-error="true"] { color: #ffc1b5; }
+#status, #power-status { padding: 8px 16px; color: #aabbd0; background: #131c29; flex-shrink: 0; }
+#status[data-error="true"], #power-status[data-error="true"] { color: #ffc1b5; }
 #spice-area { flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: #080b10; position: relative; }
 #spice-viewport { position: relative; overflow: hidden; margin-inline: auto; }
 #spice-screen { position: absolute; top: 0; left: 0; transform-origin: top left; }
