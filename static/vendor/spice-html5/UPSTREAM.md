@@ -17,6 +17,8 @@ Local input fixes:
 - `src/spicemsg.js`: encode relative mouse motion as 10 bytes (signed dx/dy
   and a 16-bit button mask), without the absolute-position display-id byte.
   Layout: https://gitlab.com/spice/spice-common/-/blob/master/spice.proto
+- `src/spicemsg.js`: map mouse viewport coordinates to native canvas pixels
+  for consistent input when the popup scales its display down.
 - `src/inputs.js`: explicitly focus the canvas on mouse-down before preventing
   the browser's default action, including after focus leaves without a mouseover.
 

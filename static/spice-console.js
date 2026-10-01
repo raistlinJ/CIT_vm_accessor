@@ -4,6 +4,8 @@ import { ClipboardSpiceConnection } from './spice-clipboard.js';
 const status = document.getElementById('status');
 const screen = document.getElementById('spice-screen');
 const area = document.getElementById('spice-area');
+const viewport = document.getElementById('spice-viewport');
+const fitWindow = document.getElementById('fit-window');
 const reconnect = document.getElementById('reconnect');
 const disconnect = document.getElementById('disconnect');
 const keys = document.getElementById('ctrl-alt-del');
@@ -22,6 +24,7 @@ let generation = 0;
 let resizeTimer;
 let connectTimer;
 let guestClipboard = null;
+let lastGuestSize = null;
 
 function showClipboardStatus(message, error = false) {
   clipboardStatus.textContent = message;
@@ -43,6 +46,8 @@ function stop() {
   connection = null;
   old?.stop();
   screen.replaceChildren();
+  lastGuestSize = null;
+  fitDisplay();
   document.getElementById('message-div').replaceChildren();
   reconnect.disabled = false;
   disconnect.disabled = true;
@@ -56,16 +61,40 @@ function stop() {
   showClipboardStatus('Clipboard sharing requires a connected SPICE guest agent.');
 }
 
+function fitDisplay() {
+  const canvas = screen.querySelector('canvas');
+  fitWindow.disabled = !canvas;
+  if (!canvas) {
+    viewport.style.width = viewport.style.height = '0px';
+    screen.style.transform = '';
+    return;
+  }
+  if (!canvas.width || !canvas.height || !area.clientWidth || !area.clientHeight) return;
+  const scale = Math.min(1, area.clientWidth / canvas.width, area.clientHeight / canvas.height);
+  // Transform the entire surface (including video/cursor overlays). The
+  // canvas keeps its native dimensions; input handlers map pointer locations
+  // back into that coordinate space so SPICE mouse positions remain accurate.
+  screen.style.width = `${canvas.width}px`;
+  screen.style.height = `${canvas.height}px`;
+  screen.style.transform = `scale(${scale})`;
+  viewport.style.width = `${canvas.width * scale}px`;
+  viewport.style.height = `${canvas.height * scale}px`;
+}
+
+function requestGuestResize(force = false) {
+  if (!connection?.agent_connected || !area.clientWidth || !area.clientHeight) return;
+  const width = Math.max(320, Math.floor(area.clientWidth / 8) * 8);
+  const height = Math.max(200, Math.floor(area.clientHeight / 8) * 8);
+  const size = `${width}x${height}`;
+  if (!force && size === lastGuestSize) return;
+  connection.resize_window(0, width, height, 32, 0, 0);
+  lastGuestSize = size;
+}
+
 function resize() {
+  fitDisplay();
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    if (!connection?.agent_connected) return;
-    // Request the viewport's real resolution; do not scale the canvas, which
-    // would otherwise require translating every mouse coordinate.
-    const width = Math.max(320, Math.floor(area.clientWidth / 8) * 8);
-    const height = Math.max(200, Math.floor(area.clientHeight / 8) * 8);
-    connection.resize_window(0, width, height, 32, 0, 0);
-  }, 200);
+  resizeTimer = setTimeout(requestGuestResize, 200);
 }
 
 async function connect() {
@@ -105,9 +134,17 @@ async function connect() {
         reconnect.disabled = false;
         keys.disabled = false;
       },
-      onagent() { if (attempt === generation) resize(); },
+      onagent() {
+        if (attempt !== generation) return;
+        lastGuestSize = null;
+        resize();
+      },
       onclipboardstate(ready) {
         if (attempt !== generation) return;
+        // Retry after guest capabilities arrive; an earlier resize may have
+        // been sent while the guest agent was still initializing.
+        lastGuestSize = null;
+        resize();
         clipboardSendButton.disabled = !ready;
         showClipboardStatus(ready ? 'Clipboard ready. Send text to the VM or copy text inside it.' :
           'Clipboard sharing requires a connected SPICE guest agent.');
@@ -141,6 +178,13 @@ async function connect() {
 reconnect.addEventListener('click', connect);
 disconnect.addEventListener('click', () => { stop(); showStatus('Disconnected.'); });
 fallback.addEventListener('click', stop);
+fitWindow.addEventListener('click', () => {
+  clearTimeout(resizeTimer);
+  area.scrollTo(0, 0);
+  fitDisplay();
+  requestGuestResize(true);
+  screen.querySelector('canvas')?.focus({ preventScroll: true });
+});
 keys.addEventListener('click', () => {
   if (connection?.inputs?.state === 'ready') sendCtrlAltDel(connection);
   screen.querySelector('canvas')?.focus();
@@ -203,6 +247,10 @@ document.getElementById('fullscreen').addEventListener('click', async () => {
   } catch { showStatus('Fullscreen is unavailable in this browser or embedded view.'); }
 });
 new ResizeObserver(resize).observe(area);
+new MutationObserver(fitDisplay).observe(screen, {
+  childList: true, subtree: true, attributes: true, attributeFilter: ['width', 'height'],
+});
+document.addEventListener('fullscreenchange', resize);
 window.addEventListener('pagehide', stop);
 window.addEventListener('pageshow', event => { if (event.persisted) connect(); });
 connect();
