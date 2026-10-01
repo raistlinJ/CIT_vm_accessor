@@ -2,6 +2,9 @@ import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
 import { ClipboardSpiceConnection } from './spice-clipboard.js';
 
 const status = document.getElementById('status');
+const controlsDrawer = document.getElementById('controls-drawer');
+const controlsToggle = document.getElementById('controls-toggle');
+const consoleControls = document.getElementById('console-controls');
 const screen = document.getElementById('spice-screen');
 const area = document.getElementById('spice-area');
 const viewport = document.getElementById('spice-viewport');
@@ -26,6 +29,25 @@ let connectTimer;
 let guestClipboard = null;
 let lastGuestSize = null;
 
+function setControlsOpen(open) {
+  consoleControls.hidden = !open;
+  controlsDrawer.dataset.open = String(open);
+  controlsToggle.setAttribute('aria-expanded', String(open));
+  controlsToggle.setAttribute('aria-label', open ? 'Close console controls' : 'Open console controls');
+  controlsToggle.title = open ? 'Close console controls' : 'Open console controls';
+  controlsToggle.firstElementChild.textContent = open ? '‹' : '☰';
+}
+
+controlsToggle.addEventListener('click', () => setControlsOpen(consoleControls.hidden));
+controlsDrawer.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !consoleControls.hidden) {
+    event.preventDefault();
+    event.stopPropagation();
+    setControlsOpen(false);
+    controlsToggle.focus();
+  }
+});
+
 function showClipboardStatus(message, error = false) {
   clipboardStatus.textContent = message;
   clipboardStatus.dataset.error = String(error);
@@ -34,6 +56,7 @@ function showClipboardStatus(message, error = false) {
 function showStatus(message, error = false) {
   status.textContent = message;
   status.dataset.error = String(error);
+  if (error) setControlsOpen(true);
 }
 
 function stop() {

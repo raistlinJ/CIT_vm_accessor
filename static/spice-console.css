@@ -5,7 +5,12 @@ header { display: flex; align-items: center; gap: 14px; padding: 12px 16px; back
 a { color: #9bcaff; text-decoration: none; }
 a:hover { text-decoration: underline; }
 .badge { color: #96e7bf; font-size: 11px; border: 1px solid #3d6955; padding: 3px 6px; border-radius: 4px; }
-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+#controls-drawer { position: fixed; inset: 0 auto 0 0; width: min(360px, calc(100vw - 48px)); z-index: 100; transform: translateX(-100%); pointer-events: none; }
+#controls-drawer[data-open="true"] { transform: none; }
+#console-controls { height: 100%; overflow-y: auto; overscroll-behavior: contain; background: #192332; box-shadow: 4px 0 16px #0006; pointer-events: auto; }
+#controls-toggle { position: absolute; left: 100%; top: 12px; width: 40px; height: 44px; border-radius: 0 6px 6px 0; padding: 0; font-size: 22px; pointer-events: auto; }
+nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 16px 12px; }
+nav a { text-align: center; }
 button, nav a { font: inherit; border: 1px solid #46566b; border-radius: 5px; padding: 7px 10px; background: #243246; color: #e6edf7; cursor: pointer; }
 button:hover:not(:disabled), nav a:hover { background: #344860; }
 button:disabled { opacity: .45; cursor: default; }
@@ -17,12 +22,11 @@ button:disabled { opacity: .45; cursor: default; }
 #spice-screen { position: absolute; top: 0; left: 0; transform-origin: top left; }
 #spice-screen canvas { display: block; }
 [hidden] { display: none !important; }
-#clipboard-panel { padding: 0 16px 12px; background: #192332; max-height: 55dvh; overflow: auto; flex-shrink: 0; }
+#clipboard-panel { padding: 0 16px 12px; background: #192332; }
 #clipboard-status { color: #aabbd0; }
 #clipboard-status[data-error="true"] { color: #ffc1b5; }
-.clipboard-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.clipboard-columns { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .clipboard-columns label { display: block; margin-bottom: 6px; }
 .clipboard-columns textarea { width: 100%; resize: vertical; min-height: 70px; max-height: 220px; padding: 8px; font: 13px ui-monospace, monospace; border: 1px solid #46566b; border-radius: 5px; background: #10151e; color: #e6edf7; }
 .clipboard-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .clipboard-help { color: #aabbd0; font-size: 12px; margin-bottom: 0; }
-@media (max-width: 640px) { .clipboard-columns { grid-template-columns: 1fr; } }

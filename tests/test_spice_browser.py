@@ -217,6 +217,16 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 expect(page.locator("canvas")).to_be_visible(timeout=15000)
                 expect(page.locator("#status")).to_contain_text("Connected")
                 expect(page.get_by_role("link", name="AccessForge", exact=True)).to_have_count(0)
+                expect(page.locator("#console-controls")).to_be_hidden()
+                expect(page.get_by_role("button", name="Open console controls")).to_be_visible()
+                display_bounds = page.locator("#spice-area").bounding_box()
+                page.get_by_role("button", name="Open console controls").click()
+                expect(page.get_by_role("button", name="Reconnect", exact=True)).to_be_visible()
+                assert page.locator("#spice-area").bounding_box() == display_bounds
+                page.get_by_role("button", name="Reconnect", exact=True).focus()
+                page.keyboard.press("Escape")
+                expect(page.locator("#console-controls")).to_be_hidden()
+                expect(page.get_by_role("button", name="Open console controls")).to_be_focused()
                 pixel = page.locator("canvas").evaluate("c => Array.from(c.getContext('2d').getImageData(10,10,1,1).data)")
                 assert pixel == [40, 80, 120, 255]
                 page.locator("canvas").click(position={"x": 100, "y": 100})
@@ -226,7 +236,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 # Focus can leave while the pointer remains over the canvas
                 # (e.g. after using DevTools or tabbing to a toolbar button).
                 # Clicking must restore it without requiring a new mouseover.
-                page.locator("#clipboard-toggle").evaluate("e => e.focus()")
+                page.locator("#controls-toggle").focus()
                 page.locator("canvas").click(position={"x": 100, "y": 100})
                 expect(page.locator("canvas")).to_be_focused()
                 page.keyboard.press("b")
@@ -297,6 +307,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     while not received_resizes.empty():
                         received_resizes.get_nowait()
                 page.locator("#spice-screen").evaluate("e => e.style.transform = 'scale(1)'")
+                page.get_by_role("button", name="Open console controls").click()
                 page.get_by_role("button", name="Fit to window", exact=True).click()
                 page.wait_for_function(fitted)
                 if agent_enabled:
@@ -306,9 +317,13 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 else:
                     assert received_resizes.empty()
                 assert len(authenticated_channels) == channel_count
+                page.screenshot(path=str(tmp_path / "spice-small-drawer.png"))
+                page.get_by_role("button", name="Close console controls").click()
+                expect(page.locator("#console-controls")).to_be_hidden()
                 page.screenshot(path=str(tmp_path / "spice-small-window.png"))
                 page.set_viewport_size({"width": 1100, "height": 760})
                 page.wait_for_function("() => document.querySelector('canvas').getBoundingClientRect().width === 640")
+                page.get_by_role("button", name="Open console controls").click()
                 page.get_by_role("button", name="Clipboard", exact=True).click()
                 page.wait_for_function(fitted)
                 if agent_enabled:
@@ -368,6 +383,10 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 assert len(authenticated_channels) >= 6
                 page.get_by_role("button", name="Ctrl+Alt+Del", exact=True).click()
                 expect(page.get_by_role("link", name="Use noVNC")).to_be_visible()
+                page.get_by_role("button", name="Close console controls").click()
+                page.locator("canvas").evaluate("c => c.sc.ws.close()")
+                expect(page.locator("#console-controls")).to_be_visible()
+                expect(page.locator("#status")).to_contain_text("Connection lost")
                 assert not errors
                 assert not failures
                 browser.close()
