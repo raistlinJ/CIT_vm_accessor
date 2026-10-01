@@ -111,11 +111,11 @@ The clipboard panel is always available inside the left-edge controls drawer. Sh
 
 ## VM file transfer
 
-Set `ENABLE_VM_FILE_TRANSFER=true` in Compose or the Compose `.env` file and recreate the app container. The default is `false`. The drawer then shows a file picker for sending files from the user's computer to the VM and a path field for downloading files from the VM. The app container does not read files from the Proxmox host filesystem.
+Set `ENABLE_VM_FILE_UPLOAD=true` to send files from the user's browser computer to the VM, `ENABLE_VM_FILE_DOWNLOAD=true` to retrieve files from the VM, or both. Set them in Compose or the Compose `.env` file and recreate the app container. Both default to `false`; the drawer shows only the enabled controls. The app container does not read files from the Proxmox host filesystem. The former `ENABLE_VM_FILE_TRANSFER` setting remains a fallback for either direction that does not have its own setting, so existing deployments keep their behavior.
 
 Uploads use the existing SPICE guest-agent file transfer protocol. The agent decides where transferred files are saved in the guest; the browser shows progress and completion. Uploads are limited to 512 MiB per file. Downloads use Proxmox's QEMU guest-agent `file-read` API, which requires the VM's QEMU guest agent to be enabled and running, plus `VM.GuestAgent.FileRead` (or `VM.GuestAgent.Unrestricted`) permission. Enter an absolute path in the guest, such as `/home/user/report.txt` or `C:\Users\user\report.txt`. The download limit is 64 MiB per file; the app fetches it in 1 MiB chunks. File data is held in the browser until the download starts and is not stored by AccessForge. Proxmox may run the QEMU guest agent with elevated guest privileges, so assign file-read permission only to users authorized to retrieve guest files. [Proxmox guest-agent API](https://github.com/proxmox/qemu-server/blob/master/src/PVE/API2/Qemu/Agent.pm), [SPICE file transfer](https://www.spice-space.org/api/spice-gtk/SpiceFileTransferTask.html).
 
-The switch hides these controls and blocks AccessForge's file-read route when false; it does not change Proxmox or the guest agent's own file-transfer policies.
+The upload switch hides the upload control. The download switch hides the download control and blocks AccessForge's file-read route when false. Neither switch changes Proxmox or the guest agent's own file-transfer policies.
 
 ## Configuration
 
@@ -132,7 +132,9 @@ The switch hides these controls and blocks AccessForge's file-read route when fa
 | `SPICE_PROXY_PORT` | `3128` | Internal SPICE proxy port |
 | `SPICE_BRIDGE_HOST` | `127.0.0.1` | Bridge bind address; Compose sets `0.0.0.0` inside the container |
 | `SPICE_BRIDGE_PORT` | `8081` | Bridge listener; update Nginx too if changed |
-| `ENABLE_VM_FILE_TRANSFER` | `false` | Show browser/VM file controls and enable the VM file-read route when `true` |
+| `ENABLE_VM_FILE_UPLOAD` | `false` | Show the browser-to-VM upload control when `true` |
+| `ENABLE_VM_FILE_DOWNLOAD` | `false` | Show the VM-to-browser download control and enable the file-read route when `true` |
+| `ENABLE_VM_FILE_TRANSFER` | `false` | Legacy fallback for either direction without its own setting |
 | `LOG_LEVEL` | `DEBUG` in Python, `INFO` in Compose | Application logging |
 | `DEBUG_HTTP` | `false` | Verbose upstream HTTP debugging; leave off in normal use |
 | `DEFAULT_THEME` | `pokemon` | Dashboard theme |

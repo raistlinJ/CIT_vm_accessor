@@ -20,22 +20,49 @@ def vm_resources(status="running"):
     return response([{"vmid": 101, "node": "node-b", "type": "qemu", "status": status}])
 
 
-def test_disabled_switch_hides_controls_and_blocks_endpoint(client, monkeypatch):
+def test_disabled_switches_hide_controls_and_block_endpoint(client, monkeypatch):
     monkeypatch.delenv("ENABLE_VM_FILE_TRANSFER", raising=False)
+    monkeypatch.delenv("ENABLE_VM_FILE_UPLOAD", raising=False)
+    monkeypatch.delenv("ENABLE_VM_FILE_DOWNLOAD", raising=False)
     assert b"file-panel" not in client.get("/console/spice/101").data
     with patch.object(main, "proxmox_get") as get:
         assert read_request(client).status_code == 404
         get.assert_not_called()
 
 
-@pytest.mark.parametrize("setting", ["true", "TRUE", " true "])
-def test_enabled_switch_shows_controls(client, monkeypatch, setting):
-    monkeypatch.setenv("ENABLE_VM_FILE_TRANSFER", setting)
-    assert b"file-panel" in client.get("/console/spice/101").data
+@pytest.mark.parametrize("upload,download", [("true", "false"), ("false", "TRUE"),
+                                              (" true ", " true ")])
+def test_directional_switches_show_only_enabled_controls(client, monkeypatch, upload, download):
+    monkeypatch.setenv("ENABLE_VM_FILE_UPLOAD", upload)
+    monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", download)
+    page = client.get("/console/spice/101").data
+    assert (b"file-upload" in page) == (upload.strip().lower() == "true")
+    assert (b"file-download" in page) == (download.strip().lower() == "true")
+    assert b"file-panel" in page
+    with patch.object(main, "proxmox_get") as get:
+        if download.strip().lower() != "true":
+            assert read_request(client).status_code == 404
+            get.assert_not_called()
+
+
+def test_legacy_switch_falls_back_per_direction(client, monkeypatch):
+    monkeypatch.setenv("ENABLE_VM_FILE_TRANSFER", "true")
+    monkeypatch.delenv("ENABLE_VM_FILE_UPLOAD", raising=False)
+    monkeypatch.delenv("ENABLE_VM_FILE_DOWNLOAD", raising=False)
+    page = client.get("/console/spice/101").data
+    assert b"file-upload" in page
+    assert b"file-download" in page
+    monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "false")
+    page = client.get("/console/spice/101").data
+    assert b"file-upload" in page
+    assert b"file-download" not in page
+    with patch.object(main, "proxmox_get") as get:
+        assert read_request(client).status_code == 404
+        get.assert_not_called()
 
 
 def test_reads_binary_chunk_from_current_cluster_node(client, monkeypatch):
-    monkeypatch.setenv("ENABLE_VM_FILE_TRANSFER", "true")
+    monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
     chunk = b"\x00\xffcaf\xc3\xa9\n"
     with patch.object(main, "proxmox_get", side_effect=[vm_resources(), response({
         "content": base64.b64encode(chunk).decode(), "bytes-read": len(chunk), "truncated": 1,
@@ -57,14 +84,14 @@ def test_reads_binary_chunk_from_current_cluster_node(client, monkeypatch):
     ("/file", -1), ("/file", 64 * 1024 * 1024 + 1), ("/file", True),
 ])
 def test_rejects_invalid_file_requests(client, monkeypatch, path, offset):
-    monkeypatch.setenv("ENABLE_VM_FILE_TRANSFER", "true")
+    monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
     with patch.object(main, "proxmox_get") as get:
         assert read_request(client, path, offset).status_code == 400
         get.assert_not_called()
 
 
 def test_file_read_requires_session_csrf_and_origin(client, monkeypatch):
-    monkeypatch.setenv("ENABLE_VM_FILE_TRANSFER", "true")
+    monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
     with patch.object(main, "proxmox_get") as get:
         assert client.post("/api/spice/101/file-read", json={"path": "/x", "offset": 0}).status_code == 403
         assert read_request(client, origin="https://evil.example").status_code == 403
@@ -77,14 +104,14 @@ def test_file_read_requires_session_csrf_and_origin(client, monkeypatch):
     (vm_resources("stopped"), 409), (response([]), 404), (response(None, 403), 403),
 ])
 def test_file_read_requires_running_authorized_vm(client, monkeypatch, upstream, expected):
-    monkeypatch.setenv("ENABLE_VM_FILE_TRANSFER", "true")
+    monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
     with patch.object(main, "proxmox_get", side_effect=[upstream]) as get:
         assert read_request(client).status_code == expected
         assert get.call_count == 1
 
 
 def test_file_read_enforces_upstream_permission_and_validates_data(client, monkeypatch):
-    monkeypatch.setenv("ENABLE_VM_FILE_TRANSFER", "true")
+    monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
     for upstream, expected in [
         (response(None, 403), 403),
         (response({"content": "not base64", "bytes-read": 10}), 502),

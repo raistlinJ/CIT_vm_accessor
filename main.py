@@ -1481,9 +1481,16 @@ def spice_console(vmid):
   fallback = None
   if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", node):
     fallback = url_for("open_console", node=node, vmid=vmid, vtype="qemu", console="novnc")
-  file_transfer_enabled = os.environ.get("ENABLE_VM_FILE_TRANSFER", "false").strip().lower() == "true"
+  file_upload_enabled = vm_file_transfer_enabled("UPLOAD")
+  file_download_enabled = vm_file_transfer_enabled("DOWNLOAD")
   return render_template("spice_console.html", vmid=vmid, csrf=csrf, fallback=fallback,
-                         file_transfer_enabled=file_transfer_enabled)
+                         file_upload_enabled=file_upload_enabled, file_download_enabled=file_download_enabled)
+
+
+def vm_file_transfer_enabled(direction):
+  setting = os.environ.get(f"ENABLE_VM_FILE_{direction}",
+                           os.environ.get("ENABLE_VM_FILE_TRANSFER", "false"))
+  return setting.strip().lower() == "true"
 
 
 def validate_console_request():
@@ -1595,8 +1602,8 @@ def console_power_task(vmid):
 @app.route("/api/spice/<int:vmid>/file-read", methods=["POST"])
 @require_session(api=True)
 def console_file_read(vmid):
-  if os.environ.get("ENABLE_VM_FILE_TRANSFER", "false").strip().lower() != "true":
-    return jsonify(error="VM file transfer is disabled."), 404
+  if not vm_file_transfer_enabled("DOWNLOAD"):
+    return jsonify(error="VM file downloads are disabled."), 404
   rejected = validate_console_request()
   if rejected is not None:
     return rejected

@@ -209,7 +209,8 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
         return response("UPID:node-b:power-task:")
 
     monkeypatch.setattr(main, "proxmox_get", proxmox_get)
-    monkeypatch.setenv("ENABLE_VM_FILE_TRANSFER", "true")
+    monkeypatch.setenv("ENABLE_VM_FILE_UPLOAD", "true")
+    monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
     monkeypatch.setattr(main, "proxmox_post", proxmox_post)
     monkeypatch.setenv("SPICE_PROXY_HOST", "127.0.0.1")
     original_session = main.app.view_functions["spice_session"]
