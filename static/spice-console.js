@@ -16,6 +16,8 @@ const screenshotButton = document.getElementById('take-screenshot');
 const startVM = document.getElementById('start-vm');
 const restartVM = document.getElementById('restart-vm');
 const powerStatus = document.getElementById('power-status');
+const powerCooldown = document.getElementById('power-cooldown');
+const powerNotice = document.getElementById('power-notice');
 const reconnect = document.getElementById('reconnect');
 const keys = document.getElementById('ctrl-alt-del');
 const fallback = document.getElementById('fallback');
@@ -35,13 +37,26 @@ let lastGuestSize = null;
 let takingScreenshot = false;
 let powerRequest = null;
 let connectionIntent = 0;
+let powerCooldownUntil = 0;
+let powerCooldownTimer;
+
+function updatePowerButtons() {
+  clearTimeout(powerCooldownTimer);
+  const remaining = Math.max(0, Math.ceil((powerCooldownUntil - performance.now()) / 1000));
+  startVM.disabled = restartVM.disabled = Boolean(powerRequest) || remaining > 0;
+  powerCooldown.hidden = remaining === 0;
+  powerCooldown.textContent = remaining ? `Please wait ${remaining}s before another power request.` : '';
+  if (remaining) powerCooldownTimer = setTimeout(updatePowerButtons, 250);
+}
 
 async function powerVM(action) {
-  if (powerRequest) return;
+  if (powerRequest || performance.now() < powerCooldownUntil) return;
   const controller = new AbortController();
   powerRequest = controller;
   const intent = connectionIntent;
-  startVM.disabled = restartVM.disabled = true;
+  powerCooldownUntil = performance.now() + 10000;
+  updatePowerButtons();
+  powerNotice.showModal();
   powerStatus.hidden = false;
   powerStatus.dataset.error = 'false';
   updateDrawerIndicator();
@@ -85,7 +100,7 @@ async function powerVM(action) {
   } finally {
     clearTimeout(timeout);
     powerRequest = null;
-    startVM.disabled = restartVM.disabled = false;
+    updatePowerButtons();
   }
 }
 

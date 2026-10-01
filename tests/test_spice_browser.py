@@ -454,9 +454,15 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 expect(page.locator("#console-controls")).to_be_hidden()
                 page.screenshot(path=str(tmp_path / "spice-vm-off.png"))
                 page.get_by_role("button", name="Open console controls").click()
+                page.clock.install()
                 for label, status_text in [("Start VM", "VM started."), ("Restart VM", "VM restarted.")]:
                     channel_count = len(authenticated_channels)
                     page.get_by_role("button", name=label, exact=True).click()
+                    expect(page.get_by_role("dialog", name="Please wait")).to_be_visible()
+                    expect(page.locator("#power-notice-message")).to_have_text(
+                        "Please wait at least 60 seconds for the VM to fully start or restart.")
+                    page.screenshot(path=str(tmp_path / "spice-power-notice.png"))
+                    page.get_by_role("button", name="OK", exact=True).click()
                     expect(page.get_by_role("button", name="Start VM", exact=True)).to_be_disabled()
                     expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_disabled()
                     expect(page.locator("#power-status")).to_have_text(status_text, timeout=10000)
@@ -465,14 +471,26 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.locator("#display-notice")).to_be_hidden()
                     expect(page.locator("#controls-alert")).to_be_hidden()
                     assert len(authenticated_channels) >= channel_count + 3
+                    # Task completion must not end the shared cooldown early.
+                    expect(page.get_by_role("button", name="Start VM", exact=True)).to_be_disabled()
+                    expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_disabled()
+                    expect(page.locator("#power-cooldown")).to_be_visible()
+                    page.screenshot(path=str(tmp_path / "spice-power-cooldown.png"))
+                    page.clock.fast_forward(10000)
+                    expect(page.get_by_role("button", name="Start VM", exact=True)).to_be_enabled()
+                    expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_enabled()
+                    expect(page.locator("#power-cooldown")).to_be_hidden()
                 assert power_actions == ["start", "reboot"]
                 vm_state["deny_power"] = True
                 page.get_by_role("button", name="Restart VM", exact=True).click()
+                page.get_by_role("button", name="OK", exact=True).click()
                 expect(page.locator("#power-status")).to_contain_text("VM.PowerMgmt")
                 expect(page.locator("#controls-alert")).to_be_visible()
                 page.get_by_role("button", name="Close console controls").click()
                 expect(page.locator("#controls-alert")).to_be_visible()
                 page.get_by_role("button", name="Open console controls").click()
+                expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_disabled()
+                page.clock.fast_forward(10000)
                 expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_enabled()
                 expect(page.locator("canvas")).to_be_visible()
                 assert not errors

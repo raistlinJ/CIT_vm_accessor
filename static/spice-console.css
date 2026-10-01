@@ -19,6 +19,12 @@ button:disabled { opacity: .45; cursor: default; }
 :focus-visible { outline: 2px solid #9bcaff; outline-offset: 2px; }
 #status, #power-status { padding: 8px 16px; color: #aabbd0; background: #131c29; flex-shrink: 0; }
 #status[data-error="true"], #power-status[data-error="true"] { color: #ffc1b5; }
+#power-cooldown { margin: 0; padding: 8px 16px; color: #aabbd0; font-size: 12px; }
+#power-notice { width: min(400px, calc(100vw - 32px)); padding: 24px; border: 1px solid #46566b; border-radius: 10px; background: #192332; color: #e6edf7; }
+#power-notice::backdrop { background: #0009; }
+#power-notice h2 { margin: 0 0 12px; font-size: 18px; }
+#power-notice p { line-height: 1.5; }
+#power-notice form { text-align: right; }
 #spice-area { flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: #080b10; position: relative; }
 #display-notice { position: absolute; inset: 0; margin: 0; display: grid; place-items: center; padding: 56px; text-align: center; color: #ffc1b5; }
 #spice-viewport { position: relative; overflow: hidden; margin-inline: auto; }

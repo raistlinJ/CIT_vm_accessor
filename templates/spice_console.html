@@ -28,6 +28,7 @@
       </nav>
       <div id="status" role="status" aria-live="polite">Connecting…</div>
       <div id="power-status" role="status" aria-live="polite" hidden></div>
+      <p id="power-cooldown" hidden></p>
       <section id="clipboard-panel" aria-label="Clipboard">
         <p id="clipboard-status" role="status" aria-live="polite">Clipboard sharing requires a connected SPICE guest agent.</p>
         <div class="clipboard-columns">
@@ -55,6 +56,11 @@
     <p id="display-notice" role="status" aria-live="polite" hidden></p>
     <div id="spice-viewport"><div id="spice-screen"></div></div>
   </main>
+  <dialog id="power-notice" aria-labelledby="power-notice-title" aria-describedby="power-notice-message">
+    <h2 id="power-notice-title">Please wait</h2>
+    <p id="power-notice-message">Please wait at least 60 seconds for the VM to fully start or restart.</p>
+    <form method="dialog"><button type="submit" autofocus>OK</button></form>
+  </dialog>
   <div id="message-div" hidden></div>
   <div id="debug-div" hidden></div>
   <noscript>This console requires JavaScript.</noscript>
