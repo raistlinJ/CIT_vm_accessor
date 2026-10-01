@@ -542,12 +542,6 @@ clipboardCopy.addEventListener('click', async () => {
     showClipboardStatus('Browser clipboard access is blocked. The VM text is selected; copy it with Ctrl+C or ⌘C.', true);
   }
 });
-document.getElementById('fullscreen').addEventListener('click', async () => {
-  try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await document.documentElement.requestFullscreen();
-  } catch { showStatus('Fullscreen is unavailable in this browser or embedded view.', true); }
-});
 new ResizeObserver(resize).observe(area);
 new MutationObserver(fitDisplay).observe(screen, {
   childList: true, subtree: true, attributes: true, attributeFilter: ['width', 'height'],

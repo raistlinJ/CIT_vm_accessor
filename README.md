@@ -5,7 +5,7 @@ AccessForge signs into the Proxmox VE API and opens browser consoles across your
 ## Features
 
 - Proxmox login and VM listing, grouped by scenario
-- Browser SPICE with reconnect, fullscreen, Ctrl+Alt+Del, and a noVNC fallback
+- Browser SPICE with Re-Fit Window, Ctrl+Alt+Del, and a noVNC fallback
 - Clipboard panel for two-way text transfer, including browsers that deny clipboard permission
 - Optional browser-to-VM uploads and VM-to-browser downloads
 - Container xterm.js consoles
