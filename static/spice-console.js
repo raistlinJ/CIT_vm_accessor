@@ -13,8 +13,6 @@ const reconnect = document.getElementById('reconnect');
 const disconnect = document.getElementById('disconnect');
 const keys = document.getElementById('ctrl-alt-del');
 const fallback = document.getElementById('fallback');
-const clipboardToggle = document.getElementById('clipboard-toggle');
-const clipboardPanel = document.getElementById('clipboard-panel');
 const clipboardStatus = document.getElementById('clipboard-status');
 const clipboardSend = document.getElementById('clipboard-send');
 const clipboardReceive = document.getElementById('clipboard-receive');
@@ -211,11 +209,6 @@ fitWindow.addEventListener('click', () => {
 keys.addEventListener('click', () => {
   if (connection?.inputs?.state === 'ready') sendCtrlAltDel(connection);
   screen.querySelector('canvas')?.focus();
-});
-clipboardToggle.addEventListener('click', () => {
-  clipboardPanel.hidden = !clipboardPanel.hidden;
-  clipboardToggle.setAttribute('aria-expanded', String(!clipboardPanel.hidden));
-  if (!clipboardPanel.hidden) clipboardSend.focus();
 });
 clipboardPaste.addEventListener('click', async () => {
   const attempt = generation;

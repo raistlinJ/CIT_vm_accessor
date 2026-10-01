@@ -20,13 +20,12 @@
         <button id="reconnect" type="button">Reconnect</button>
         <button id="disconnect" type="button" disabled>Disconnect</button>
         <button id="ctrl-alt-del" type="button" disabled>Ctrl+Alt+Del</button>
-        <button id="clipboard-toggle" type="button" aria-controls="clipboard-panel" aria-expanded="false">Clipboard</button>
         <button id="fit-window" type="button" disabled title="Fit the display and request a matching desktop size">Fit to window</button>
         <button id="fullscreen" type="button">Fullscreen</button>
         <a id="fallback" {% if fallback %}href="{{ fallback }}"{% else %}hidden{% endif %}>Use noVNC</a>
       </nav>
       <div id="status" role="status" aria-live="polite">Connecting…</div>
-      <section id="clipboard-panel" aria-label="Clipboard" hidden>
+      <section id="clipboard-panel" aria-label="Clipboard">
         <p id="clipboard-status" role="status" aria-live="polite">Clipboard sharing requires a connected SPICE guest agent.</p>
         <div class="clipboard-columns">
           <div>

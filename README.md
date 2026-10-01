@@ -85,7 +85,7 @@ The vendored client is pinned in `static/vendor/spice-html5/UPSTREAM.md`; assets
 
 ## Clipboard
 
-Open the left-edge controls drawer, then **Clipboard**. Sharing requires a running SPICE guest agent inside the VM; users do not install anything on their own computers.
+The clipboard panel is always available inside the left-edge controls drawer. Sharing requires a running SPICE guest agent inside the VM; users do not install anything on their own computers.
 
 - **Computer → VM:** paste into the outgoing text box, or click **Paste from computer**, then **Send to VM**. Paste normally inside the guest application. Sending sets the guest clipboard; it does not simulate typing or automatically paste into the focused application.
 - **VM → computer:** copy text inside the VM. It appears in the incoming text box. Click **Copy from VM**, or select the text and copy it manually.

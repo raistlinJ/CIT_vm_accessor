@@ -324,7 +324,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.set_viewport_size({"width": 1100, "height": 760})
                 page.wait_for_function("() => document.querySelector('canvas').getBoundingClientRect().width === 640")
                 page.get_by_role("button", name="Open console controls").click()
-                page.get_by_role("button", name="Clipboard", exact=True).click()
+                expect(page.locator("#clipboard-panel")).to_be_visible()
                 page.wait_for_function(fitted)
                 if agent_enabled:
                     expect(page.locator("#clipboard-send-button")).to_be_enabled()
