@@ -228,6 +228,14 @@ def proxy(certificates):
                     return
                 header += data
             authorities.append(header)
+            # Proxmox validates the routing ticket in Host, not the CONNECT
+            # request line. Reject missing/wrong Host before attempting TLS.
+            expected_host = (certificates.config["host"] + ":" + str(certificates.config["tls-port"])).encode()
+            headers = dict(line.split(b":", 1) for line in header.split(b"\r\n")[1:] if line)
+            if headers.get(b"Host", b"").strip() != expected_host:
+                self.request.sendall(b"HTTP/1.0 401 invalid ticket\r\n\r\n")
+                closed.set()
+                return
             self.request.sendall(b"HTTP/1.0 200 Connection established\r\n\r\n")
             try:
                 with certificates.context.wrap_socket(self.request, server_side=True) as stream:
@@ -283,9 +291,27 @@ def test_real_connect_tls_and_multichannel_binary_relay(live_bridge, proxy):
             ws.send(payload)
             assert read_bytes(ws, len(payload)) == payload
         assert len(proxy.authorities) == 2
-        assert all(h == b"CONNECT pvespiceproxy:deadbeef:101:node-b::abcd:61000 HTTP/1.0\r\n\r\n"
+        assert all(h == (b"CONNECT pvespiceproxy:deadbeef:101:node-b::abcd:61000 HTTP/1.0\r\n"
+                         b"Host: pvespiceproxy:deadbeef:101:node-b::abcd:61000\r\n\r\n")
                    for h in proxy.authorities)
     assert proxy.closed.wait(5)
+
+
+def test_proxmox_proxy_requires_host_even_with_valid_connect_target(proxy):
+    with socket.create_connection(("127.0.0.1", proxy.port), timeout=5) as stream:
+        stream.sendall(b"CONNECT pvespiceproxy:deadbeef:101:node-b::abcd:61000 HTTP/1.0\r\n\r\n")
+        assert stream.recv(1024).startswith(b"HTTP/1.0 401")
+
+
+def test_proxy_rejection_logs_status_without_routing_ticket(live_bridge, caplog):
+    target = live_bridge.bridge.grants[live_bridge.token].target
+    target.authority = "pvespiceproxy:expired-secret-ticket:61000"
+    with websocket(live_bridge.url) as ws:
+        with pytest.raises(ConnectionClosed) as exc:
+            ws.recv(timeout=5)
+        assert exc.value.rcvd.code == 1011
+    assert "Proxmox SPICE CONNECT rejected (HTTP 401)" in caplog.text
+    assert target.authority not in caplog.text
 
 
 @pytest.mark.parametrize("kwargs", [{"origin": "https://attacker.test"}, {"cookie": "session=invalid"}])

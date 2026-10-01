@@ -143,11 +143,18 @@ async def open_tunnel(target):
         asyncio.open_connection(target.proxy_host, target.proxy_port, limit=16384), 10
     )
     try:
-        writer.write(f"CONNECT {target.authority} HTTP/1.0\r\n\r\n".encode("ascii"))
+        # Proxmox authenticates the signed routing ticket from Host, not the
+        # request line (PVE/APIServer/AnyEvent.pm). Both must carry the full
+        # ticket + TLS port, including when the proxy routes to another node.
+        writer.write((f"CONNECT {target.authority} HTTP/1.0\r\n"
+                      f"Host: {target.authority}\r\n\r\n").encode("ascii"))
         await writer.drain()
         header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
         status = header.split(b"\r\n", 1)[0].split()
         if len(status) < 2 or status[0] not in (b"HTTP/1.0", b"HTTP/1.1") or status[1] != b"200":
+            # Never log the response body/reason: it can echo the routing ticket.
+            code = status[1].decode("ascii") if len(status) > 1 and re.fullmatch(rb"[1-5][0-9]{2}", status[1]) else "invalid response"
+            logger.warning("Proxmox SPICE CONNECT rejected (HTTP %s)", code)
             raise ConnectionError("Proxmox SPICE proxy rejected the tunnel")
         await writer.start_tls(target.context, server_hostname="", ssl_handshake_timeout=10)
         check_subject(writer.get_extra_info("ssl_object").getpeercert(binary_form=True), target.subject)

@@ -100,3 +100,23 @@ def test_forwarded_proto_cannot_override_wsgi_scheme(client):
     })
     assert result.status_code == 403
     assert result.json["error"] == "Invalid request origin."
+
+
+@pytest.mark.parametrize("received", [None, "null", "https://other.example.test", "x" * 2000])
+def test_origin_rejection_logs_bounded_addresses_without_credentials(client, caplog, received):
+    client.get("/console/spice/101")
+    with client.session_transaction() as session:
+        csrf = session["spice_csrf"]
+    headers = {"X-Console-CSRF": csrf}
+    if received is not None:
+        headers["Origin"] = received
+    result = client.post("/api/spice/101/session", headers=headers)
+    assert result.status_code == 403
+    log = next(r.getMessage() for r in caplog.records if "SPICE origin rejected:" in r.getMessage())
+    assert "expected='http://localhost'" in log
+    assert f"received={received[:256] if received is not None else None!r}" in log
+    assert "host='localhost' scheme='http'" in log
+    assert len(log) < 600
+    assert csrf not in log
+    assert "test-ticket" not in log
+    assert "test-csrf" not in log

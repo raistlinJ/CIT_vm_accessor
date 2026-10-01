@@ -70,6 +70,11 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 while not header.endswith(b"\r\n\r\n"):
                     header += read_exact(self.request, 1)
                 assert header.startswith(b"CONNECT pvespiceproxy:")
+                headers = dict(line.split(b":", 1) for line in header.split(b"\r\n")[1:] if line)
+                expected_host = (certificates.config["host"] + ":" + str(certificates.config["tls-port"])).encode()
+                if headers.get(b"Host", b"").strip() != expected_host:
+                    self.request.sendall(b"HTTP/1.0 401 invalid ticket\r\n\r\n")
+                    return
                 self.request.sendall(b"HTTP/1.0 200 OK\r\n\r\n")
                 with certificates.context.wrap_socket(self.request, server_side=True) as stream:
                     link = read_exact(stream, 16)

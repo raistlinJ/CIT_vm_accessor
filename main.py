@@ -1450,10 +1450,16 @@ def spice_session(vmid):
   # Waitress supplies the public scheme from deployment configuration. Do not
   # let an arbitrary forwarding header override this security check.
   scheme = request.scheme
-  if scheme not in ("http", "https"):
-    return jsonify(error="Invalid request origin."), 403
   origin = f"{scheme}://{request.host}"
-  if request.headers.get("Origin") != origin:
+  received_origin = request.headers.get("Origin")
+  if scheme not in ("http", "https") or received_origin != origin:
+    # Log only bounded address metadata, never cookies, CSRF tokens, or SPICE
+    # credentials. %r escapes control characters in client-supplied values.
+    logger.warning(
+      "SPICE origin rejected: expected=%r received=%r host=%r scheme=%r",
+      origin[:256], received_origin[:256] if received_origin is not None else None,
+      request.host[:256], scheme[:16],
+    )
     return jsonify(error="Invalid request origin."), 403
   if not spice_bridge.running:
     return jsonify(error="The SPICE console service is unavailable. Try noVNC or contact your administrator."), 503
@@ -2138,7 +2144,7 @@ def run():
   if https_cert or https_key:
     logger.warning("HTTPS_CERT_FILE/HTTPS_KEY_FILE provided but waitress does not terminate TLS. Deploy behind a reverse proxy (e.g. nginx) for HTTPS.")
   logger.info(
-    f"Starting waitress on http://0.0.0.0:{port} (Proxmox host: {PROXMOX_HOST}, realm: {PROXMOX_REALM}, verify_ssl={VERIFY_SSL}, log_level={LOG_LEVEL}, debug_http={DEBUG_HTTP})"
+    f"Starting waitress on http://0.0.0.0:{port} (public_scheme={url_scheme}, Proxmox host: {PROXMOX_HOST}, realm: {PROXMOX_REALM}, verify_ssl={VERIFY_SSL}, log_level={LOG_LEVEL}, debug_http={DEBUG_HTTP})"
   )
   spice_bridge.start(os.environ.get("SPICE_BRIDGE_HOST", "127.0.0.1"),
                      int(os.environ.get("SPICE_BRIDGE_PORT", "8081")))
