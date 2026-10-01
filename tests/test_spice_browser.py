@@ -294,9 +294,10 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 assert downloaded_file.read_bytes() == guest_file
                 assert file_reads == [0, 5, 10, 15]
                 file_reads.clear()
-                expect(page.get_by_role("button", name="Reconnect", exact=True)).to_be_visible()
+                expect(page.get_by_role("button", name="Re-Fit Window", exact=True)).to_be_visible()
+                expect(page.locator("#fit-window")).to_have_count(0)
                 assert page.locator("#spice-area").bounding_box() == display_bounds
-                page.get_by_role("button", name="Reconnect", exact=True).focus()
+                page.get_by_role("button", name="Re-Fit Window", exact=True).focus()
                 page.keyboard.press("Escape")
                 expect(page.locator("#console-controls")).to_be_hidden()
                 expect(page.get_by_role("button", name="Open console controls")).to_be_focused()
@@ -343,6 +344,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.set_viewport_size({"width": 420, "height": 360})
                 fitted = """() => {
                   const canvas = document.querySelector('#spice-screen canvas');
+                  if (!canvas) return false;
                   const bounds = canvas.getBoundingClientRect();
                   const area = document.querySelector('#spice-area').getBoundingClientRect();
                   return bounds.width > 0 && bounds.height > 0 &&
@@ -381,15 +383,14 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                         received_resizes.get_nowait()
                 page.locator("#spice-screen").evaluate("e => e.style.transform = 'scale(1)'")
                 page.get_by_role("button", name="Open console controls").click()
-                page.get_by_role("button", name="Fit to window", exact=True).click()
+                page.get_by_role("button", name="Re-Fit Window", exact=True).click()
                 page.wait_for_function(fitted)
                 if agent_enabled:
-                    # Explicit fit must resend even when dimensions did not
-                    # change; automatic resize deduplication must not eat it.
+                    # A fresh session requests the current size again.
                     assert received_resizes.get(timeout=5) == expected_size
                 else:
                     assert received_resizes.empty()
-                assert len(authenticated_channels) == channel_count
+                assert len(authenticated_channels) >= channel_count + 3
                 # Download the guest surface, not the scaled popup or drawer.
                 with page.expect_download() as download_info:
                     page.get_by_role("button", name="Take screenshot", exact=True).click()
@@ -468,7 +469,6 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.locator("canvas").evaluate("c => c.sc.ws.close()")
                 expect(page.locator("#status")).to_contain_text("Connection lost")
                 expect(page.locator("canvas")).to_have_count(0)
-                expect(page.get_by_role("button", name="Fit to window", exact=True)).to_be_disabled()
                 expect(page.get_by_role("button", name="Take screenshot", exact=True)).to_be_disabled()
                 expect(page.locator("#clipboard-send")).to_have_value("")
                 expect(page.locator("#clipboard-receive")).to_have_value("")
@@ -476,7 +476,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 if agent_enabled:
                     page.evaluate("clipboardTest.resolve('late clipboard value')")
                     expect(page.locator("#clipboard-send")).to_have_value("")
-                page.get_by_role("button", name="Reconnect", exact=True).click()
+                page.get_by_role("button", name="Re-Fit Window", exact=True).click()
                 expect(page.locator("canvas")).to_be_visible(timeout=15000)
                 expect(page.locator("#controls-alert")).to_be_hidden()
                 assert len(authenticated_channels) >= 6

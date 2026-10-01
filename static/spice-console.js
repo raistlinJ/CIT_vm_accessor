@@ -11,7 +11,6 @@ const consoleControls = document.getElementById('console-controls');
 const screen = document.getElementById('spice-screen');
 const area = document.getElementById('spice-area');
 const viewport = document.getElementById('spice-viewport');
-const fitWindow = document.getElementById('fit-window');
 const screenshotButton = document.getElementById('take-screenshot');
 const startVM = document.getElementById('start-vm');
 const restartVM = document.getElementById('restart-vm');
@@ -300,7 +299,6 @@ function stop() {
 
 function fitDisplay() {
   const canvas = screen.querySelector('canvas');
-  fitWindow.disabled = !canvas;
   screenshotButton.disabled = takingScreenshot || !canvas?.width || !canvas?.height;
   if (!canvas) {
     viewport.style.width = viewport.style.height = '0px';
@@ -319,12 +317,12 @@ function fitDisplay() {
   viewport.style.height = `${canvas.height * scale}px`;
 }
 
-function requestGuestResize(force = false) {
+function requestGuestResize() {
   if (!connection?.agent_connected || !area.clientWidth || !area.clientHeight) return;
   const width = Math.max(320, Math.floor(area.clientWidth / 8) * 8);
   const height = Math.max(200, Math.floor(area.clientHeight / 8) * 8);
   const size = `${width}x${height}`;
-  if (!force && size === lastGuestSize) return;
+  if (size === lastGuestSize) return;
   connection.resize_window(0, width, height, 32, 0, 0);
   lastGuestSize = size;
 }
@@ -406,13 +404,13 @@ async function connect() {
       onerror() {
         if (attempt !== generation) return;
         stop();
-        showStatus('Connection lost or unavailable. Reconnect, or try noVNC.', true);
+        showStatus('Connection lost or unavailable. Click Re-Fit Window, or try noVNC.', true);
       },
     });
     connectTimer = setTimeout(() => {
       if (attempt === generation && !screen.querySelector('canvas')) {
         stop();
-        showStatus('The VM display did not become ready. Reconnect, or try noVNC.', true);
+        showStatus('The VM display did not become ready. Click Re-Fit Window, or try noVNC.', true);
       }
     }, 20000);
   } catch (error) {
@@ -422,7 +420,7 @@ async function connect() {
   }
 }
 
-reconnect.addEventListener('click', () => { connectionIntent++; connect(); });
+reconnect.addEventListener('click', () => { connectionIntent++; area.scrollTo(0, 0); connect(); });
 fallback.addEventListener('click', stop);
 screenshotButton.addEventListener('click', async () => {
   const canvas = screen.querySelector('canvas');
@@ -481,13 +479,6 @@ screenshotButton.addEventListener('click', async () => {
     takingScreenshot = false;
     fitDisplay();
   }
-});
-fitWindow.addEventListener('click', () => {
-  clearTimeout(resizeTimer);
-  area.scrollTo(0, 0);
-  fitDisplay();
-  requestGuestResize(true);
-  screen.querySelector('canvas')?.focus({ preventScroll: true });
 });
 keys.addEventListener('click', () => {
   if (connection?.inputs?.state === 'ready') sendCtrlAltDel(connection);
