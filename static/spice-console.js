@@ -1,5 +1,6 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
 import { ClipboardSpiceConnection } from './spice-clipboard.js';
+import { Constants } from './vendor/spice-html5/src/enums.js';
 
 const status = document.getElementById('status');
 const controlsDrawer = document.getElementById('controls-drawer');
@@ -9,6 +10,7 @@ const screen = document.getElementById('spice-screen');
 const area = document.getElementById('spice-area');
 const viewport = document.getElementById('spice-viewport');
 const fitWindow = document.getElementById('fit-window');
+const screenshotButton = document.getElementById('take-screenshot');
 const reconnect = document.getElementById('reconnect');
 const disconnect = document.getElementById('disconnect');
 const keys = document.getElementById('ctrl-alt-del');
@@ -26,6 +28,7 @@ let resizeTimer;
 let connectTimer;
 let guestClipboard = null;
 let lastGuestSize = null;
+let takingScreenshot = false;
 
 function setControlsOpen(open) {
   consoleControls.hidden = !open;
@@ -85,6 +88,7 @@ function stop() {
 function fitDisplay() {
   const canvas = screen.querySelector('canvas');
   fitWindow.disabled = !canvas;
+  screenshotButton.disabled = takingScreenshot || !canvas?.width || !canvas?.height;
   if (!canvas) {
     viewport.style.width = viewport.style.height = '0px';
     screen.style.transform = '';
@@ -199,6 +203,64 @@ async function connect() {
 reconnect.addEventListener('click', connect);
 disconnect.addEventListener('click', () => { stop(); showStatus('Disconnected.'); });
 fallback.addEventListener('click', stop);
+screenshotButton.addEventListener('click', async () => {
+  const canvas = screen.querySelector('canvas');
+  if (takingScreenshot || !canvas?.width || !canvas?.height) return;
+  const attempt = generation;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  takingScreenshot = true;
+  screenshotButton.disabled = true;
+  try {
+    // Copy at native resolution, independently of the popup's CSS scale.
+    const snapshot = document.createElement('canvas');
+    snapshot.width = canvas.width;
+    snapshot.height = canvas.height;
+    const context = snapshot.getContext('2d');
+    context.drawImage(canvas, 0, 0);
+    // VP8 streams are separate video overlays; include their current frames
+    // in DOM paint order, preserving the guest's clip and vertical direction.
+    for (const video of screen.querySelectorAll('video')) {
+      const stream = video.spice_stream;
+      if (!stream || video.readyState < 2) continue;
+      context.save();
+      if (stream.clip?.type === Constants.SPICE_CLIP_TYPE_RECTS) {
+        context.beginPath();
+        for (const rect of stream.clip.rects?.rects || []) {
+          context.rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+        }
+        context.clip();
+      }
+      context.translate(video.offsetLeft - canvas.offsetLeft, video.offsetTop - canvas.offsetTop);
+      if (!(stream.flags & Constants.SPICE_STREAM_FLAGS_TOP_DOWN)) {
+        context.translate(0, video.offsetHeight);
+        context.scale(1, -1);
+      }
+      context.drawImage(video, 0, 0, video.offsetWidth, video.offsetHeight);
+      context.restore();
+    }
+    const blob = await new Promise(resolve => snapshot.toBlob(resolve, 'image/png'));
+    if (attempt !== generation) return;
+    if (!blob) throw new Error('PNG encoding failed');
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `VM-${document.body.dataset.vmid}-${timestamp}.png`;
+    document.body.appendChild(link);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      // Keep the URL alive long enough for browsers to start the download.
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+    showStatus('Screenshot download started.');
+  } catch {
+    if (attempt === generation) showStatus('Could not capture the VM display. Try taking the screenshot again.', true);
+  } finally {
+    takingScreenshot = false;
+    fitDisplay();
+  }
+});
 fitWindow.addEventListener('click', () => {
   clearTimeout(resizeTimer);
   area.scrollTo(0, 0);

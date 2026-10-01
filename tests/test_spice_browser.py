@@ -5,6 +5,7 @@ Requires playwright and its Chromium browser (or PLAYWRIGHT_CHROMIUM_PATH).
 This validates the real vendored protocol client, not real-VM performance.
 """
 
+import base64
 import os
 import queue
 import socketserver
@@ -317,6 +318,30 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 else:
                     assert received_resizes.empty()
                 assert len(authenticated_channels) == channel_count
+                # Download the guest surface, not the scaled popup or drawer.
+                with page.expect_download() as download_info:
+                    page.get_by_role("button", name="Take screenshot", exact=True).click()
+                download = download_info.value
+                assert download.suggested_filename.startswith("VM-101-")
+                assert download.suggested_filename.endswith("Z.png")
+                screenshot_path = tmp_path / download.suggested_filename
+                download.save_as(screenshot_path)
+                png = screenshot_path.read_bytes()
+                assert png[:8] == b"\x89PNG\r\n\x1a\n"
+                assert struct.unpack(">II", png[16:24]) == (640, 480)
+                screenshot_pixel = page.evaluate("""async data => {
+                  const image = new Image();
+                  image.src = 'data:image/png;base64,' + data;
+                  await image.decode();
+                  const canvas = document.createElement('canvas');
+                  canvas.width = image.width;
+                  canvas.height = image.height;
+                  const context = canvas.getContext('2d');
+                  context.drawImage(image, 0, 0);
+                  return Array.from(context.getImageData(10, 10, 1, 1).data);
+                }""", base64.b64encode(png).decode())
+                assert screenshot_pixel == [40, 80, 120, 255]
+                expect(page.get_by_role("button", name="Take screenshot", exact=True)).to_be_enabled()
                 page.screenshot(path=str(tmp_path / "spice-small-drawer.png"))
                 page.get_by_role("button", name="Close console controls").click()
                 expect(page.locator("#console-controls")).to_be_hidden()
@@ -372,6 +397,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 expect(page.locator("#status")).to_have_text("Disconnected.")
                 expect(page.locator("canvas")).to_have_count(0)
                 expect(page.get_by_role("button", name="Fit to window", exact=True)).to_be_disabled()
+                expect(page.get_by_role("button", name="Take screenshot", exact=True)).to_be_disabled()
                 expect(page.locator("#clipboard-send")).to_have_value("")
                 expect(page.locator("#clipboard-receive")).to_have_value("")
                 expect(page.locator("#clipboard-copy")).to_be_disabled()

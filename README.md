@@ -83,6 +83,10 @@ The bridge verifies the VM server's certificate chain and exact subject using th
 
 The vendored client is pinned in `static/vendor/spice-html5/UPSTREAM.md`; assets are served locally without a CDN. Console controls are tucked into a drawer, opened with the tab on the left edge. The drawer overlays the display without changing the guest resolution; close it with the tab or press Escape while focused inside it. Connection errors open the drawer automatically. The display automatically fits inside the popup while preserving its aspect ratio, including when the guest agent cannot resize the desktop. With an agent connected, AccessForge also requests a matching guest resolution. **Fit to window** immediately recalculates the fit and resends that request without disconnecting or rebooting the VM. Browser SPICE has upstream feature limits, including multiple displays, USB redirection, and some graphics/video formats; it is not guaranteed to match native-client performance. Keep noVNC available while evaluating your workloads.
 
+## Screenshots
+
+Use **Take screenshot** in the controls drawer to download a PNG of the VM display at its full guest resolution, even when the popup is scaled down. The filename includes the VM ID and UTC timestamp. Screenshots are generated locally in the browser and exclude the controls drawer and mouse pointer.
+
 ## Clipboard
 
 The clipboard panel is always available inside the left-edge controls drawer. Sharing requires a running SPICE guest agent inside the VM; users do not install anything on their own computers.
