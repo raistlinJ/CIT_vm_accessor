@@ -7,6 +7,7 @@ AccessForge signs into the Proxmox VE API and opens browser consoles across your
 - Proxmox login and VM listing, grouped by scenario
 - Browser SPICE with reconnect, fullscreen, Ctrl+Alt+Del, and a noVNC fallback
 - Clipboard panel for two-way text transfer, including browsers that deny clipboard permission
+- Optional browser-to-VM uploads and VM-to-browser downloads
 - Container xterm.js consoles
 - Cluster-aware SPICE routing; reconnect resolves the VM's current node
 - Existing bulk VM actions and scenario backend resets
@@ -20,6 +21,7 @@ AccessForge signs into the Proxmox VE API and opens browser consoles across your
 - AccessForge can reach a Proxmox SPICE proxy on TCP 3128; cluster nodes can reach one another's SPICE proxies
 - An HTTPS reverse proxy routing `/spice/ws` to the bridge, included in the supplied deployment
 - A modern desktop browser; validate your guest workloads in the browsers you support
+- For uploads, a working SPICE guest agent; for downloads, an enabled QEMU guest agent and `VM.GuestAgent.FileRead` permission
 
 No Proxmox packages or patches are required. AccessForge does not change VM display settings. VMs without SPICE/QXL and Default clipboard settings automatically use noVNC.
 
@@ -107,6 +109,14 @@ The clipboard panel is always available inside the left-edge controls drawer. Sh
 - Sharing is explicit: focusing the VM never reads or overwrites the computer's clipboard. Guest copies update only the incoming text box until the user clicks **Copy from VM**. Clipboard text is held in the console's memory, cleared on disconnect/reconnect, and is not saved to browser storage or logged by AccessForge.
 - If **Send to VM** stays disabled, verify the VM's SPICE agent is connected and supports clipboard sharing. No Proxmox host configuration is changed by this feature.
 
+## VM file transfer
+
+Set `ENABLE_VM_FILE_TRANSFER=true` in Compose or the Compose `.env` file and recreate the app container. The default is `false`. The drawer then shows a file picker for sending files from the user's computer to the VM and a path field for downloading files from the VM. The app container does not read files from the Proxmox host filesystem.
+
+Uploads use the existing SPICE guest-agent file transfer protocol. The agent decides where transferred files are saved in the guest; the browser shows progress and completion. Uploads are limited to 512 MiB per file. Downloads use Proxmox's QEMU guest-agent `file-read` API, which requires the VM's QEMU guest agent to be enabled and running, plus `VM.GuestAgent.FileRead` (or `VM.GuestAgent.Unrestricted`) permission. Enter an absolute path in the guest, such as `/home/user/report.txt` or `C:\Users\user\report.txt`. The download limit is 64 MiB per file; the app fetches it in 1 MiB chunks. File data is held in the browser until the download starts and is not stored by AccessForge. Proxmox may run the QEMU guest agent with elevated guest privileges, so assign file-read permission only to users authorized to retrieve guest files. [Proxmox guest-agent API](https://github.com/proxmox/qemu-server/blob/master/src/PVE/API2/Qemu/Agent.pm), [SPICE file transfer](https://www.spice-space.org/api/spice-gtk/SpiceFileTransferTask.html).
+
+The switch hides these controls and blocks AccessForge's file-read route when false; it does not change Proxmox or the guest agent's own file-transfer policies.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -122,6 +132,7 @@ The clipboard panel is always available inside the left-edge controls drawer. Sh
 | `SPICE_PROXY_PORT` | `3128` | Internal SPICE proxy port |
 | `SPICE_BRIDGE_HOST` | `127.0.0.1` | Bridge bind address; Compose sets `0.0.0.0` inside the container |
 | `SPICE_BRIDGE_PORT` | `8081` | Bridge listener; update Nginx too if changed |
+| `ENABLE_VM_FILE_TRANSFER` | `false` | Show browser/VM file controls and enable the VM file-read route when `true` |
 | `LOG_LEVEL` | `DEBUG` in Python, `INFO` in Compose | Application logging |
 | `DEBUG_HTTP` | `false` | Verbose upstream HTTP debugging; leave off in normal use |
 | `DEFAULT_THEME` | `pokemon` | Dashboard theme |
@@ -144,6 +155,7 @@ The clipboard panel is always available inside the left-edge controls drawer. Sh
 - `POST /api/spice/<vmid>/session` — authorized, fresh SPICE connection details
 - `POST /api/spice/<vmid>/power` — start or gracefully restart a VM
 - `GET /api/spice/<vmid>/power-task` — poll a signed, session-bound power task
+- `POST /api/spice/<vmid>/file-read` — read a bounded VM file chunk using QEMU guest-agent permission; disabled by default
 - `/spice/ws` — WebSocket route served by the bridge through Nginx
 - `GET /logout` — close SPICE sessions and clear login cookies
 - `GET /healthz` — application health and basic configuration

@@ -21,6 +21,8 @@ Local input fixes:
   for consistent input when the popup scales its display down.
 - `src/inputs.js`: explicitly focus the canvas on mouse-down before preventing
   the browser's default action, including after focus leaves without a mouseover.
+- `src/spicemsg.js`: encode file-transfer names as UTF-8 and replace protocol
+  newlines/NUL so non-ASCII names transfer without changing metadata fields.
 
 `tests/test_spice_browser.py` validates input payloads and focus recovery in
 real browsers, with both relative and absolute mouse modes.

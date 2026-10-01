@@ -39,3 +39,12 @@ button:disabled { opacity: .45; cursor: default; }
 .clipboard-columns textarea { width: 100%; resize: vertical; min-height: 70px; max-height: 220px; padding: 8px; font: 13px ui-monospace, monospace; border: 1px solid #46566b; border-radius: 5px; background: #10151e; color: #e6edf7; }
 .clipboard-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .clipboard-help { color: #aabbd0; font-size: 12px; margin-bottom: 0; }
+#file-panel { padding: 8px 16px 16px; border-top: 1px solid #46566b; }
+#file-panel h2 { margin: 8px 0 16px; font-size: 16px; }
+#file-panel label { display: block; margin: 12px 0 6px; }
+#file-panel input[type="file"], #file-panel input[type="text"] { display: block; width: 100%; font: inherit; color: #e6edf7; }
+#file-panel input[type="text"] { padding: 8px; border: 1px solid #46566b; border-radius: 5px; background: #10151e; }
+#file-panel button { margin-top: 8px; }
+#file-panel p { color: #aabbd0; font-size: 12px; line-height: 1.4; }
+#file-panel p[data-error="true"] { color: #ffc1b5; }
+#spice-xfer-area { overflow-wrap: anywhere; }

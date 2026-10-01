@@ -723,7 +723,7 @@ VDAgentFileXferStatusMessage.prototype =
 function VDAgentFileXferStartMessage(id, name, size)
 {
     this.id = id;
-    this.string = "[vdagent-file-xfer]\n"+"name="+name+"\nsize="+size+"\n";
+    this.bytes = new TextEncoder().encode("[vdagent-file-xfer]\n"+"name="+name.replace(/[\r\n\0]/g, "_")+"\nsize="+size+"\n");
 }
 
 VDAgentFileXferStartMessage.prototype =
@@ -733,12 +733,11 @@ VDAgentFileXferStartMessage.prototype =
         at = at || 0;
         var dv = new DataView(a);
         dv.setUint32(at, this.id, true); at += 4;
-        for (var i = 0; i < this.string.length; i++, at++)
-            dv.setUint8(at, this.string.charCodeAt(i));
+        new Uint8Array(a).set(this.bytes, at);
     },
     buffer_size: function()
     {
-        return 4 + this.string.length + 1;
+        return 4 + this.bytes.length + 1;
     }
 }
 

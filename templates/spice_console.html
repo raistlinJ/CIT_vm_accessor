@@ -50,6 +50,20 @@
         </div>
         <p class="clipboard-help">Text only, up to 1 MiB. After sending, paste inside the VM. If browser clipboard access is blocked, use the text boxes to paste or copy manually.</p>
       </section>
+      {% if file_transfer_enabled %}
+      <section id="file-panel" aria-label="VM file transfer">
+        <h2>Files</h2>
+        <label for="file-upload">Send files from this computer to the VM</label>
+        <input id="file-upload" type="file" multiple disabled>
+        <p>The VM's SPICE agent chooses where uploaded files are saved.</p>
+        <div id="spice-xfer-area" aria-live="polite"></div>
+        <p id="file-upload-status" role="status" aria-live="polite">Sending requires a connected SPICE guest agent.</p>
+        <label for="file-download-path">Download a file from the VM</label>
+        <input id="file-download-path" type="text" placeholder="/home/user/file.txt" autocomplete="off" spellcheck="false">
+        <button id="file-download" type="button">Download from VM</button>
+        <p id="file-download-status" role="status" aria-live="polite">Enter the full path inside the VM. Downloads require a QEMU guest agent and VM.GuestAgent.FileRead permission.</p>
+      </section>
+      {% endif %}
     </aside>
   </div>
   <main id="spice-area" aria-label="Virtual machine display">

@@ -22,6 +22,8 @@ import concurrent.futures
 import re
 import html
 import json
+import base64
+import binascii
 
 """
 Quick start
@@ -875,8 +877,10 @@ def proxmox_request(method: str, path: str, **kwargs):
   url = base + path if not path.startswith("http") else path
   headers = kwargs.get("headers") or {}
   form = kwargs.get("data") or kwargs.get("json") or {}
+  file_read = path.endswith("/agent/file-read")
+  file_write = path.endswith("/agent/file-write")
   logger.info(
-    f"[{req_id()}] OUTBOUND {method.upper()} {url} params={_sanitize_form(kwargs.get('params'))} form={_sanitize_form(form)} headers={_sanitize_headers(headers)} verify={session.get('pve_verify_ssl', VERIFY_SSL)}"
+    f"[{req_id()}] OUTBOUND {method.upper()} {url} params={'<file path redacted>' if file_read else _sanitize_form(kwargs.get('params'))} form={'<file content redacted>' if file_write else _sanitize_form(form)} headers={_sanitize_headers(headers)} verify={session.get('pve_verify_ssl', VERIFY_SSL)}"
   )
   verify_flag = session.get("pve_verify_ssl")
   if verify_flag is None:
@@ -884,7 +888,7 @@ def proxmox_request(method: str, path: str, **kwargs):
   start_time = time.time()
   resp = requests.request(method.upper(), url, verify=verify_flag, **kwargs)
   elapsed = (time.time() - start_time) * 1000.0
-  preview = "<SPICE credentials redacted>" if path.endswith("/spiceproxy") else resp.text[:160].replace('\n',' ').replace('\r',' ')
+  preview = "<file content redacted>" if file_read or file_write else "<SPICE credentials redacted>" if path.endswith("/spiceproxy") else resp.text[:160].replace('\n',' ').replace('\r',' ')
   logger.info(
     f"[{req_id()}] INBOUND {method.upper()} {url} status={resp.status_code} elapsed_ms={elapsed:.1f} body_preview={preview!r}"
   )
@@ -1477,7 +1481,9 @@ def spice_console(vmid):
   fallback = None
   if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", node):
     fallback = url_for("open_console", node=node, vmid=vmid, vtype="qemu", console="novnc")
-  return render_template("spice_console.html", vmid=vmid, csrf=csrf, fallback=fallback)
+  file_transfer_enabled = os.environ.get("ENABLE_VM_FILE_TRANSFER", "false").strip().lower() == "true"
+  return render_template("spice_console.html", vmid=vmid, csrf=csrf, fallback=fallback,
+                         file_transfer_enabled=file_transfer_enabled)
 
 
 def validate_console_request():
@@ -1584,6 +1590,69 @@ def console_power_task(vmid):
     return result
   except (requests.RequestException, ValueError, KeyError, TypeError):
     return jsonify(error="Could not check the power task. Check the VM state in Proxmox before trying again."), 502
+
+
+@app.route("/api/spice/<int:vmid>/file-read", methods=["POST"])
+@require_session(api=True)
+def console_file_read(vmid):
+  if os.environ.get("ENABLE_VM_FILE_TRANSFER", "false").strip().lower() != "true":
+    return jsonify(error="VM file transfer is disabled."), 404
+  rejected = validate_console_request()
+  if rejected is not None:
+    return rejected
+  if request.content_length is None or request.content_length > 8192:
+    return jsonify(error="Invalid file request."), 400
+  payload = request.get_json(silent=True)
+  path = payload.get("path") if isinstance(payload, dict) else None
+  offset = payload.get("offset") if isinstance(payload, dict) else None
+  # QEMU guest-agent paths may be POSIX or Windows absolute paths.
+  if (not isinstance(path, str) or not 0 < len(path) <= 4096 or
+      not (path.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", path)) or
+      any(c in path for c in "\x00\r\n") or
+      isinstance(offset, bool) or not isinstance(offset, int) or
+      not 0 <= offset <= 64 * 1024 * 1024):
+    return jsonify(error="Enter an absolute VM file path."), 400
+  cookies = {"PVEAuthCookie": session["pve_ticket"]}
+  headers = {"CSRFPreventionToken": session.get("pve_csrf")}
+  try:
+    resources = proxmox_get("/cluster/resources", params={"type": "vm"},
+                            cookies=cookies, headers=headers, timeout=10)
+    if resources.status_code in (401, 403):
+      return jsonify(error="Sign in again or check your VM permissions."), resources.status_code
+    resources.raise_for_status()
+    rows = resources.json()["data"]
+    if not isinstance(rows, list):
+      raise ValueError("Invalid cluster response")
+    vm = next((v for v in rows if isinstance(v, dict) and
+               str(v.get("vmid")) == str(vmid) and v.get("type") == "qemu"), None)
+    if not vm:
+      return jsonify(error="This VM is unavailable or you do not have permission to view it."), 404
+    node = vm.get("node")
+    if not isinstance(node, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", node):
+      raise ValueError("Invalid VM node")
+    if vm.get("status") != "running":
+      return jsonify(error="Start the VM before downloading a file."), 409
+    result = proxmox_get(f"/nodes/{node}/qemu/{vmid}/agent/file-read",
+                         params={"file": path, "offset": offset, "count": 1024 * 1024, "decode": 0},
+                         cookies=cookies, headers=headers, timeout=30)
+    if result.status_code in (401, 403):
+      return jsonify(error="Check your VM.GuestAgent.FileRead permission."), result.status_code
+    result.raise_for_status()
+    chunk = result.json()["data"]
+    content = base64.b64decode(chunk["content"], validate=True)
+    if (len(content) > 1024 * 1024 or
+        chunk.get("bytes-read") != len(content) or
+        (chunk.get("truncated") and not content)):
+      raise ValueError("Invalid guest-agent file response")
+    reply = make_response(content)
+    reply.headers["Content-Type"] = "application/octet-stream"
+    reply.headers["Cache-Control"] = "no-store"
+    reply.headers["X-Content-Type-Options"] = "nosniff"
+    reply.headers["X-File-More"] = "true" if chunk.get("truncated") else "false"
+    return reply
+  except (requests.RequestException, ValueError, KeyError, TypeError, binascii.Error):
+    logger.warning("VM file-read failed for VM %s", vmid)
+    return jsonify(error="Could not read the VM file. Check the path, QEMU guest agent, and Proxmox task log."), 502
 
 
 @app.route("/api/spice/<int:vmid>/session", methods=["POST"])

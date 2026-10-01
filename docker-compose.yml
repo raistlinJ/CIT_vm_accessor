@@ -35,6 +35,8 @@ services:
       # Default to the same cluster entry point used for API access.
       - SPICE_PROXY_HOST=${SPICE_PROXY_HOST:-}
       - SPICE_PROXY_PORT=${SPICE_PROXY_PORT:-3128}
+      # Enable browser <-> VM file transfer controls (requires guest agents).
+      - ENABLE_VM_FILE_TRANSFER=${ENABLE_VM_FILE_TRANSFER:-false}
       - PROXMOX_HOST=${PROXMOX_HOST:-arlsouth4.utep.edu}
       - PROXMOX_PORT=${PROXMOX_PORT:-8006}
       - PROXMOX_REALM=${PROXMOX_REALM:-pam}

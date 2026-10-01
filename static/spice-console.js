@@ -27,6 +27,11 @@ const clipboardReceive = document.getElementById('clipboard-receive');
 const clipboardSendButton = document.getElementById('clipboard-send-button');
 const clipboardCopy = document.getElementById('clipboard-copy');
 const clipboardPaste = document.getElementById('clipboard-paste');
+const fileUpload = document.getElementById('file-upload');
+const fileUploadStatus = document.getElementById('file-upload-status');
+const fileDownloadPath = document.getElementById('file-download-path');
+const fileDownload = document.getElementById('file-download');
+const fileDownloadStatus = document.getElementById('file-download-status');
 let connection = null;
 let pending = null;
 let generation = 0;
@@ -39,6 +44,97 @@ let powerRequest = null;
 let connectionIntent = 0;
 let powerCooldownUntil = 0;
 let powerCooldownTimer;
+let fileDownloadController = null;
+
+function showFileStatus(element, message, error = false) {
+  if (!element) return;
+  element.textContent = message;
+  element.dataset.error = String(error);
+  updateDrawerIndicator();
+}
+
+if (fileUpload) {
+  fileUpload.addEventListener('change', () => {
+    const files = Array.from(fileUpload.files || []);
+    fileUpload.value = '';
+    if (!files.length) return;
+    if (!connection?.agent_connected) {
+      showFileStatus(fileUploadStatus, 'Sending requires a connected SPICE guest agent.', true);
+      return;
+    }
+    for (const file of files) {
+      if (file.size > 512 * 1024 * 1024) {
+        showFileStatus(fileUploadStatus, `${file.name} exceeds the 512 MiB limit.`, true);
+        continue;
+      }
+      connection.file_xfer_start(file);
+      showFileStatus(fileUploadStatus, `Sending ${file.name} to the VM…`);
+    }
+  });
+}
+
+if (fileDownload) {
+  fileDownload.addEventListener('click', async () => {
+    if (fileDownloadController) return;
+    const path = fileDownloadPath.value;
+    if (!path.trim()) {
+      showFileStatus(fileDownloadStatus, 'Enter the full path to a file in the VM.', true);
+      return;
+    }
+    const controller = new AbortController();
+    fileDownloadController = controller;
+    fileDownload.disabled = true;
+    showFileStatus(fileDownloadStatus, 'Downloading from VM…');
+    try {
+      const chunks = [];
+      let offset = 0;
+      while (true) {
+        if (offset > 64 * 1024 * 1024) throw new Error('Files over 64 MiB cannot be downloaded.');
+        const response = await fetch(`/api/spice/${document.body.dataset.vmid}/file-read`, {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', 'X-Console-CSRF': document.body.dataset.csrf },
+          body: JSON.stringify({ path, offset }),
+        });
+        if (!response.ok) {
+          const message = response.headers.get('Content-Type')?.includes('application/json')
+            ? (await response.json()).error : null;
+          throw new Error(message || 'Could not download the VM file.');
+        }
+        if (response.headers.get('Content-Type')?.split(';')[0] !== 'application/octet-stream') {
+          throw new Error('The file service returned an invalid response.');
+        }
+        const bytes = await response.arrayBuffer();
+        if (bytes.byteLength > 1024 * 1024 || (!bytes.byteLength && response.headers.get('X-File-More') === 'true')) {
+          throw new Error('The VM returned an invalid file chunk.');
+        }
+        if (offset + bytes.byteLength > 64 * 1024 * 1024) {
+          throw new Error('Files over 64 MiB cannot be downloaded.');
+        }
+        chunks.push(bytes);
+        offset += bytes.byteLength;
+        showFileStatus(fileDownloadStatus, `Downloaded ${Math.round(offset / 1024)} KiB from VM…`);
+        if (response.headers.get('X-File-More') !== 'true') break;
+      }
+      const filename = (path.split(/[\\/]/).pop() || 'vm-file').replace(/[\x00-\x1f<>:"|?*]/g, '_').slice(0, 128);
+      const url = URL.createObjectURL(new Blob(chunks, { type: 'application/octet-stream' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      try { link.click(); } finally {
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      }
+      showFileStatus(fileDownloadStatus, `Downloaded ${filename} from VM.`);
+    } catch (error) {
+      if (controller.signal.reason !== 'pagehide') showFileStatus(fileDownloadStatus,
+        error.message || 'Could not download the VM file.', true);
+    } finally {
+      fileDownloadController = null;
+      fileDownload.disabled = false;
+    }
+  });
+}
 
 function updatePowerButtons() {
   clearTimeout(powerCooldownTimer);
@@ -116,7 +212,8 @@ function setControlsOpen(open) {
 }
 
 function updateDrawerIndicator() {
-  const error = [status, powerStatus, clipboardStatus].some(element => element.dataset.error === 'true');
+  const error = [status, powerStatus, clipboardStatus, fileUploadStatus, fileDownloadStatus]
+    .some(element => element?.dataset.error === 'true');
   controlsToggle.dataset.error = String(error);
   controlsAlert.hidden = !error;
   const label = `${consoleControls.hidden ? 'Open' : 'Close'} console controls${error ? ' — attention needed' : ''}`;
@@ -169,6 +266,12 @@ function stop() {
   clipboardSendButton.disabled = true;
   clipboardCopy.disabled = true;
   clipboardPaste.disabled = false;
+  if (fileUpload) {
+    fileUpload.disabled = true;
+    fileUpload.value = '';
+    document.getElementById('spice-xfer-area').replaceChildren();
+    showFileStatus(fileUploadStatus, 'Sending requires a connected SPICE guest agent.');
+  }
   showClipboardStatus('Clipboard sharing requires a connected SPICE guest agent.');
 }
 
@@ -251,6 +354,7 @@ async function connect() {
       },
       onagent() {
         if (attempt !== generation) return;
+        if (fileUpload) fileUpload.disabled = false;
         lastGuestSize = null;
         resize();
       },
@@ -261,6 +365,7 @@ async function connect() {
         lastGuestSize = null;
         resize();
         clipboardSendButton.disabled = !ready;
+        if (fileUpload) fileUpload.disabled = !connection?.agent_connected;
         showClipboardStatus(ready ? 'Clipboard ready. Send text to the VM or copy text inside it.' :
           'Clipboard sharing requires a connected SPICE guest agent.');
       },
@@ -270,6 +375,10 @@ async function connect() {
         clipboardReceive.value = text ?? '';
         clipboardCopy.disabled = text === null;
         if (text !== null) showClipboardStatus('VM text received. Click Copy from VM or select and copy it below.');
+      },
+      onfiletransfer(name, error) {
+        if (attempt !== generation) return;
+        showFileStatus(fileUploadStatus, error ? `Could not send ${name}: ${error}` : `Sent ${name} to the VM.`, Boolean(error));
       },
       onerror() {
         if (attempt !== generation) return;
@@ -418,6 +527,6 @@ new MutationObserver(fitDisplay).observe(screen, {
   childList: true, subtree: true, attributes: true, attributeFilter: ['width', 'height'],
 });
 document.addEventListener('fullscreenchange', resize);
-window.addEventListener('pagehide', () => { powerRequest?.abort('pagehide'); stop(); });
+window.addEventListener('pagehide', () => { powerRequest?.abort('pagehide'); fileDownloadController?.abort('pagehide'); stop(); });
 window.addEventListener('pageshow', event => { if (event.persisted) connect(); });
 connect();

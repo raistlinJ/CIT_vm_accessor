@@ -57,6 +57,7 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     super(options);
     this.onclipboard = options.onclipboard || (() => {});
     this.onclipboardstate = options.onclipboardstate || (() => {});
+    this.onfiletransfer = options.onfiletransfer || (() => {});
     this.agentReader = new AgentMessageReader();
     this.localClipboard = null;
     this.guestOwnsClipboard = false;
@@ -83,8 +84,16 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
   }
 
   stop() {
+    for (const task of Object.values(this.file_xfer_tasks || {})) task.remove_progressbar();
+    this.file_xfer_tasks = {};
+    this.file_xfer_read_queue = [];
     this.resetClipboard();
     super.stop();
+  }
+
+  file_xfer_completed(task, error) {
+    super.file_xfer_completed(task, error);
+    this.onfiletransfer(task.file.name, error ? String(error) : null);
   }
 
   // The upstream display calls this on focus. Sharing is explicit in our UI.

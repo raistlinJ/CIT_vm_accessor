@@ -52,6 +52,9 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
     received_clipboards = queue.Queue()
     received_inputs = queue.Queue()
     received_resizes = queue.Queue()
+    received_files = queue.Queue()
+    guest_file = b"guest\x00binary\xfffile"
+    file_reads = []
     guest_text = "VM café — こんにちは 😀\n" * 800
     host_text = "Host café — こんにちは 😀\n" * 800
     clipboard_formats = struct.pack("<II", 0, 1)  # CLIPBOARD selection, UTF-8
@@ -107,6 +110,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     elif channel == 3:
                         stream.sendall(message(101, struct.pack("<H", 0)))
                     agent_buffer = bytearray()
+                    outgoing_files = {}
                     motions = 0
                     while True:
                         kind, size = struct.unpack("<HI", read_exact(stream, 6))
@@ -145,6 +149,18 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                                     received_clipboards.put(agent_body[8:].decode())
                                     # A later guest copy replaces ownership, as in a real desktop.
                                     send_agent(stream, agent_message(7, clipboard_formats))
+                                elif agent_kind == 10:  # file transfer start
+                                    task_id = struct.unpack_from("<I", agent_body)[0]
+                                    metadata = agent_body[4:].rstrip(b"\x00").decode("utf-8")
+                                    assert "name=caf\u00e9.txt" in metadata
+                                    outgoing_files[task_id] = bytearray()
+                                    send_agent(stream, agent_message(11, struct.pack("<II", task_id, 0)))
+                                elif agent_kind == 12:  # file transfer data
+                                    task_id, length = struct.unpack_from("<IQ", agent_body)
+                                    outgoing_files[task_id].extend(agent_body[12:])
+                                    assert len(agent_body) - 12 == length
+                                    received_files.put(bytes(outgoing_files.pop(task_id)))
+                                    send_agent(stream, agent_message(11, struct.pack("<II", task_id, 3)))
                         if channel == 3 and kind == 101:
                             keyboard_received.set()
                         if channel == 3 and kind == 113:
@@ -171,6 +187,13 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 return response({"status": "running"})
             vm_state["status"] = "running"
             return response({"status": "stopped", "exitstatus": "OK"})
+        if path == "/nodes/node-b/qemu/101/agent/file-read":
+            assert kwargs["params"]["file"] == "/home/user/guest.bin"
+            offset = kwargs["params"]["offset"]
+            file_reads.append(offset)
+            end = min(offset + 5, len(guest_file))
+            return response({"content": base64.b64encode(guest_file[offset:end]).decode(),
+                             "bytes-read": end - offset, "truncated": end < len(guest_file)})
         assert path == "/nodes/node-b/qemu/101/config"
         assert kwargs["params"] == {"current": 1}
         return response({"vga": "qxl,memory=128"})
@@ -186,6 +209,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
         return response("UPID:node-b:power-task:")
 
     monkeypatch.setattr(main, "proxmox_get", proxmox_get)
+    monkeypatch.setenv("ENABLE_VM_FILE_TRANSFER", "true")
     monkeypatch.setattr(main, "proxmox_post", proxmox_post)
     monkeypatch.setenv("SPICE_PROXY_HOST", "127.0.0.1")
     original_session = main.app.view_functions["spice_session"]
@@ -249,6 +273,26 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 expect(page.get_by_role("button", name="Open console controls")).to_be_visible()
                 display_bounds = page.locator("#spice-area").bounding_box()
                 page.get_by_role("button", name="Open console controls").click()
+                expect(page.locator("#file-panel")).to_be_visible()
+                if agent_enabled:
+                    expect(page.locator("#file-upload")).to_be_enabled()
+                    page.locator("#file-upload").set_input_files({
+                        "name": "caf\u00e9.txt", "mimeType": "text/plain", "buffer": b"hello\x00guest",
+                    })
+                    assert received_files.get(timeout=5) == b"hello\x00guest"
+                    expect(page.locator("#file-upload-status")).to_contain_text("Sent caf\u00e9.txt")
+                else:
+                    expect(page.locator("#file-upload")).to_be_disabled()
+                page.locator("#file-download-path").fill("/home/user/guest.bin")
+                with page.expect_download() as vm_download_info:
+                    page.get_by_role("button", name="Download from VM").click()
+                vm_download = vm_download_info.value
+                assert vm_download.suggested_filename == "guest.bin"
+                downloaded_file = tmp_path / "downloaded-guest.bin"
+                vm_download.save_as(downloaded_file)
+                assert downloaded_file.read_bytes() == guest_file
+                assert file_reads == [0, 5, 10, 15]
+                file_reads.clear()
                 expect(page.get_by_role("button", name="Reconnect", exact=True)).to_be_visible()
                 assert page.locator("#spice-area").bounding_box() == display_bounds
                 page.get_by_role("button", name="Reconnect", exact=True).focus()
