@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # Multi-stage build for AccessForge
 # Stage 1: base runtime (no separate build needed, pure Python)
 FROM python:3.12-slim AS runtime
@@ -21,17 +20,18 @@ WORKDIR /app
 
 # Copy requirements separately for better layer caching
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip check || true
+RUN python -m pip install --no-cache-dir -r requirements.txt \
+    && python -m pip check
 
 # Copy application (single-file app plus static assets)
-COPY main.py ./
+COPY main.py spice_bridge.py ./
 COPY static ./static
+COPY templates ./templates
 
 # (Optional) Copy templates/static if later split out; currently all inline.
 
 # Expose both common ports (8080 default; 8443 used when PORT overridden)
-EXPOSE 8080 8443
+EXPOSE 8080 8081 8443
 
 # Basic healthcheck hitting /healthz (works once the app is up)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
@@ -39,6 +39,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 # Drop privileges
 USER appuser
+
+# Fail the image build if runtime dependencies are missing or cannot import.
+RUN python -c "import main; from spice_bridge import SpiceBridge, Target, session_owner"
 
 # Entrypoint simply runs the embedded waitress runner in main.py
 # (PORT env variable controls listening port inside container)

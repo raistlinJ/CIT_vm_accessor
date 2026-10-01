@@ -9,9 +9,15 @@ import traceback
 import uuid
 import requests
 import time
-from flask import Flask, request, redirect, session, make_response, render_template_string, url_for, g, jsonify, send_from_directory
+import secrets
+import hmac
+import ssl
+from flask import Flask, request, redirect, session, make_response, render_template, render_template_string, url_for, g, jsonify, send_from_directory
 from waitress import serve
-from jinja2 import DictLoader
+from jinja2 import ChoiceLoader, DictLoader, FileSystemLoader
+from itsdangerous import BadSignature
+from werkzeug.http import parse_cookie
+from spice_bridge import SpiceBridge, Target, session_owner
 import concurrent.futures
 import re
 import html
@@ -94,6 +100,25 @@ BASE_API = f"https://{PROXMOX_HOST}:{PROXMOX_PORT}/api2/json"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+
+
+def spice_cookie_owner(cookie_header):
+  """Authenticate WebSocket requests with the same signed Flask session."""
+  cookie = parse_cookie(cookie_header).get(app.config["SESSION_COOKIE_NAME"])
+  if not cookie:
+    return None
+  try:
+    data = app.session_interface.get_signing_serializer(app).loads(cookie, max_age=110 * 60)
+    ticket = data.get("pve_ticket")
+    issued = data.get("pve_login_time", 0)
+    if not ticket or time.time() - issued >= 110 * 60:
+      return None
+    return session_owner(ticket)
+  except (BadSignature, TypeError, ValueError):
+    return None
+
+
+spice_bridge = SpiceBridge(spice_cookie_owner)
 
 # Explicit static route to ensure correct MIME type under reverse proxy
 @app.route("/static/<path:filename>")
@@ -575,7 +600,10 @@ TPL_BASE = """
 """
 
 # Register in-memory base template for Jinja to resolve `{% extends "base.html" %}`
-app.jinja_loader = DictLoader({"base.html": TPL_BASE.replace("__DEFAULT_THEME__", APP_DEFAULT_THEME)})
+app.jinja_loader = ChoiceLoader([
+  DictLoader({"base.html": TPL_BASE.replace("__DEFAULT_THEME__", APP_DEFAULT_THEME)}),
+  FileSystemLoader(os.path.join(app.root_path, "templates")),
+])
 
 @app.after_request
 def _allow_iframe(resp):
@@ -599,6 +627,8 @@ def _allow_iframe(resp):
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     resp.headers['Pragma'] = 'no-cache'
     resp.headers['Expires'] = '0'
+  if request.path.startswith('/api/spice/'):
+    resp.headers['Cache-Control'] = 'no-store'
   return resp
 
 TPL_LOGIN = """
@@ -816,7 +846,7 @@ def _sanitize_headers(h):
   masked = dict(h)
   for k in list(masked.keys()):
     lk = k.lower()
-    if lk in ("authorization", "cookie", "set-cookie"):
+    if lk in ("authorization", "cookie", "set-cookie", "csrfpreventiontoken"):
       masked[k] = "<redacted>"
   return masked
 
@@ -854,7 +884,7 @@ def proxmox_request(method: str, path: str, **kwargs):
   start_time = time.time()
   resp = requests.request(method.upper(), url, verify=verify_flag, **kwargs)
   elapsed = (time.time() - start_time) * 1000.0
-  preview = resp.text[:160].replace('\n',' ').replace('\r',' ')
+  preview = "<SPICE credentials redacted>" if path.endswith("/spiceproxy") else resp.text[:160].replace('\n',' ').replace('\r',' ')
   logger.info(
     f"[{req_id()}] INBOUND {method.upper()} {url} status={resp.status_code} elapsed_ms={elapsed:.1f} body_preview={preview!r}"
   )
@@ -1131,6 +1161,8 @@ def login():
 
 @app.route("/logout")
 def logout():
+    if session.get("pve_ticket"):
+        spice_bridge.revoke(session_owner(session["pve_ticket"]))
     session.clear()
     resp = make_response(redirect(url_for("login")))
     proxmox_domain = cookie_host()
@@ -1144,6 +1176,8 @@ def logout():
 
 @app.route("/session-reset")
 def session_reset():
+    if session.get("pve_ticket"):
+        spice_bridge.revoke(session_owner(session["pve_ticket"]))
     reason = request.args.get("reason", "expired")
     title_map = {
       "missing": "Session Required",
@@ -1366,10 +1400,13 @@ def open_console():
     vmid = (request.args.get("vmid") or "").strip()
     vtype = (request.args.get("vtype") or "").strip()
 
-  if not node or not vmid.isdigit():
+  if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", node) or not vmid.isdigit():
     return redirect(url_for("home"))
 
   console_type = "lxc" if vtype == "lxc" else "kvm"
+
+  if console_type == "kvm" and request.values.get("console") != "novnc":
+    return redirect(url_for("spice_console", vmid=vmid, node=node))
 
   # Route the console through our nginx proxy on this same origin using /proxmox/
   # This avoids the browser needing to reach host.docker.internal or non-443 ports.
@@ -1389,6 +1426,87 @@ def open_console():
   console_url = f"/proxmox/?{qs}"
   logger.info(f"[{req_id()}] Redirecting to console via proxy vmid={vmid} node={node} -> {console_url}")
   return redirect(console_url, code=302)
+
+
+@app.route("/console/spice/<int:vmid>")
+@require_session()
+def spice_console(vmid):
+  csrf = session.setdefault("spice_csrf", secrets.token_urlsafe(32))
+  node = request.args.get("node", "")
+  fallback = None
+  if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", node):
+    fallback = url_for("open_console", node=node, vmid=vmid, vtype="qemu", console="novnc")
+  return render_template("spice_console.html", vmid=vmid, csrf=csrf, fallback=fallback)
+
+
+@app.route("/api/spice/<int:vmid>/session", methods=["POST"])
+@require_session(api=True)
+def spice_session(vmid):
+  # Require a page-issued token as well as a same-origin browser request. This
+  # app allows iframe embedding, so cookies alone don't prevent console CSRF.
+  csrf = session.get("spice_csrf", "")
+  if not csrf or not hmac.compare_digest(csrf, request.headers.get("X-Console-CSRF", "")):
+    return jsonify(error="Invalid console request. Reload the console."), 403
+  # Waitress supplies the public scheme from deployment configuration. Do not
+  # let an arbitrary forwarding header override this security check.
+  scheme = request.scheme
+  origin = f"{scheme}://{request.host}"
+  received_origin = request.headers.get("Origin")
+  if scheme not in ("http", "https") or received_origin != origin:
+    # Log only bounded address metadata, never cookies, CSRF tokens, or SPICE
+    # credentials. %r escapes control characters in client-supplied values.
+    logger.warning(
+      "SPICE origin rejected: expected=%r received=%r host=%r scheme=%r",
+      origin[:256], received_origin[:256] if received_origin is not None else None,
+      request.host[:256], scheme[:16],
+    )
+    return jsonify(error="Invalid request origin."), 403
+  if not spice_bridge.running:
+    return jsonify(error="The SPICE console service is unavailable. Try noVNC or contact your administrator."), 503
+
+  cookies = {"PVEAuthCookie": session["pve_ticket"]}
+  headers = {"CSRFPreventionToken": session.get("pve_csrf")}
+  fallback = None
+  try:
+    # Resolve the current node on every connection, including after migration.
+    resources = proxmox_get("/cluster/resources", params={"type": "vm"},
+                            cookies=cookies, headers=headers, timeout=10)
+    if resources.status_code in (401, 403):
+      return jsonify(error="Sign in again or check your VM permissions."), resources.status_code
+    resources.raise_for_status()
+    vm = next((v for v in resources.json().get("data", [])
+               if str(v.get("vmid")) == str(vmid) and v.get("type") == "qemu"), None)
+    if not vm:
+      return jsonify(error="This VM is unavailable or you do not have permission to view it."), 404
+    node = vm.get("node", "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", node):
+      raise ValueError("Invalid node in cluster response")
+    fallback = url_for("open_console", node=node, vmid=vmid, vtype="qemu", console="novnc")
+    if vm.get("status") != "running":
+      return jsonify(error="This VM is stopped. Start it from AccessForge, then reconnect.", fallback=fallback), 409
+    proxy_host = os.environ.get("SPICE_PROXY_HOST") or session.get("pve_host", PROXMOX_HOST)
+    config_response = proxmox_post(f"/nodes/{node}/qemu/{vmid}/spiceproxy",
+                                  data={"proxy": proxy_host}, cookies=cookies,
+                                  headers=headers, timeout=15)
+    if config_response.status_code in (401, 403):
+      return jsonify(error="Sign in again or check your VM.Console permission.", fallback=fallback), config_response.status_code
+    if not config_response.ok:
+      return jsonify(error="SPICE is unavailable for this VM. Check that its display supports SPICE, or use noVNC.",
+                     fallback=fallback), 502
+    config = config_response.json()["data"]
+    target = Target.from_config(config, proxy_host, os.environ.get("SPICE_PROXY_PORT", "3128"))
+    lifetime = max(1, 110 * 60 - (time.time() - session.get("pve_login_time", time.time())))
+    token = spice_bridge.issue(target, session_owner(session["pve_ticket"]), origin, lifetime)
+    result = jsonify(websocket=f"/spice/ws?token={token}", password=config["password"],
+                     title=config.get("title", f"VM {vmid}"), node=node, fallback=fallback)
+    result.headers["Cache-Control"] = "no-store"
+    return result
+  except RuntimeError as exc:
+    return jsonify(error=str(exc), fallback=fallback), 429
+  except (requests.RequestException, ValueError, KeyError, TypeError, ssl.SSLError):
+    logger.warning("SPICE configuration request failed for VM %s", vmid)
+    return jsonify(error="Could not prepare the SPICE console. Check Proxmox connectivity and the VM display configuration.",
+                   fallback=fallback), 502
 
 @app.route("/bulk", methods=["POST"])
 @require_session()
@@ -2018,14 +2136,24 @@ def healthz():
 
 def run():
   port = int(os.environ.get("PORT", "8080"))
+  url_scheme = os.environ.get("PUBLIC_SCHEME", "http").strip().lower()
+  if url_scheme not in ("http", "https"):
+    raise ValueError("PUBLIC_SCHEME must be http or https")
   https_cert = os.environ.get("HTTPS_CERT_FILE")
   https_key = os.environ.get("HTTPS_KEY_FILE")
   if https_cert or https_key:
     logger.warning("HTTPS_CERT_FILE/HTTPS_KEY_FILE provided but waitress does not terminate TLS. Deploy behind a reverse proxy (e.g. nginx) for HTTPS.")
   logger.info(
-    f"Starting waitress on http://0.0.0.0:{port} (Proxmox host: {PROXMOX_HOST}, realm: {PROXMOX_REALM}, verify_ssl={VERIFY_SSL}, log_level={LOG_LEVEL}, debug_http={DEBUG_HTTP})"
+    f"Starting waitress on http://0.0.0.0:{port} (public_scheme={url_scheme}, Proxmox host: {PROXMOX_HOST}, realm: {PROXMOX_REALM}, verify_ssl={VERIFY_SSL}, log_level={LOG_LEVEL}, debug_http={DEBUG_HTTP})"
   )
-  serve(app, host="0.0.0.0", port=port)
+  spice_bridge.start(os.environ.get("SPICE_BRIDGE_HOST", "127.0.0.1"),
+                     int(os.environ.get("SPICE_BRIDGE_PORT", "8081")))
+  try:
+    # The supplied ingress serves HTTPS only. Set the public scheme explicitly
+    # while retaining Waitress's default removal of untrusted proxy headers.
+    serve(app, host="0.0.0.0", port=port, url_scheme=url_scheme)
+  finally:
+    spice_bridge.stop()
 
 if __name__ == "__main__":
   run()

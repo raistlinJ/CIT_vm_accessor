@@ -1,3 +1,5 @@
 Flask
 waitress
 requests
+websockets==15.0.1
+cryptography>=44
