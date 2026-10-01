@@ -141,6 +141,9 @@ function handle_mousemove(e)
 
 function handle_mousedown(e)
 {
+    // AccessForge: preventDefault below suppresses normal click-to-focus.
+    // Restore focus even if the pointer never left the canvas after blur.
+    this.focus({ preventScroll: true });
     var press = new Messages.SpiceMsgcMousePress(this.sc, e)
     var msg = new Messages.SpiceMiniData();
     msg.build_msg(Constants.SPICE_MSGC_INPUTS_MOUSE_PRESS, press);

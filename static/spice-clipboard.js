@@ -50,7 +50,7 @@ export class AgentMessageReader {
   }
 }
 
-// Keep the vendored client unchanged. Override its clipboard behavior here so
+// Override the vendored client's clipboard behavior here so
 // focusing the display cannot read or overwrite the user's system clipboard.
 export class ClipboardSpiceConnection extends SpiceMainConn {
   constructor(options) {

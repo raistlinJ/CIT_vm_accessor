@@ -38,8 +38,8 @@ def message(kind, body):
     return struct.pack("<HI", kind, len(body)) + body
 
 
-@pytest.mark.parametrize("agent_enabled", [False, True])
-def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkeypatch, tmp_path, agent_enabled):
+@pytest.mark.parametrize("agent_enabled,mouse_mode", [(False, 2), (True, 2), (False, 1)])
+def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkeypatch, tmp_path, agent_enabled, mouse_mode):
     from playwright.sync_api import sync_playwright, expect
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
@@ -49,6 +49,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
     authenticated_channels = []
     failures = []
     received_clipboards = queue.Queue()
+    received_inputs = queue.Queue()
     guest_text = "VM café — こんにちは 😀\n" * 800
     host_text = "Host café — こんにちは 😀\n" * 800
     clipboard_formats = struct.pack("<II", 0, 1)  # CLIPBOARD selection, UTF-8
@@ -90,7 +91,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     authenticated_channels.append(channel)
                     stream.sendall(struct.pack("<I", 0))
                     if channel == 1:  # main init + display/input channel list
-                        stream.sendall(message(103, struct.pack("<8I", 42, 1, 3, 2, int(agent_enabled), 32, 0, 0)))
+                        stream.sendall(message(103, struct.pack("<8I", 42, 1, mouse_mode, mouse_mode, int(agent_enabled), 32, 0, 0)))
                         stream.sendall(message(104, struct.pack("<I4B", 2, 2, 0, 3, 0)))
                         if agent_enabled:
                             # Capabilities + clipboard ownership can share one data stream.
@@ -104,9 +105,19 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     elif channel == 3:
                         stream.sendall(message(101, struct.pack("<H", 0)))
                     agent_buffer = bytearray()
+                    motions = 0
                     while True:
                         kind, size = struct.unpack("<HI", read_exact(stream, 6))
                         payload = read_exact(stream, size)
+                        if channel == 3 and kind in (101, 102, 103, 111, 112, 113, 114):
+                            # Validate wire bodies, not just the presence of a
+                            # message. Relative motion has no display-id byte.
+                            assert size == {101: 4, 102: 4, 103: 2, 111: 10, 112: 11, 113: 3, 114: 3}[kind]
+                            received_inputs.put((kind, payload))
+                            if kind in (111, 112):
+                                motions += 1
+                                if motions % 4 == 0:
+                                    stream.sendall(message(111, b""))
                         if channel == 1 and kind == 107:
                             # Client->guest agent messages are fragmented as well.
                             agent_buffer.extend(payload)
@@ -206,6 +217,36 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.keyboard.press("a")
                 assert keyboard_received.wait(3)
                 assert pointer_received.wait(3)
+                # Focus can leave while the pointer remains over the canvas
+                # (e.g. after using DevTools or tabbing to a toolbar button).
+                # Clicking must restore it without requiring a new mouseover.
+                page.locator("#clipboard-toggle").evaluate("e => e.focus()")
+                page.locator("canvas").click(position={"x": 100, "y": 100})
+                expect(page.locator("canvas")).to_be_focused()
+                page.keyboard.press("b")
+                box = page.locator("canvas").bounding_box()
+                page.mouse.move(box["x"] + 140, box["y"] + 120)
+                page.mouse.move(box["x"] + 100, box["y"] + 100)
+                seen = []
+                while not any(kind == 102 and payload == struct.pack("<I", 0xb0) for kind, payload in seen):
+                    seen.append(received_inputs.get(timeout=5))
+                assert (101, struct.pack("<I", 0x1e)) in seen
+                assert (102, struct.pack("<I", 0x9e)) in seen
+                assert (101, struct.pack("<I", 0x30)) in seen
+                assert (113, struct.pack("<BH", 1, 1)) in seen
+                assert (114, struct.pack("<BH", 1, 0)) in seen
+                motion_kind = 111 if mouse_mode == 1 else 112
+                while not any(kind == motion_kind and struct.unpack_from("<ii", payload) ==
+                              ((-40, -20) if mouse_mode == 1 else (100, 100)) for kind, payload in seen):
+                    seen.append(received_inputs.get(timeout=5))
+                # More than two ACK batches must remain responsive rather
+                # than exhausting the client's mouse-motion allowance.
+                for step in range(12):
+                    page.mouse.move(box["x"] + 101 + step, box["y"] + 101)
+                    while True:
+                        kind, payload = received_inputs.get(timeout=5)
+                        if kind == motion_kind:
+                            break
                 page.get_by_role("button", name="Clipboard", exact=True).click()
                 if agent_enabled:
                     expect(page.locator("#clipboard-send-button")).to_be_enabled()

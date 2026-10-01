@@ -1115,8 +1115,6 @@ SpiceMsgcMousePosition.prototype =
 
 function SpiceMsgcMouseMotion(sc, e)
 {
-    // FIXME - figure out how to correctly compute display_id
-    this.display_id = 0;
     this.buttons_state = sc.buttons_state;
     if (e)
     {
@@ -1137,9 +1135,24 @@ function SpiceMsgcMouseMotion(sc, e)
     }
 }
 
-/* Use the same functions as for MousePosition */
-SpiceMsgcMouseMotion.prototype.to_buffer = SpiceMsgcMousePosition.prototype.to_buffer;
-SpiceMsgcMouseMotion.prototype.buffer_size = SpiceMsgcMousePosition.prototype.buffer_size;
+/* AccessForge: relative motion is two signed deltas and a 16-bit button
+   mask. Unlike absolute positioning, it has no display-id byte. */
+SpiceMsgcMouseMotion.prototype =
+{
+    to_buffer: function(a, at)
+    {
+        at = at || 0;
+        var dv = new DataView(a);
+        dv.setInt32(at, this.x, true); at += 4;
+        dv.setInt32(at, this.y, true); at += 4;
+        dv.setUint16(at, this.buttons_state, true); at += 2;
+        return at;
+    },
+    buffer_size: function()
+    {
+        return 10;
+    }
+}
 
 function SpiceMsgcMousePress(sc, e)
 {
