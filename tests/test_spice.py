@@ -223,6 +223,7 @@ def spice_owner_from_client(client):
     ([], 404),
     ([{"vmid": 101, "type": "lxc", "node": "node-b", "status": "running"}], 404),
     ([{"vmid": 101, "type": "qemu", "node": "node-b", "status": "stopped"}], 409),
+    ([{"vmid": 101, "type": "qemu", "node": "node-b", "status": "unknown"}], 409),
 ])
 def test_does_not_issue_ticket_for_unavailable_vm(client, resources, expected):
     with patch.object(SpiceBridge, "running", True), patch.object(main, "proxmox_get", return_value=response(resources)), \
@@ -230,6 +231,11 @@ def test_does_not_issue_ticket_for_unavailable_vm(client, resources, expected):
         result = session_request(client)
     assert result.status_code == expected
     post.assert_not_called()
+    if resources and resources[0].get("status") == "stopped":
+        assert result.json["code"] == "vm_stopped"
+        assert "Click Start VM" in result.json["error"]
+    else:
+        assert "code" not in result.json
 
 
 @pytest.mark.parametrize("upstream,expected", [(401, 401), (403, 403), (500, 502)])

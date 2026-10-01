@@ -1615,7 +1615,10 @@ def spice_session(vmid):
       raise ValueError("Invalid node in cluster response")
     fallback = url_for("open_console", node=node, vmid=vmid, vtype="qemu", console="novnc")
     if vm.get("status") != "running":
-      return jsonify(error="This VM is stopped. Use Start VM in the controls drawer.", fallback=fallback), 409
+      if vm.get("status") == "stopped":
+        return jsonify(error="This machine is off. Click Start VM in the controls drawer to start it.",
+                       code="vm_stopped", fallback=fallback), 409
+      return jsonify(error="This VM is not running. Check its state in Proxmox.", fallback=fallback), 409
     proxy_host = os.environ.get("SPICE_PROXY_HOST") or session.get("pve_host", PROXMOX_HOST)
     config_response = proxmox_post(f"/nodes/{node}/qemu/{vmid}/spiceproxy",
                                   data={"proxy": proxy_host}, cookies=cookies,

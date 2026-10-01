@@ -244,6 +244,8 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 expect(page.locator("#status")).to_contain_text("Connected")
                 expect(page.get_by_role("link", name="AccessForge", exact=True)).to_have_count(0)
                 expect(page.locator("#console-controls")).to_be_hidden()
+                expect(page.get_by_role("button", name="Disconnect", exact=True)).to_have_count(0)
+                expect(page.locator("#controls-alert")).to_be_hidden()
                 expect(page.get_by_role("button", name="Open console controls")).to_be_visible()
                 display_bounds = page.locator("#spice-area").bounding_box()
                 page.get_by_role("button", name="Open console controls").click()
@@ -418,8 +420,8 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 if agent_enabled:
                     page.evaluate("clipboardTest.pending = true")
                     page.get_by_role("button", name="Paste from computer", exact=True).click()
-                page.get_by_role("button", name="Disconnect", exact=True).click()
-                expect(page.locator("#status")).to_have_text("Disconnected.")
+                page.locator("canvas").evaluate("c => c.sc.ws.close()")
+                expect(page.locator("#status")).to_contain_text("Connection lost")
                 expect(page.locator("canvas")).to_have_count(0)
                 expect(page.get_by_role("button", name="Fit to window", exact=True)).to_be_disabled()
                 expect(page.get_by_role("button", name="Take screenshot", exact=True)).to_be_disabled()
@@ -431,14 +433,27 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.locator("#clipboard-send")).to_have_value("")
                 page.get_by_role("button", name="Reconnect", exact=True).click()
                 expect(page.locator("canvas")).to_be_visible(timeout=15000)
+                expect(page.locator("#controls-alert")).to_be_hidden()
                 assert len(authenticated_channels) >= 6
                 page.get_by_role("button", name="Ctrl+Alt+Del", exact=True).click()
                 expect(page.get_by_role("link", name="Use noVNC")).to_be_visible()
                 page.get_by_role("button", name="Close console controls").click()
                 page.locator("canvas").evaluate("c => c.sc.ws.close()")
-                expect(page.locator("#console-controls")).to_be_visible()
+                expect(page.locator("#console-controls")).to_be_hidden()
                 expect(page.locator("#status")).to_contain_text("Connection lost")
+                expect(page.locator("#controls-alert")).to_be_visible()
+                expect(page.locator("#controls-toggle")).to_have_attribute("data-error", "true")
+                expect(page.locator("#display-notice")).to_be_hidden()
                 vm_state["status"] = "stopped"
+                page.reload()
+                expect(page.locator("#display-notice")).to_have_text(
+                    "This machine is off. Click Start VM in the controls drawer to start it.")
+                expect(page.locator("#display-notice")).to_be_visible()
+                expect(page.locator("#controls-alert")).to_be_visible()
+                expect(page.locator("#controls-toggle")).to_have_attribute("aria-label", "Open console controls — attention needed")
+                expect(page.locator("#console-controls")).to_be_hidden()
+                page.screenshot(path=str(tmp_path / "spice-vm-off.png"))
+                page.get_by_role("button", name="Open console controls").click()
                 for label, status_text in [("Start VM", "VM started."), ("Restart VM", "VM restarted.")]:
                     channel_count = len(authenticated_channels)
                     page.get_by_role("button", name=label, exact=True).click()
@@ -447,11 +462,17 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.locator("#power-status")).to_have_text(status_text, timeout=10000)
                     expect(page.locator("canvas")).to_be_visible(timeout=15000)
                     expect(page.locator("#status")).to_contain_text("Connected")
+                    expect(page.locator("#display-notice")).to_be_hidden()
+                    expect(page.locator("#controls-alert")).to_be_hidden()
                     assert len(authenticated_channels) >= channel_count + 3
                 assert power_actions == ["start", "reboot"]
                 vm_state["deny_power"] = True
                 page.get_by_role("button", name="Restart VM", exact=True).click()
                 expect(page.locator("#power-status")).to_contain_text("VM.PowerMgmt")
+                expect(page.locator("#controls-alert")).to_be_visible()
+                page.get_by_role("button", name="Close console controls").click()
+                expect(page.locator("#controls-alert")).to_be_visible()
+                page.get_by_role("button", name="Open console controls").click()
                 expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_enabled()
                 expect(page.locator("canvas")).to_be_visible()
                 assert not errors

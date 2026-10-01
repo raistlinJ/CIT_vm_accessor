@@ -10,7 +10,7 @@
 </head>
 <body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-power-url="{{ url_for('console_power', vmid=vmid) }}" data-csrf="{{ csrf }}" data-vmid="{{ vmid }}">
   <div id="controls-drawer">
-    <button id="controls-toggle" type="button" aria-controls="console-controls" aria-expanded="false" aria-label="Open console controls" title="Open console controls"><span aria-hidden="true">☰</span></button>
+    <button id="controls-toggle" type="button" aria-controls="console-controls" aria-expanded="false" aria-label="Open console controls" title="Open console controls"><span aria-hidden="true">☰</span><span id="controls-alert" aria-hidden="true" hidden>!</span></button>
     <aside id="console-controls" aria-label="Console controls" hidden>
       <header>
         <strong id="console-title">VM {{ vmid }}</strong>
@@ -20,7 +20,6 @@
         <button id="start-vm" type="button">Start VM</button>
         <button id="restart-vm" type="button" title="Gracefully reboot the VM">Restart VM</button>
         <button id="reconnect" type="button">Reconnect</button>
-        <button id="disconnect" type="button" disabled>Disconnect</button>
         <button id="ctrl-alt-del" type="button" disabled>Ctrl+Alt+Del</button>
         <button id="fit-window" type="button" disabled title="Fit the display and request a matching desktop size">Fit to window</button>
         <button id="fullscreen" type="button">Fullscreen</button>
@@ -53,6 +52,7 @@
     </aside>
   </div>
   <main id="spice-area" aria-label="Virtual machine display">
+    <p id="display-notice" role="status" aria-live="polite" hidden></p>
     <div id="spice-viewport"><div id="spice-screen"></div></div>
   </main>
   <div id="message-div" hidden></div>

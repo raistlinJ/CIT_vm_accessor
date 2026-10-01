@@ -5,6 +5,8 @@ import { Constants } from './vendor/spice-html5/src/enums.js';
 const status = document.getElementById('status');
 const controlsDrawer = document.getElementById('controls-drawer');
 const controlsToggle = document.getElementById('controls-toggle');
+const controlsAlert = document.getElementById('controls-alert');
+const displayNotice = document.getElementById('display-notice');
 const consoleControls = document.getElementById('console-controls');
 const screen = document.getElementById('spice-screen');
 const area = document.getElementById('spice-area');
@@ -15,7 +17,6 @@ const startVM = document.getElementById('start-vm');
 const restartVM = document.getElementById('restart-vm');
 const powerStatus = document.getElementById('power-status');
 const reconnect = document.getElementById('reconnect');
-const disconnect = document.getElementById('disconnect');
 const keys = document.getElementById('ctrl-alt-del');
 const fallback = document.getElementById('fallback');
 const clipboardStatus = document.getElementById('clipboard-status');
@@ -43,6 +44,7 @@ async function powerVM(action) {
   startVM.disabled = restartVM.disabled = true;
   powerStatus.hidden = false;
   powerStatus.dataset.error = 'false';
+  updateDrawerIndicator();
   powerStatus.textContent = action === 'start' ? 'Starting VM…' : 'Restarting VM…';
   const timeout = setTimeout(() => controller.abort('timeout'), 180000);
   try {
@@ -71,7 +73,7 @@ async function powerVM(action) {
       }
     }
     powerStatus.textContent = result.message || (action === 'start' ? 'VM started.' : 'VM restarted.');
-    // A manual disconnect/reconnect during the task overrides auto-reconnect.
+    // A manual reconnect during the task overrides auto-reconnect.
     if (intent === connectionIntent && !controller.signal.aborted) connect();
   } catch (error) {
     if (controller.signal.reason === 'pagehide') return;
@@ -79,7 +81,7 @@ async function powerVM(action) {
     powerStatus.textContent = controller.signal.aborted
       ? 'The power task is taking longer than expected. Check its status in Proxmox before trying again.'
       : error.message || 'Could not confirm the power request. Check the VM state in Proxmox before trying again.';
-    setControlsOpen(true);
+    updateDrawerIndicator();
   } finally {
     clearTimeout(timeout);
     powerRequest = null;
@@ -94,9 +96,17 @@ function setControlsOpen(open) {
   consoleControls.hidden = !open;
   controlsDrawer.dataset.open = String(open);
   controlsToggle.setAttribute('aria-expanded', String(open));
-  controlsToggle.setAttribute('aria-label', open ? 'Close console controls' : 'Open console controls');
-  controlsToggle.title = open ? 'Close console controls' : 'Open console controls';
   controlsToggle.firstElementChild.textContent = open ? '‹' : '☰';
+  updateDrawerIndicator();
+}
+
+function updateDrawerIndicator() {
+  const error = [status, powerStatus, clipboardStatus].some(element => element.dataset.error === 'true');
+  controlsToggle.dataset.error = String(error);
+  controlsAlert.hidden = !error;
+  const label = `${consoleControls.hidden ? 'Open' : 'Close'} console controls${error ? ' — attention needed' : ''}`;
+  controlsToggle.setAttribute('aria-label', label);
+  controlsToggle.title = label;
 }
 
 controlsToggle.addEventListener('click', () => setControlsOpen(consoleControls.hidden));
@@ -112,12 +122,15 @@ controlsDrawer.addEventListener('keydown', event => {
 function showClipboardStatus(message, error = false) {
   clipboardStatus.textContent = message;
   clipboardStatus.dataset.error = String(error);
+  updateDrawerIndicator();
 }
 
-function showStatus(message, error = false) {
+function showStatus(message, error = false, code = '') {
   status.textContent = message;
   status.dataset.error = String(error);
-  if (error) setControlsOpen(true);
+  displayNotice.hidden = code !== 'vm_stopped';
+  displayNotice.textContent = code === 'vm_stopped' ? message : '';
+  updateDrawerIndicator();
 }
 
 function stop() {
@@ -134,7 +147,6 @@ function stop() {
   fitDisplay();
   document.getElementById('message-div').replaceChildren();
   reconnect.disabled = false;
-  disconnect.disabled = true;
   keys.disabled = true;
   guestClipboard = null;
   clipboardSend.value = '';
@@ -186,7 +198,6 @@ async function connect() {
   stop();
   const attempt = generation;
   reconnect.disabled = true;
-  disconnect.disabled = false;
   showStatus('Connecting…');
   pending = new AbortController();
   try {
@@ -205,7 +216,11 @@ async function connect() {
       fallback.href = config.fallback;
       fallback.hidden = false;
     }
-    if (!response.ok) throw new Error(config.error || 'Could not open the console.');
+    if (!response.ok) {
+      const error = new Error(config.error || 'Could not open the console.');
+      error.code = config.code;
+      throw error;
+    }
     document.getElementById('console-title').textContent = config.title;
     document.title = `${config.title} · AccessForge`;
     const url = new URL(config.websocket, window.location.href);
@@ -256,12 +271,11 @@ async function connect() {
   } catch (error) {
     if (attempt !== generation || error.name === 'AbortError') return;
     stop();
-    showStatus(error.message || 'Could not open the console.', true);
+    showStatus(error.message || 'Could not open the console.', true, error.code);
   }
 }
 
 reconnect.addEventListener('click', () => { connectionIntent++; connect(); });
-disconnect.addEventListener('click', () => { connectionIntent++; stop(); showStatus('Disconnected.'); });
 fallback.addEventListener('click', stop);
 screenshotButton.addEventListener('click', async () => {
   const canvas = screen.querySelector('canvas');
@@ -382,7 +396,7 @@ document.getElementById('fullscreen').addEventListener('click', async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
     else await document.documentElement.requestFullscreen();
-  } catch { showStatus('Fullscreen is unavailable in this browser or embedded view.'); }
+  } catch { showStatus('Fullscreen is unavailable in this browser or embedded view.', true); }
 });
 new ResizeObserver(resize).observe(area);
 new MutationObserver(fitDisplay).observe(screen, {
