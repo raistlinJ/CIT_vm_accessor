@@ -1,20 +1,20 @@
 :root { color-scheme: dark; font: 14px system-ui, sans-serif; background: #10151e; color: #e6edf7; }
 * { box-sizing: border-box; }
 body { margin: 0; height: 100dvh; display: flex; flex-direction: column; }
-header { display: flex; align-items: center; gap: 14px; padding: 12px 16px; background: #192332; flex-wrap: wrap; }
+header { display: flex; align-items: center; gap: 14px; padding: 12px 16px; background: #192332; flex-wrap: wrap; flex-shrink: 0; }
 a { color: #9bcaff; text-decoration: none; }
 a:hover { text-decoration: underline; }
-.brand { font-weight: 700; }
 .badge { color: #96e7bf; font-size: 11px; border: 1px solid #3d6955; padding: 3px 6px; border-radius: 4px; }
 nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 button, nav a { font: inherit; border: 1px solid #46566b; border-radius: 5px; padding: 7px 10px; background: #243246; color: #e6edf7; cursor: pointer; }
 button:hover:not(:disabled), nav a:hover { background: #344860; }
 button:disabled { opacity: .45; cursor: default; }
 :focus-visible { outline: 2px solid #9bcaff; outline-offset: 2px; }
-#status { padding: 8px 16px; color: #aabbd0; background: #131c29; }
+#status { padding: 8px 16px; color: #aabbd0; background: #131c29; flex-shrink: 0; }
 #status[data-error="true"] { color: #ffc1b5; }
-#spice-area { flex: 1; min-height: 0; overflow: auto; background: #080b10; position: relative; }
-#spice-screen { position: relative; min-width: 100%; min-height: 100%; }
+#spice-area { flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: #080b10; position: relative; }
+#spice-viewport { position: relative; overflow: hidden; margin-inline: auto; }
+#spice-screen { position: absolute; top: 0; left: 0; transform-origin: top left; }
 #spice-screen canvas { display: block; }
 [hidden] { display: none !important; }
 #clipboard-panel { padding: 0 16px 12px; background: #192332; max-height: 55dvh; overflow: auto; flex-shrink: 0; }

@@ -1076,6 +1076,23 @@ SpiceMsgCursorSet.prototype =
 }
 
 
+// AccessForge: offsetX/Y on transformed canvases differ between browsers.
+// Map viewport coordinates explicitly back to the guest framebuffer.
+function mouse_position(e)
+{
+    var canvas = e.currentTarget;
+    if (canvas && canvas.getBoundingClientRect && canvas.width && canvas.height)
+    {
+        var rect = canvas.getBoundingClientRect();
+        if (rect.width && rect.height)
+            return {
+                x: Math.max(0, Math.min(canvas.width - 1, Math.floor((e.clientX - rect.left) * canvas.width / rect.width))),
+                y: Math.max(0, Math.min(canvas.height - 1, Math.floor((e.clientY - rect.top) * canvas.height / rect.height)))
+            };
+    }
+    return { x: e.offsetX, y: e.offsetY };
+}
+
 function SpiceMsgcMousePosition(sc, e)
 {
     // FIXME - figure out how to correctly compute display_id
@@ -1083,11 +1100,9 @@ function SpiceMsgcMousePosition(sc, e)
     this.buttons_state = sc.buttons_state;
     if (e)
     {
-        this.x = e.offsetX;
-        this.y = e.offsetY;
-
-        sc.mousex = e.offsetX;
-        sc.mousey = e.offsetY;
+        var position = mouse_position(e);
+        this.x = sc.mousex = position.x;
+        this.y = sc.mousey = position.y;
     }
     else
     {
@@ -1118,16 +1133,17 @@ function SpiceMsgcMouseMotion(sc, e)
     this.buttons_state = sc.buttons_state;
     if (e)
     {
-        this.x = e.offsetX;
-        this.y = e.offsetY;
+        var position = mouse_position(e);
+        this.x = position.x;
+        this.y = position.y;
 
         if (sc.mousex !== undefined)
         {
             this.x -= sc.mousex;
             this.y -= sc.mousey;
         }
-        sc.mousex = e.offsetX;
-        sc.mousey = e.offsetY;
+        sc.mousex = position.x;
+        sc.mousey = position.y;
     }
     else
     {

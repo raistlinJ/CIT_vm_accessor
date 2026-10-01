@@ -50,6 +50,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
     failures = []
     received_clipboards = queue.Queue()
     received_inputs = queue.Queue()
+    received_resizes = queue.Queue()
     guest_text = "VM café — こんにちは 😀\n" * 800
     host_text = "Host café — こんにちは 😀\n" * 800
     clipboard_formats = struct.pack("<II", 0, 1)  # CLIPBOARD selection, UTF-8
@@ -128,7 +129,11 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                                     break
                                 agent_body = bytes(agent_buffer[20:20 + length])
                                 del agent_buffer[:20 + length]
-                                if agent_kind == 8:  # client requests guest clipboard
+                                if agent_kind == 2:  # monitor config; simulate a guest ignoring resize
+                                    count, flags, height, width, depth, x, y = struct.unpack("<7I", agent_body)
+                                    assert (count, flags, depth, x, y) == (1, 0, 32, 0, 0)
+                                    received_resizes.put((width, height))
+                                elif agent_kind == 8:  # client requests guest clipboard
                                     assert agent_body == clipboard_formats
                                     send_agent(stream, agent_message(4, clipboard_formats + guest_text.encode()))
                                 elif agent_kind == 7:  # client offers text
@@ -211,6 +216,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.goto(origin + "/open?node=node-a&vmid=101&vtype=qemu")
                 expect(page.locator("canvas")).to_be_visible(timeout=15000)
                 expect(page.locator("#status")).to_contain_text("Connected")
+                expect(page.get_by_role("link", name="AccessForge", exact=True)).to_have_count(0)
                 pixel = page.locator("canvas").evaluate("c => Array.from(c.getContext('2d').getImageData(10,10,1,1).data)")
                 assert pixel == [40, 80, 120, 255]
                 page.locator("canvas").click(position={"x": 100, "y": 100})
@@ -247,7 +253,64 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                         kind, payload = received_inputs.get(timeout=5)
                         if kind == motion_kind:
                             break
+                # Fit remains usable even if the agent is absent or ignores
+                # monitor configuration. Check actual pointer coordinates on
+                # the transformed surface, not only its visual dimensions.
+                channel_count = len(authenticated_channels)
+                page.set_viewport_size({"width": 420, "height": 360})
+                fitted = """() => {
+                  const canvas = document.querySelector('#spice-screen canvas');
+                  const bounds = canvas.getBoundingClientRect();
+                  const area = document.querySelector('#spice-area').getBoundingClientRect();
+                  return bounds.width > 0 && bounds.height > 0 &&
+                    bounds.width <= area.width + 1 && bounds.height <= area.height + 1 &&
+                    Math.abs(bounds.width / bounds.height - canvas.width / canvas.height) < .01;
+                }"""
+                page.wait_for_function(fitted)
+                scaled = page.locator("canvas").bounding_box()
+                assert scaled["width"] < 640
+                page.mouse.click(scaled["x"] + scaled["width"] * .6,
+                                 scaled["y"] + scaled["height"] * .6)
+                if mouse_mode == 2:
+                    positions = []
+                    while True:
+                        try:
+                            kind, payload = received_inputs.get(timeout=5)
+                        except queue.Empty:
+                            pytest.fail(f"Scaled pointer positions {positions}; canvas bounds {scaled}")
+                        if kind == 112:
+                            x, y = struct.unpack_from("<II", payload)
+                            positions.append((x, y))
+                            # MouseEvent client coordinates are rounded to
+                            # CSS pixels; one CSS pixel spans several guest
+                            # pixels when the popup is this small.
+                            if (abs(x / 640 - .6) * scaled["width"] <= 1
+                                    and abs(y / 480 - .6) * scaled["height"] <= 1):
+                                break
+                expected_size = tuple(page.locator("#spice-area").evaluate("""e => [
+                  Math.max(320, Math.floor(e.clientWidth / 8) * 8),
+                  Math.max(200, Math.floor(e.clientHeight / 8) * 8)
+                ]"""))
+                if agent_enabled:
+                    while received_resizes.get(timeout=5) != expected_size:
+                        pass
+                    while not received_resizes.empty():
+                        received_resizes.get_nowait()
+                page.locator("#spice-screen").evaluate("e => e.style.transform = 'scale(1)'")
+                page.get_by_role("button", name="Fit to window", exact=True).click()
+                page.wait_for_function(fitted)
+                if agent_enabled:
+                    # Explicit fit must resend even when dimensions did not
+                    # change; automatic resize deduplication must not eat it.
+                    assert received_resizes.get(timeout=5) == expected_size
+                else:
+                    assert received_resizes.empty()
+                assert len(authenticated_channels) == channel_count
+                page.screenshot(path=str(tmp_path / "spice-small-window.png"))
+                page.set_viewport_size({"width": 1100, "height": 760})
+                page.wait_for_function("() => document.querySelector('canvas').getBoundingClientRect().width === 640")
                 page.get_by_role("button", name="Clipboard", exact=True).click()
+                page.wait_for_function(fitted)
                 if agent_enabled:
                     expect(page.locator("#clipboard-send-button")).to_be_enabled()
                     expect(page.locator("#clipboard-receive")).to_have_value(guest_text)
@@ -293,6 +356,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.get_by_role("button", name="Disconnect", exact=True).click()
                 expect(page.locator("#status")).to_have_text("Disconnected.")
                 expect(page.locator("canvas")).to_have_count(0)
+                expect(page.get_by_role("button", name="Fit to window", exact=True)).to_be_disabled()
                 expect(page.locator("#clipboard-send")).to_have_value("")
                 expect(page.locator("#clipboard-receive")).to_have_value("")
                 expect(page.locator("#clipboard-copy")).to_be_disabled()

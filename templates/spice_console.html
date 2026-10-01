@@ -10,7 +10,6 @@
 </head>
 <body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-csrf="{{ csrf }}">
   <header>
-    <a href="{{ url_for('home') }}" class="brand">AccessForge</a>
     <strong id="console-title">VM {{ vmid }}</strong>
     <span class="badge">SPICE</span>
     <nav aria-label="Console controls">
@@ -18,6 +17,7 @@
       <button id="disconnect" type="button" disabled>Disconnect</button>
       <button id="ctrl-alt-del" type="button" disabled>Ctrl+Alt+Del</button>
       <button id="clipboard-toggle" type="button" aria-controls="clipboard-panel" aria-expanded="false">Clipboard</button>
+      <button id="fit-window" type="button" disabled title="Fit the display and request a matching desktop size">Fit to window</button>
       <button id="fullscreen" type="button">Fullscreen</button>
       <a id="fallback" {% if fallback %}href="{{ fallback }}"{% else %}hidden{% endif %}>Use noVNC</a>
     </nav>
@@ -45,7 +45,7 @@
     <p class="clipboard-help">Text only, up to 1 MiB. After sending, paste inside the VM. If browser clipboard access is blocked, use the text boxes to paste or copy manually.</p>
   </section>
   <main id="spice-area" aria-label="Virtual machine display">
-    <div id="spice-screen"></div>
+    <div id="spice-viewport"><div id="spice-screen"></div></div>
   </main>
   <div id="message-div" hidden></div>
   <div id="debug-div" hidden></div>

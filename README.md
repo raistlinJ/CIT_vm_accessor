@@ -81,7 +81,7 @@ The server requests `/nodes/{node}/qemu/{vmid}/spiceproxy` with the signed-in us
 
 The bridge verifies the VM server's certificate chain and exact subject using the API-provided cluster CA, even if API `VERIFY_SSL` is disabled. Grants accept new channels for 25 seconds, before Proxmox's 30-second password expiry. Existing channels stay connected until disconnect, logout, or AccessForge's 110-minute login expiry. Reconnect obtains fresh credentials and resolves the VM's current node. Seamless live migration is not supported; reconnect after migration if the session drops.
 
-The vendored client is pinned in `static/vendor/spice-html5/UPSTREAM.md`; assets are served locally without a CDN. Guest-agent-assisted resizing is supported. Without the guest agent, larger displays scroll at their native resolution. Browser SPICE has upstream feature limits, including multiple displays, USB redirection, and some graphics/video formats; it is not guaranteed to match native-client performance. Keep noVNC available while evaluating your workloads.
+The vendored client is pinned in `static/vendor/spice-html5/UPSTREAM.md`; assets are served locally without a CDN. The display automatically fits inside the popup while preserving its aspect ratio, including when the guest agent cannot resize the desktop. With an agent connected, AccessForge also requests a matching guest resolution. **Fit to window** immediately recalculates the fit and resends that request without disconnecting or rebooting the VM. Browser SPICE has upstream feature limits, including multiple displays, USB redirection, and some graphics/video formats; it is not guaranteed to match native-client performance. Keep noVNC available while evaluating your workloads.
 
 ## Clipboard
 
