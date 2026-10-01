@@ -1447,7 +1447,9 @@ def spice_session(vmid):
   csrf = session.get("spice_csrf", "")
   if not csrf or not hmac.compare_digest(csrf, request.headers.get("X-Console-CSRF", "")):
     return jsonify(error="Invalid console request. Reload the console."), 403
-  scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+  # Waitress supplies the public scheme from deployment configuration. Do not
+  # let an arbitrary forwarding header override this security check.
+  scheme = request.scheme
   if scheme not in ("http", "https"):
     return jsonify(error="Invalid request origin."), 403
   origin = f"{scheme}://{request.host}"
@@ -2128,6 +2130,9 @@ def healthz():
 
 def run():
   port = int(os.environ.get("PORT", "8080"))
+  url_scheme = os.environ.get("PUBLIC_SCHEME", "http").strip().lower()
+  if url_scheme not in ("http", "https"):
+    raise ValueError("PUBLIC_SCHEME must be http or https")
   https_cert = os.environ.get("HTTPS_CERT_FILE")
   https_key = os.environ.get("HTTPS_KEY_FILE")
   if https_cert or https_key:
@@ -2138,7 +2143,9 @@ def run():
   spice_bridge.start(os.environ.get("SPICE_BRIDGE_HOST", "127.0.0.1"),
                      int(os.environ.get("SPICE_BRIDGE_PORT", "8081")))
   try:
-    serve(app, host="0.0.0.0", port=port)
+    # The supplied ingress serves HTTPS only. Set the public scheme explicitly
+    # while retaining Waitress's default removal of untrusted proxy headers.
+    serve(app, host="0.0.0.0", port=port, url_scheme=url_scheme)
   finally:
     spice_bridge.stop()
 

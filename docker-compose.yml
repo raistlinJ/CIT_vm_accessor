@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   certs:
     image: alpine:3
@@ -30,6 +28,8 @@ services:
     environment:
       # App listens on plain HTTP 8080 inside container
       - PORT=8080
+      # Public browser scheme; nginx terminates TLS before forwarding HTTP.
+      - PUBLIC_SCHEME=${PUBLIC_SCHEME:-https}
       - SPICE_BRIDGE_HOST=0.0.0.0
       - SPICE_BRIDGE_PORT=8081
       # Default to the same cluster entry point used for API access.

@@ -38,6 +38,8 @@ Open `https://<proxmox-host>/`. The supplied Nginx service uses host networking 
 
 Nginx forwards application traffic to host loopback port 8080 and `/spice/ws` to host loopback port 8081. Docker publishes both ports only on loopback. Do not expose 8081 publicly; users only need HTTPS. Port 3128 remains internal.
 
+Compose sets `PUBLIC_SCHEME=https` so Waitress knows the browser uses HTTPS even though Nginx forwards plain HTTP. Nginx preserves the browser's host and port. Both hostname and IP URLs work; the Proxmox API address entered at login is independent of the browser URL.
+
 When upgrading an existing installation, rebuild the app **and** reload the Nginx configuration:
 
 ```bash
@@ -61,7 +63,7 @@ python main.py
 
 Use `python main.py` in production behind the reverse proxy too. It starts Waitress on 8080 and an asynchronous SPICE bridge on 8081 in the same process. Running `waitress main:app` or `flask run` alone does **not** start the bridge. Run one application process per deployment; its console grants are held in memory.
 
-The UI is available at `http://localhost:8080`, but browser SPICE requires a same-origin reverse proxy. Use the `/spice/ws` location in `deploy/proxmox.conf` as a reference. `HTTPS_CERT_FILE`/`HTTPS_KEY_FILE` do not enable TLS in Waitress; terminate TLS at the reverse proxy.
+The UI is available at `http://localhost:8080`, but browser SPICE requires a same-origin reverse proxy. Use the `/spice/ws` location in `deploy/proxmox.conf` as a reference. When deploying behind an HTTPS-only proxy, set `PUBLIC_SCHEME=https`. `HTTPS_CERT_FILE`/`HTTPS_KEY_FILE` do not enable TLS in Waitress; terminate TLS at the reverse proxy.
 
 ## How browser SPICE connects
 
@@ -102,6 +104,7 @@ Open **Clipboard** in the console toolbar. Sharing requires a running SPICE gues
 | `VERIFY_SSL` | `false` | Verify the API certificate; enable with a trusted certificate |
 | `FLASK_SECRET_KEY` | `change-me-now` | Set a strong secret for signed sessions |
 | `PORT` | `8080` | Waitress listener |
+| `PUBLIC_SCHEME` | `http` in Python, `https` in Compose | Browser-facing scheme for origin validation and generated URLs; does not enable TLS in Waitress |
 | `SPICE_PROXY_HOST` | Signed-in session's Proxmox host | Internal cluster SPICE entry point |
 | `SPICE_PROXY_PORT` | `3128` | Internal SPICE proxy port |
 | `SPICE_BRIDGE_HOST` | `127.0.0.1` | Bridge bind address; Compose sets `0.0.0.0` inside the container |
@@ -142,6 +145,7 @@ Open **Clipboard** in the console toolbar. Sharing requires a running SPICE gues
 
   The Dockerfile now fails on installation errors and verifies application imports during the build. If the build fails, resolve that error before recreating the container.
 - **Bridge unavailable:** use `python main.py` and confirm the 8081 listener starts. Rebuild the Docker image after dependency changes.
+- **Invalid request origin:** for the supplied HTTPS ingress, confirm `PUBLIC_SCHEME=https` in the app container and reload the current Nginx config, which preserves the public host/port. Waitress strips untrusted forwarding headers by default; this deployment sets its URL scheme explicitly. The browser origin must match the application's public scheme, host, and port, not the Proxmox API hostname entered at login. After updating Compose, recreate the app to apply environment changes.
 - **`PermissionError` in `socket.socketpair()` during startup:** a container/host policy may deny the Unix socket pair used internally by Python's event loop. The bridge automatically falls back to a loopback TCP pair for internal wakeups; its temporary listener closes immediately. This requires no privileged mode, security-profile changes, or additional published port. Update the source and recreate/restart the app to pick up the fix. If loopback TCP is also denied, startup now reports an event-loop initialization failure instead of claiming that port 8081 could not bind; check the host's policy/audit logs for the denied operation.
 - **WebSocket fails:** reload Nginx with the new `/spice/ws` route; verify AccessForge can reach the configured proxy on 3128 and that inter-node 3128 is allowed. Working API access on 8006 alone does not prove this.
 - **VM unavailable:** check that it is running, its display supports SPICE, and the user has `VM.Audit` and `VM.Console`. Try the noVNC link.
