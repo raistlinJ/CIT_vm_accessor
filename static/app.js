@@ -15,7 +15,7 @@
   const notesUrl = (appConfig && appConfig.dataset && appConfig.dataset.notesUrl) ? appConfig.dataset.notesUrl : '/api/vm-notes';
   // Fixed-height dock (no resize)
   const btnStart = document.getElementById('btnStart');
-  const btnPoweroff = document.getElementById('btnPoweroff');
+  const btnRestart = document.getElementById('btnRestart');
   const btnRestore = document.getElementById('btnRestore');
   const hiddenAction = document.getElementById('hiddenBulkAction');
   const hiddenSnapshot = document.getElementById('hiddenSnapshot');
@@ -50,7 +50,7 @@
   function updateBulkButtons() {
     const any = !!document.querySelector('.vm-item input[type=checkbox]:checked');
     if (btnStart) btnStart.disabled = !any;
-    if (btnPoweroff) btnPoweroff.disabled = !any;
+    if (btnRestart) btnRestart.disabled = !any;
     if (btnRestore) {
       btnRestore.disabled = !any;
     }
@@ -652,7 +652,7 @@
     try { bulkForm.submit(); } catch (e) { addLog('Submit error: ' + e.message, 'error'); }
   }
   btnStart && btnStart.addEventListener('click', () => { addLog('Clicked Start', 'info'); triggerAction('start'); });
-  btnPoweroff && btnPoweroff.addEventListener('click', () => { addLog('Clicked Poweroff', 'info'); triggerAction('poweroff'); });
+  btnRestart && btnRestart.addEventListener('click', () => { addLog('Clicked Restart', 'info'); triggerAction('restart'); });
   btnRestore && btnRestore.addEventListener('click', () => { addLog('Clicked Restore', 'info'); triggerAction('restore-all'); });
   const scenarioResetBtns = document.querySelectorAll('.btn-scenario-reset');
   scenarioResetBtns.forEach(btn => {

@@ -10,6 +10,7 @@ AccessForge signs into the Proxmox VE API and opens browser consoles across your
 - Container xterm.js consoles
 - Cluster-aware SPICE routing; reconnect resolves the VM's current node
 - Existing bulk VM actions and scenario backend resets
+- **Restart Selected** gracefully reboots checked, running VMs and containers; stopped guests are skipped
 
 ## Requirements
 

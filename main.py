@@ -801,7 +801,7 @@ TPL_HOME = """
     <p style="margin:-0.2rem 0 0.6rem; font-size:0.65rem; color:#9cc9d9; text-align:center;">Applied to checked VMs only</p>
     <div class="btn-group">
   <button id="btnStart" type="button" disabled title="Start each selected VM">Start Selected</button>
-  <button id="btnPoweroff" type="button" class="btn-danger" disabled title="Power off (stop) each selected VM">Poweroff Selected</button>
+  <button id="btnRestart" type="button" class="btn-danger" disabled title="Gracefully restart each selected running VM">Restart Selected</button>
   <button id="btnRestore" type="button" class="btn-danger" disabled title="Rollback each selected VM to its newest snapshot">Factory Reset Selected</button>
     </div>
     <div class="small-group">
@@ -1965,21 +1965,23 @@ def bulk_action():
       node, vtype, vmid = item.split("|")
       current_status = status_map.get((node, vmid))
       logger.info(f"[{req_id()}] Bulk item action={action} node={node} vmid={vmid} type={vtype} current_status={current_status}")
-      if action in ("poweroff", "reboot"):
-        # Only attempt stop if currently running. Note: QEMU 'stop' is immediate poweroff; use 'shutdown' for graceful ACPI.
+      if action in ("poweroff", "restart", "reboot"):
+        # Keep the legacy poweroff API action separate from graceful restart.
+        operation = "stop" if action == "poweroff" else "reboot"
+        action_label = "poweroff" if action == "poweroff" else "restart"
         if current_status and current_status != "running":
           skipped += 1
           skip_details.append(f"{node}/{vmid} skipped (not running)")
           continue
         if vtype == "qemu":
-          path = f"/nodes/{node}/qemu/{vmid}/status/stop"
+          path = f"/nodes/{node}/qemu/{vmid}/status/{operation}"
         elif vtype == "lxc":
-          path = f"/nodes/{node}/lxc/{vmid}/status/stop"
+          path = f"/nodes/{node}/lxc/{vmid}/status/{operation}"
         else:
-          logger.warning(f"[{req_id()}] Unsupported VM type for poweroff: {vtype} ({item})")
+          logger.warning(f"[{req_id()}] Unsupported VM type for {action_label}: {vtype} ({item})")
           failed += 1
           continue
-        logger.info(f"[{req_id()}] Sending poweroff request path={path}")
+        logger.info(f"[{req_id()}] Sending {action_label} request path={path}")
         r, error, upid = _run_vm_action(node, vtype, vmid, path, data={})
         if r == "__unauthorized__":
           return redirect(url_for("session_reset", reason="invalid"))
@@ -1987,17 +1989,17 @@ def bulk_action():
           jobs.append({"node": node, "upid": upid})
         if error:
           failed += 1
-          failure_details.append(f"{node}/{vmid} poweroff failed ({error})")
+          failure_details.append(f"{node}/{vmid} {action_label} failed ({error})")
           continue
         if r and r.ok:
           done += 1
-          success_details.append(f"{node}/{vmid} poweroff ok")
+          success_details.append(f"{node}/{vmid} {action_label} ok")
         else:
           failed += 1
           reason = f"HTTP {r.status_code}" if r is not None else "unknown"
-          failure_details.append(f"{node}/{vmid} poweroff failed ({reason})")
+          failure_details.append(f"{node}/{vmid} {action_label} failed ({reason})")
           if r is not None:
-            logger.warning(f"[{req_id()}] Poweroff failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
+            logger.warning(f"[{req_id()}] {action_label} failed vmid={vmid} node={node} status={r.status_code} body={r.text[:180]!r}")
       elif action == "start":
         if current_status and current_status == "running":
           skipped += 1
