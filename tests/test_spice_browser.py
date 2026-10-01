@@ -159,8 +159,14 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
 
     bridge = SpiceBridge(main.spice_cookie_owner)
     monkeypatch.setattr(main, "spice_bridge", bridge)
-    monkeypatch.setattr(main, "proxmox_get", lambda *a, **kw: response([
-        {"vmid": 101, "type": "qemu", "node": "node-b", "status": "running"}]))
+    def proxmox_get(path, **kwargs):
+        if path == "/cluster/resources":
+            return response([{"vmid": 101, "type": "qemu", "node": "node-b", "status": "running"}])
+        assert path == "/nodes/node-b/qemu/101/config"
+        assert kwargs["params"] == {"current": 1}
+        return response({"vga": "qxl,memory=128"})
+
+    monkeypatch.setattr(main, "proxmox_get", proxmox_get)
     monkeypatch.setattr(main, "proxmox_post", lambda *a, **kw: response(certificates.config))
     monkeypatch.setenv("SPICE_PROXY_HOST", "127.0.0.1")
     original_session = main.app.view_functions["spice_session"]

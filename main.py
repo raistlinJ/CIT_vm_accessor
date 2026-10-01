@@ -1387,6 +1387,23 @@ def home():
     bulk_notice=notice,
   )
 
+def vm_config_prefers_spice(config):
+  """SPICE/QXL display with Proxmox's default (unset) clipboard option."""
+  vga = config.get("vga") if isinstance(config, dict) else None
+  if not isinstance(vga, str):
+    return False
+  options = {}
+  for field in vga.split(","):
+    key, separator, value = field.partition("=")
+    if not separator:
+      key, value = "type", key
+    key, value = key.strip(), value.strip()
+    if not key or not value or key in options:
+      return False
+    options[key] = value
+  return options.get("type") in {"qxl", "qxl2", "qxl3", "qxl4"} and "clipboard" not in options
+
+
 @app.route("/open", methods=["GET", "POST"])
 @require_session()
 def open_console():
@@ -1406,7 +1423,31 @@ def open_console():
   console_type = "lxc" if vtype == "lxc" else "kvm"
 
   if console_type == "kvm" and request.values.get("console") != "novnc":
-    return redirect(url_for("spice_console", vmid=vmid, node=node))
+    cookies = {"PVEAuthCookie": session["pve_ticket"]}
+    headers = {"CSRFPreventionToken": session.get("pve_csrf")}
+    try:
+      # The VM may have migrated since the dashboard was loaded.
+      resources = proxmox_get("/cluster/resources", params={"type": "vm"},
+                              cookies=cookies, headers=headers, timeout=10)
+      resources.raise_for_status()
+      vms = resources.json()["data"]
+      if not isinstance(vms, list):
+        raise ValueError("Invalid cluster response")
+      vm = next((v for v in vms if isinstance(v, dict) and
+                 str(v.get("vmid")) == vmid and v.get("type") == "qemu"), None)
+      current_node = vm.get("node") if vm else None
+      if not isinstance(current_node, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", current_node):
+        raise ValueError("VM node unavailable")
+      node = current_node
+      config = proxmox_get(f"/nodes/{node}/qemu/{vmid}/config", params={"current": 1},
+                           cookies=cookies, headers=headers, timeout=10)
+      config.raise_for_status()
+      if vm_config_prefers_spice(config.json()["data"]):
+        return redirect(url_for("spice_console", vmid=vmid, node=node))
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+      # Console access can be allowed without VM.Audit/config access. Keep
+      # noVNC usable if detection is denied, unavailable, or malformed.
+      logger.warning("Could not detect console settings for VM %s; using noVNC", vmid)
 
   # Route the console through our nginx proxy on this same origin using /proxmox/
   # This avoids the browser needing to reach host.docker.internal or non-443 ports.

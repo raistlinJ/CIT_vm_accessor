@@ -90,16 +90,74 @@ def session_request(client, **kwargs):
 
 
 @pytest.mark.parametrize("method", ["get", "post"])
-def test_vm_defaults_to_spice(client, method):
+@pytest.mark.parametrize("vga,use_spice", [
+    ("qxl", True),
+    ("qxl,memory=128", True),
+    ("qxl2", True),
+    ("memory=128,type=qxl3", True),
+    ("type=qxl4", True),
+    ("qxl,clipboard=vnc,memory=128", False),
+    ("std", False),
+    ("virtio", False),
+    ("none", False),
+    (None, False),
+    ("memory=128", False),
+    ("qxl,type=std", False),
+    ("qxl,clipboard=", False),
+])
+def test_vm_console_detects_current_display_and_clipboard(client, method, vga, use_spice):
     kwargs = {"query_string" if method == "get" else "data": {
         "node": "node-a", "vmid": "101", "vtype": "qemu"}}
-    assert getattr(client, method)("/open", **kwargs).location == "/console/spice/101?node=node-a"
+    with patch.object(main, "proxmox_get", side_effect=[
+        response([{"vmid": 101, "type": "qemu", "node": "node-b"}]),
+        response({"vga": vga, "pending": {"vga": "std" if use_spice else "qxl"}}),
+    ]) as get:
+        result = getattr(client, method)("/open", **kwargs)
+    assert get.call_args.args == ("/nodes/node-b/qemu/101/config",)
+    assert get.call_args.kwargs["params"] == {"current": 1}
+    assert get.call_args.kwargs["cookies"] == {"PVEAuthCookie": "test-ticket"}
+    if use_spice:
+        assert result.location == "/console/spice/101?node=node-b"
+    else:
+        url = urlparse(result.location)
+        assert url.path == "/proxmox/"
+        assert parse_qs(url.query) == {"console": ["kvm"], "vmid": ["101"],
+                                       "node": ["node-b"], "novnc": ["1"], "resize": ["scale"]}
 
 
-@pytest.mark.parametrize("vtype,mode", [("lxc", "xtermjs"), ("qemu", "novnc")])
-def test_existing_consoles_preserved(client, vtype, mode):
-    result = client.get("/open", query_string={"node": "node-b", "vmid": "101", "vtype": vtype,
-                                             "console": "novnc"})
+@pytest.mark.parametrize("upstream", [
+    response(None, 403), response(None, 500), requests.Timeout(),
+    response(None), response([]), response({"vga": {"type": "qxl"}}),
+])
+def test_config_detection_failure_uses_novnc(client, upstream):
+    with patch.object(main, "proxmox_get", side_effect=[
+        response([{"vmid": 101, "type": "qemu", "node": "node-b"}]), upstream,
+    ]):
+        result = client.get("/open?node=node-a&vmid=101&vtype=qemu")
+    assert result.status_code == 302
+    assert parse_qs(urlparse(result.location).query)["novnc"] == ["1"]
+
+
+@pytest.mark.parametrize("upstream", [
+    response([], 403), requests.Timeout(), response(None), response([]),
+    response([{"vmid": 101, "type": "qemu", "node": "../bad"}]),
+])
+def test_node_detection_failure_uses_novnc(client, upstream):
+    with patch.object(main, "proxmox_get", side_effect=[upstream]) as get:
+        result = client.get("/open?node=node-a&vmid=101&vtype=qemu")
+    assert get.call_count == 1
+    query = parse_qs(urlparse(result.location).query)
+    assert query["novnc"] == ["1"]
+    assert query["node"] == ["node-a"]
+
+
+@pytest.mark.parametrize("vtype,mode,override", [("lxc", "xtermjs", ""), ("lxc", "xtermjs", "novnc"),
+                                                ("qemu", "novnc", "novnc")])
+def test_existing_consoles_preserved(client, vtype, mode, override):
+    with patch.object(main, "proxmox_get") as get:
+        result = client.get("/open", query_string={"node": "node-b", "vmid": "101", "vtype": vtype,
+                                                 "console": override})
+    get.assert_not_called()
     url = urlparse(result.location)
     assert url.path == "/proxmox/"
     assert parse_qs(url.query)[mode] == ["1"]

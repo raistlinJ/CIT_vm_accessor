@@ -1,6 +1,6 @@
 # AccessForge
 
-AccessForge signs into the Proxmox VE API and opens browser consoles across your cluster. QEMU VMs default to embedded SPICE; containers use Proxmox's xterm.js terminal. Users do not install a native client.
+AccessForge signs into the Proxmox VE API and opens browser consoles across your cluster. QEMU VMs automatically use embedded SPICE when their display is SPICE/QXL and clipboard is Default; other VMs use noVNC. Containers use Proxmox's xterm.js terminal. Users do not install a native client.
 
 ## Features
 
@@ -20,7 +20,7 @@ AccessForge signs into the Proxmox VE API and opens browser consoles across your
 - An HTTPS reverse proxy routing `/spice/ws` to the bridge, included in the supplied deployment
 - A modern desktop browser; validate your guest workloads in the browsers you support
 
-No Proxmox packages or patches are required. AccessForge does not change VM display settings. A VM that does not support SPICE can still use the noVNC fallback.
+No Proxmox packages or patches are required. AccessForge does not change VM display settings. VMs without SPICE/QXL and Default clipboard settings automatically use noVNC.
 
 ## Docker Compose deployment
 
@@ -66,6 +66,8 @@ Use `python main.py` in production behind the reverse proxy too. It starts Waitr
 The UI is available at `http://localhost:8080`, but browser SPICE requires a same-origin reverse proxy. Use the `/spice/ws` location in `deploy/proxmox.conf` as a reference. When deploying behind an HTTPS-only proxy, set `PUBLIC_SCHEME=https`. `HTTPS_CERT_FILE`/`HTTPS_KEY_FILE` do not enable TLS in Waitress; terminate TLS at the reverse proxy.
 
 ## How browser SPICE connects
+
+When opening a VM, AccessForge resolves its current cluster node and reads its current configuration (excluding pending changes). Displays `qxl`, `qxl2`, `qxl3`, and `qxl4` with no `clipboard` override select SPICE. `clipboard=vnc`, other display types, or unavailable configuration select noVNC. Detection uses the signed-in user's permissions; users without `VM.Audit` configuration access fall back to noVNC. The explicit **Use noVNC** link bypasses detection. Clipboard transfer itself still requires a working guest agent.
 
 ```text
 Browser -- HTTPS/WebSocket --> AccessForge/Nginx
@@ -130,7 +132,7 @@ The clipboard panel is always available inside the left-edge controls drawer. Sh
 
 - `GET/POST /login` — authenticate against Proxmox
 - `GET /` — VM list and console launcher
-- `GET/POST /open` — VM SPICE or container xterm.js; `console=novnc` explicitly selects the VM fallback
+- `GET/POST /open` — automatically selects VM SPICE/noVNC from display and clipboard settings, or container xterm.js; `console=novnc` explicitly selects the VM fallback
 - `GET /console/spice/<vmid>` — browser SPICE console
 - `POST /api/spice/<vmid>/session` — authorized, fresh SPICE connection details
 - `/spice/ws` — WebSocket route served by the bridge through Nginx
