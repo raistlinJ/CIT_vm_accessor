@@ -74,10 +74,13 @@
     <p id="display-notice" role="status" aria-live="polite" hidden></p>
     <div id="spice-viewport"><div id="spice-screen"></div></div>
   </main>
-  <dialog id="power-notice" aria-labelledby="power-notice-title" aria-describedby="power-notice-message">
-    <h2 id="power-notice-title">Please wait</h2>
-    <p id="power-notice-message">Please wait at least 60 seconds for the VM to fully start or restart.</p>
-    <form method="dialog"><button type="submit" autofocus>OK</button></form>
+  <dialog id="power-confirm" aria-labelledby="power-confirm-title" aria-describedby="power-confirm-message">
+    <h2 id="power-confirm-title"></h2>
+    <p id="power-confirm-message"></p>
+    <form method="dialog">
+      <button type="submit" value="cancel" autofocus>Cancel</button>
+      <button id="power-confirm-submit" type="submit" value="confirm"></button>
+    </form>
   </dialog>
   <div id="message-div" hidden></div>
   <div id="debug-div" hidden></div>

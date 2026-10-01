@@ -502,12 +502,20 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.clock.install()
                 for label, status_text in [("Start VM", "VM started."), ("Restart VM", "VM restarted.")]:
                     channel_count = len(authenticated_channels)
+                    action_count = len(power_actions)
                     page.get_by_role("button", name=label, exact=True).click()
-                    expect(page.get_by_role("dialog", name="Please wait")).to_be_visible()
-                    expect(page.locator("#power-notice-message")).to_have_text(
-                        "Please wait at least 60 seconds for the VM to fully start or restart.")
-                    page.screenshot(path=str(tmp_path / "spice-power-notice.png"))
-                    page.get_by_role("button", name="OK", exact=True).click()
+                    expect(page.get_by_role("dialog", name=f"{label}?")).to_be_visible()
+                    expect(page.locator("#power-confirm-message")).to_have_text(
+                        f"{label.split()[0]}ing the VM can take at least 60 seconds. Continue?")
+                    assert len(power_actions) == action_count
+                    page.screenshot(path=str(tmp_path / "spice-power-confirm.png"))
+                    page.get_by_role("button", name="Cancel", exact=True).click()
+                    expect(page.locator("#power-confirm")).to_be_hidden()
+                    expect(page.get_by_role("button", name=label, exact=True)).to_be_enabled()
+                    expect(page.locator("#power-cooldown")).to_be_hidden()
+                    assert len(power_actions) == action_count
+                    page.get_by_role("button", name=label, exact=True).click()
+                    page.locator("#power-confirm-submit").click()
                     expect(page.get_by_role("button", name="Start VM", exact=True)).to_be_disabled()
                     expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_disabled()
                     expect(page.locator("#power-status")).to_have_text(status_text, timeout=10000)
@@ -528,7 +536,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 assert power_actions == ["start", "reboot"]
                 vm_state["deny_power"] = True
                 page.get_by_role("button", name="Restart VM", exact=True).click()
-                page.get_by_role("button", name="OK", exact=True).click()
+                page.locator("#power-confirm-submit").click()
                 expect(page.locator("#power-status")).to_contain_text("VM.PowerMgmt")
                 expect(page.locator("#controls-alert")).to_be_visible()
                 page.get_by_role("button", name="Close console controls").click()

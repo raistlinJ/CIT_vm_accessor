@@ -92,7 +92,7 @@ The vendored client is pinned in `static/vendor/spice-html5/UPSTREAM.md`; assets
 
 The SPICE drawer includes **Start VM** and **Restart VM**. Restart requests a graceful Proxmox reboot, which applies pending VM configuration changes. Actions use the signed-in user's `VM.PowerMgmt` permission and resolve the VM's current cluster node. The drawer shows task progress and reconnects the console after completion, unless you manually reconnect while the task runs. If an action fails or takes longer than three minutes, check its status in Proxmox before retrying. When connecting to a stopped VM, the display explains that the machine is off and directs you to **Start VM**.
 
-The popup's **Start VM** and **Restart VM** buttons share a 10-second cooldown after each click and stay disabled while the power task is pending. A notice asks users to wait at least 60 seconds for a full start or restart; dismissing it does not cancel the operation.
+The popup's **Start VM** and **Restart VM** buttons first show a confirmation dialog explaining that the action can take at least 60 seconds. **Cancel** sends no request. Confirming sends the request and starts a shared 10-second cooldown; the buttons stay disabled while the power task is pending.
 
 ## Screenshots
 

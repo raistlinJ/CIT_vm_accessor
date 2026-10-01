@@ -17,7 +17,10 @@ const startVM = document.getElementById('start-vm');
 const restartVM = document.getElementById('restart-vm');
 const powerStatus = document.getElementById('power-status');
 const powerCooldown = document.getElementById('power-cooldown');
-const powerNotice = document.getElementById('power-notice');
+const powerConfirm = document.getElementById('power-confirm');
+const powerConfirmTitle = document.getElementById('power-confirm-title');
+const powerConfirmMessage = document.getElementById('power-confirm-message');
+const powerConfirmSubmit = document.getElementById('power-confirm-submit');
 const reconnect = document.getElementById('reconnect');
 const keys = document.getElementById('ctrl-alt-del');
 const fallback = document.getElementById('fallback');
@@ -44,6 +47,7 @@ let powerRequest = null;
 let connectionIntent = 0;
 let powerCooldownUntil = 0;
 let powerCooldownTimer;
+let pendingPowerAction = null;
 let fileDownloadController = null;
 
 function showFileStatus(element, message, error = false) {
@@ -140,7 +144,7 @@ if (fileDownload) {
 function updatePowerButtons() {
   clearTimeout(powerCooldownTimer);
   const remaining = Math.max(0, Math.ceil((powerCooldownUntil - performance.now()) / 1000));
-  startVM.disabled = restartVM.disabled = Boolean(powerRequest) || remaining > 0;
+  startVM.disabled = restartVM.disabled = Boolean(powerRequest) || powerConfirm.open || remaining > 0;
   powerCooldown.hidden = remaining === 0;
   powerCooldown.textContent = remaining ? `Please wait ${remaining}s before another power request.` : '';
   if (remaining) powerCooldownTimer = setTimeout(updatePowerButtons, 250);
@@ -153,7 +157,6 @@ async function powerVM(action) {
   const intent = connectionIntent;
   powerCooldownUntil = performance.now() + 10000;
   updatePowerButtons();
-  powerNotice.showModal();
   powerStatus.hidden = false;
   powerStatus.dataset.error = 'false';
   updateDrawerIndicator();
@@ -201,8 +204,27 @@ async function powerVM(action) {
   }
 }
 
-startVM.addEventListener('click', () => powerVM('start'));
-restartVM.addEventListener('click', () => powerVM('restart'));
+function confirmPowerVM(action) {
+  if (powerRequest || powerConfirm.open || performance.now() < powerCooldownUntil) return;
+  pendingPowerAction = action;
+  powerConfirm.returnValue = '';
+  const verb = action === 'start' ? 'Start' : 'Restart';
+  powerConfirmTitle.textContent = `${verb} VM?`;
+  powerConfirmMessage.textContent = `${verb}ing the VM can take at least 60 seconds. Continue?`;
+  powerConfirmSubmit.textContent = `${verb} VM`;
+  powerConfirm.showModal();
+  updatePowerButtons();
+}
+
+powerConfirm.addEventListener('close', () => {
+  const action = pendingPowerAction;
+  pendingPowerAction = null;
+  if (powerConfirm.returnValue === 'confirm' && action) powerVM(action);
+  updatePowerButtons();
+});
+
+startVM.addEventListener('click', () => confirmPowerVM('start'));
+restartVM.addEventListener('click', () => confirmPowerVM('restart'));
 
 function setControlsOpen(open) {
   consoleControls.hidden = !open;
