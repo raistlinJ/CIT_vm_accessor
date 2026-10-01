@@ -24,6 +24,8 @@ const reconnect = document.getElementById('reconnect');
 const keys = document.getElementById('ctrl-alt-del');
 const fallback = document.getElementById('fallback');
 const clipboardStatus = document.getElementById('clipboard-status');
+const clipboardPanel = document.getElementById('clipboard-panel');
+const filePanel = document.getElementById('file-panel');
 const clipboardSend = document.getElementById('clipboard-send');
 const clipboardReceive = document.getElementById('clipboard-receive');
 const clipboardSendButton = document.getElementById('clipboard-send-button');
@@ -234,6 +236,16 @@ function setControlsOpen(open) {
 }
 
 function updateDrawerIndicator() {
+  const clipboardError = clipboardStatus.dataset.error === 'true';
+  const fileError = [fileUploadStatus, fileDownloadStatus].some(element => element?.dataset.error === 'true');
+  clipboardPanel.dataset.error = String(clipboardError);
+  clipboardPanel.querySelector('summary').setAttribute('aria-label',
+    `Clipboard${clipboardError ? ' — attention needed' : ''}`);
+  if (filePanel) {
+    filePanel.dataset.error = String(fileError);
+    filePanel.querySelector('summary').setAttribute('aria-label',
+      `File Transfer${fileError ? ' — attention needed' : ''}`);
+  }
   const error = [status, powerStatus, clipboardStatus, fileUploadStatus, fileDownloadStatus]
     .some(element => element?.dataset.error === 'true');
   controlsToggle.dataset.error = String(error);

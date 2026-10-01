@@ -275,6 +275,10 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 display_bounds = page.locator("#spice-area").bounding_box()
                 page.get_by_role("button", name="Open console controls").click()
                 expect(page.locator("#file-panel")).to_be_visible()
+                expect(page.locator("#file-panel > summary")).to_have_text("File Transfer")
+                expect(page.locator("#file-upload")).to_be_hidden()
+                page.locator("#file-panel > summary").click()
+                expect(page.locator("#file-upload")).to_be_visible()
                 if agent_enabled:
                     expect(page.locator("#file-upload")).to_be_enabled()
                     page.locator("#file-upload").set_input_files({
@@ -294,6 +298,8 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 assert downloaded_file.read_bytes() == guest_file
                 assert file_reads == [0, 5, 10, 15]
                 file_reads.clear()
+                page.locator("#file-panel > summary").click()
+                expect(page.locator("#file-download-path")).to_be_hidden()
                 expect(page.get_by_role("button", name="Re-Fit Window", exact=True)).to_be_visible()
                 expect(page.locator("#fit-window")).to_have_count(0)
                 assert page.locator("#spice-area").bounding_box() == display_bounds
@@ -423,6 +429,10 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.wait_for_function("() => document.querySelector('canvas').getBoundingClientRect().width === 640")
                 page.get_by_role("button", name="Open console controls").click()
                 expect(page.locator("#clipboard-panel")).to_be_visible()
+                expect(page.locator("#clipboard-panel > summary")).to_have_text("Clipboard")
+                expect(page.locator("#clipboard-send")).to_be_hidden()
+                page.locator("#clipboard-panel > summary").click()
+                expect(page.locator("#clipboard-send")).to_be_visible()
                 page.wait_for_function(fitted)
                 if agent_enabled:
                     expect(page.locator("#clipboard-send-button")).to_be_enabled()
@@ -457,6 +467,12 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     page.locator("#clipboard-send").fill("é" * (512 * 1024 + 1))
                     page.get_by_role("button", name="Send to VM", exact=True).click()
                     expect(page.locator("#clipboard-status")).to_contain_text("limited to 1 MiB")
+                    expect(page.locator("#clipboard-panel")).to_have_attribute("data-error", "true")
+                    expect(page.locator("#clipboard-panel > summary")).to_have_attribute(
+                        "aria-label", "Clipboard — attention needed")
+                    page.locator("#clipboard-panel > summary").click()
+                    expect(page.locator("#clipboard-status")).to_be_hidden()
+                    page.locator("#clipboard-panel > summary").click()
                     page.locator("#clipboard-send").fill("draft cleared on disconnect")
                 else:
                     expect(page.locator("#clipboard-send-button")).to_be_disabled()

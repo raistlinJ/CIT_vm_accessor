@@ -31,7 +31,15 @@ button:disabled { opacity: .45; cursor: default; }
 #spice-screen { position: absolute; top: 0; left: 0; transform-origin: top left; }
 #spice-screen canvas { display: block; }
 [hidden] { display: none !important; }
-#clipboard-panel { padding: 0 16px 12px; background: #192332; }
+#clipboard-panel, #file-panel { padding: 0 16px 12px; border-top: 1px solid #46566b; background: #192332; }
+#clipboard-panel:not([open]), #file-panel:not([open]) { padding-bottom: 0; }
+#clipboard-panel > summary, #file-panel > summary { display: flex; align-items: center; justify-content: space-between; margin: 0 -16px; padding: 12px 16px; cursor: pointer; font-weight: 600; list-style: none; }
+#clipboard-panel > summary::-webkit-details-marker, #file-panel > summary::-webkit-details-marker { display: none; }
+#clipboard-panel > summary::after, #file-panel > summary::after { content: '▸'; }
+#clipboard-panel[open] > summary::after, #file-panel[open] > summary::after { content: '▾'; }
+#clipboard-panel[data-error="true"] > summary, #file-panel[data-error="true"] > summary { color: #ffc1b5; }
+#clipboard-panel[data-error="true"] > summary::after, #file-panel[data-error="true"] > summary::after { content: '! ▸'; }
+#clipboard-panel[data-error="true"][open] > summary::after, #file-panel[data-error="true"][open] > summary::after { content: '! ▾'; }
 #clipboard-status { color: #aabbd0; }
 #clipboard-status[data-error="true"] { color: #ffc1b5; }
 .clipboard-columns { display: grid; grid-template-columns: 1fr; gap: 16px; }
@@ -39,8 +47,6 @@ button:disabled { opacity: .45; cursor: default; }
 .clipboard-columns textarea { width: 100%; resize: vertical; min-height: 70px; max-height: 220px; padding: 8px; font: 13px ui-monospace, monospace; border: 1px solid #46566b; border-radius: 5px; background: #10151e; color: #e6edf7; }
 .clipboard-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .clipboard-help { color: #aabbd0; font-size: 12px; margin-bottom: 0; }
-#file-panel { padding: 8px 16px 16px; border-top: 1px solid #46566b; }
-#file-panel h2 { margin: 8px 0 16px; font-size: 16px; }
 #file-panel label { display: block; margin: 12px 0 6px; }
 #file-panel input[type="file"], #file-panel input[type="text"] { display: block; width: 100%; font: inherit; color: #e6edf7; }
 #file-panel input[type="text"] { padding: 8px; border: 1px solid #46566b; border-radius: 5px; background: #10151e; }

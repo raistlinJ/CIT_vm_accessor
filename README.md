@@ -100,7 +100,7 @@ Use **Take screenshot** in the controls drawer to download a PNG of the VM displ
 
 ## Clipboard
 
-The clipboard panel is always available inside the left-edge controls drawer. Sharing requires a running SPICE guest agent inside the VM; users do not install anything on their own computers.
+Open the collapsible **Clipboard** section in the left-edge controls drawer to share text. Sharing requires a running SPICE guest agent inside the VM; users do not install anything on their own computers.
 
 - **Computer → VM:** paste into the outgoing text box, or click **Paste from computer**, then **Send to VM**. Paste normally inside the guest application. Sending sets the guest clipboard; it does not simulate typing or automatically paste into the focused application.
 - **VM → computer:** copy text inside the VM. It appears in the incoming text box. Click **Copy from VM**, or select the text and copy it manually.
@@ -111,7 +111,7 @@ The clipboard panel is always available inside the left-edge controls drawer. Sh
 
 ## VM file transfer
 
-Set `ENABLE_VM_FILE_UPLOAD=true` to send files from the user's browser computer to the VM, `ENABLE_VM_FILE_DOWNLOAD=true` to retrieve files from the VM, or both. Set them in Compose or the Compose `.env` file and recreate the app container. Both default to `false`; the drawer shows only the enabled controls. The app container does not read files from the Proxmox host filesystem. The former `ENABLE_VM_FILE_TRANSFER` setting remains a fallback for either direction that does not have its own setting, so existing deployments keep their behavior.
+Set `ENABLE_VM_FILE_UPLOAD=true` to send files from the user's browser computer to the VM, `ENABLE_VM_FILE_DOWNLOAD=true` to retrieve files from the VM, or both. Set them in Compose or the Compose `.env` file and recreate the app container. Both default to `false`; open the collapsible **File Transfer** section in the drawer to see the enabled controls. The app container does not read files from the Proxmox host filesystem. The former `ENABLE_VM_FILE_TRANSFER` setting remains a fallback for either direction that does not have its own setting, so existing deployments keep their behavior.
 
 Uploads use the existing SPICE guest-agent file transfer protocol. The agent decides where transferred files are saved in the guest; the browser shows progress and completion. Uploads are limited to 512 MiB per file.
 

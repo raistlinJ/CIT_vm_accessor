@@ -28,7 +28,8 @@
       <div id="status" role="status" aria-live="polite">Connecting…</div>
       <div id="power-status" role="status" aria-live="polite" hidden></div>
       <p id="power-cooldown" hidden></p>
-      <section id="clipboard-panel" aria-label="Clipboard">
+      <details id="clipboard-panel">
+        <summary>Clipboard</summary>
         <p id="clipboard-status" role="status" aria-live="polite">Clipboard sharing requires a connected SPICE guest agent.</p>
         <div class="clipboard-columns">
           <div>
@@ -48,10 +49,10 @@
           </div>
         </div>
         <p class="clipboard-help">Text only, up to 1 MiB. After sending, paste inside the VM. If browser clipboard access is blocked, use the text boxes to paste or copy manually.</p>
-      </section>
+      </details>
       {% if file_upload_enabled or file_download_enabled %}
-      <section id="file-panel" aria-label="VM file transfer">
-        <h2>Files</h2>
+      <details id="file-panel">
+        <summary>File Transfer</summary>
         {% if file_upload_enabled %}
         <label for="file-upload">Send files from this computer to the VM</label>
         <input id="file-upload" type="file" multiple disabled>
@@ -65,7 +66,7 @@
         <button id="file-download" type="button">Download from VM</button>
         <p id="file-download-status" role="status" aria-live="polite">Enter the full path inside the VM. Downloads require a QEMU guest agent and file-read permission.</p>
         {% endif %}
-      </section>
+      </details>
       {% endif %}
     </aside>
   </div>
