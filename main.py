@@ -1642,23 +1642,36 @@ def console_file_read(vmid):
     result = proxmox_get(f"/nodes/{node}/qemu/{vmid}/agent/file-read",
                          params={"file": path, "offset": offset, "count": 1024 * 1024, "decode": 0},
                          cookies=cookies, headers=headers, timeout=30)
+    legacy = result.status_code == 400 and offset == 0
+    if legacy:
+      # Older Proxmox releases accept only `file` and return decoded bytes as
+      # JSON-escaped Latin-1 characters, with a fixed 16 MiB read limit.
+      result = proxmox_get(f"/nodes/{node}/qemu/{vmid}/agent/file-read",
+                           params={"file": path}, cookies=cookies, headers=headers, timeout=30)
     if result.status_code in (401, 403):
-      return jsonify(error="Check your VM.GuestAgent.FileRead permission."), result.status_code
+      return jsonify(error="Check the guest-agent file-read permission (VM.Monitor on Proxmox 8; VM.GuestAgent.FileRead on Proxmox 9)."), result.status_code
+    if result.status_code >= 400:
+      logger.warning("VM file-read upstream returned HTTP %s for VM %s", result.status_code, vmid)
+      return jsonify(error=f"Proxmox returned HTTP {result.status_code} while reading the VM file. Check the guest path and QEMU guest agent."), 502
     result.raise_for_status()
     chunk = result.json()["data"]
-    content = base64.b64decode(chunk["content"], validate=True)
-    if (len(content) > 1024 * 1024 or
+    content = chunk["content"].encode("latin-1") if legacy else base64.b64decode(chunk["content"], validate=True)
+    if (len(content) > (16 if legacy else 1) * 1024 * 1024 or
         chunk.get("bytes-read") != len(content) or
         (chunk.get("truncated") and not content)):
       raise ValueError("Invalid guest-agent file response")
+    if legacy and chunk.get("truncated"):
+      return jsonify(error="This Proxmox version cannot download files larger than 16 MiB through the guest-agent API."), 413
     reply = make_response(content)
     reply.headers["Content-Type"] = "application/octet-stream"
     reply.headers["Cache-Control"] = "no-store"
     reply.headers["X-Content-Type-Options"] = "nosniff"
     reply.headers["X-File-More"] = "true" if chunk.get("truncated") else "false"
+    if legacy:
+      reply.headers["X-File-Legacy"] = "true"
     return reply
-  except (requests.RequestException, ValueError, KeyError, TypeError, binascii.Error):
-    logger.warning("VM file-read failed for VM %s", vmid)
+  except (requests.RequestException, ValueError, KeyError, TypeError, UnicodeError, binascii.Error) as exc:
+    logger.warning("VM file-read failed for VM %s: %s", vmid, type(exc).__name__)
     return jsonify(error="Could not read the VM file. Check the path, QEMU guest agent, and Proxmox task log."), 502
 
 

@@ -104,7 +104,8 @@ if (fileDownload) {
           throw new Error('The file service returned an invalid response.');
         }
         const bytes = await response.arrayBuffer();
-        if (bytes.byteLength > 1024 * 1024 || (!bytes.byteLength && response.headers.get('X-File-More') === 'true')) {
+        const chunkLimit = response.headers.get('X-File-Legacy') === 'true' ? 16 : 1;
+        if (bytes.byteLength > chunkLimit * 1024 * 1024 || (!bytes.byteLength && response.headers.get('X-File-More') === 'true')) {
           throw new Error('The VM returned an invalid file chunk.');
         }
         if (offset + bytes.byteLength > 64 * 1024 * 1024) {

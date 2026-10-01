@@ -64,7 +64,7 @@
         <label for="file-download-path">Download a file from the VM</label>
         <input id="file-download-path" type="text" placeholder="/home/user/file.txt" autocomplete="off" spellcheck="false">
         <button id="file-download" type="button">Download from VM</button>
-        <p id="file-download-status" role="status" aria-live="polite">Enter the full path inside the VM. Downloads require a QEMU guest agent and VM.GuestAgent.FileRead permission.</p>
+        <p id="file-download-status" role="status" aria-live="polite">Enter the full path inside the VM. Downloads require a QEMU guest agent and file-read permission.</p>
         {% endif %}
       </section>
       {% endif %}
