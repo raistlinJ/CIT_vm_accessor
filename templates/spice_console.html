@@ -24,17 +24,6 @@
         <button id="take-screenshot" type="button" disabled title="Download the VM display as a full-resolution PNG">Take screenshot</button>
         <a id="fallback" {% if fallback %}href="{{ fallback }}"{% else %}hidden{% endif %}>Use noVNC</a>
       </nav>
-      <details id="scroll-panel">
-        <summary>Scrolling</summary>
-        <label class="scroll-setting" for="scroll-speed">Scroll speed
-          <select id="scroll-speed">
-            <option value="0.25">Very slow</option>
-            <option value="0.5">Slow</option>
-            <option value="1" selected>Normal</option>
-            <option value="2">Fast</option>
-          </select>
-        </label>
-      </details>
       <div id="status" role="status" aria-live="polite">Connecting…</div>
       <div id="power-status" role="status" aria-live="polite" hidden></div>
       <p id="power-cooldown" hidden></p>
@@ -78,6 +67,17 @@
         {% endif %}
       </details>
       {% endif %}
+      <details id="scroll-panel">
+        <summary>Scrolling</summary>
+        <label class="scroll-setting" for="scroll-speed">Scroll speed
+          <select id="scroll-speed">
+            <option value="0.25">Very slow</option>
+            <option value="0.5">Slow</option>
+            <option value="1" selected>Normal</option>
+            <option value="2">Fast</option>
+          </select>
+        </label>
+      </details>
     </aside>
   </div>
   <main id="spice-area" aria-label="Virtual machine display">
