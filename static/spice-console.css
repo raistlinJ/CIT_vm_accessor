@@ -56,3 +56,11 @@ button:disabled { opacity: .45; cursor: default; }
 #file-panel p { color: #aabbd0; font-size: 12px; line-height: 1.4; }
 #file-panel p[data-error="true"] { color: #ffc1b5; }
 #spice-xfer-area { overflow-wrap: anywhere; }
+.network-graph-header { display: flex; justify-content: space-between; gap: 8px; margin: 12px 0 5px; font-size: 11px; color: #aabbd0; }
+.network-receive-key { color: #65d6ac; }
+.network-send-key { color: #79b8ff; }
+#network-graph { display: block; width: 100%; height: 64px; background: #10151e; border-radius: 5px; }
+#network-graph path, #network-graph polyline { fill: none; vector-effect: non-scaling-stroke; }
+.network-grid { stroke: #46566b; stroke-width: .5; }
+.network-received-line { stroke: #65d6ac; stroke-width: 1.5; }
+.network-sent-line { stroke: #79b8ff; stroke-width: 1.5; }

@@ -396,6 +396,12 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.get_by_role("button", name="Re-Fit Window", exact=True).click()
                 page.wait_for_function(fitted)
                 page.wait_for_function("() => !document.getElementById('network-total').textContent.includes('Received 0 B') && !document.getElementById('network-total').textContent.includes('Sent 0 B')")
+                expect(page.locator("#network-graph")).to_be_visible()
+                for direction in ("received", "sent"):
+                    points = page.locator(f"#network-graph-{direction}").get_attribute("points").split()
+                    assert 2 <= len(points) <= 60
+                    assert all(0 <= float(point.split(",")[1]) <= 63 for point in points)
+                page.locator("#network-panel").screenshot(path=str(tmp_path / "network-graph.png"))
                 assert page.evaluate("localStorage.getItem('spice-network-enabled')") == "true"
                 page.locator("#network-enabled").uncheck()
                 expect(page.locator("#network-readout")).to_be_hidden()

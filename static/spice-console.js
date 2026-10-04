@@ -9,8 +9,22 @@ const networkMetrics = new ConsoleNetworkMetrics();
 const networkToggle = document.getElementById('network-enabled');
 const networkReadout = document.getElementById('network-readout');
 let networkTimer;
+const networkHistory = [];
 function renderNetworkMetrics() {
   const sample = networkMetrics.sample();
+  networkHistory.push([sample.receivedRate, sample.sentRate]);
+  if (networkHistory.length > 60) networkHistory.shift();
+  const peak = Math.max(0, ...networkHistory.flat());
+  const scale = Math.max(1, peak);
+  for (const [index, direction] of ['received', 'sent'].entries()) {
+    const points = networkHistory.map((rates, i) => {
+      const x = (60 - networkHistory.length + i) * 240 / 59;
+      const y = 63 - rates[index] / scale * 60;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    document.getElementById(`network-graph-${direction}`).setAttribute('points', points.join(' '));
+  }
+  document.getElementById('network-graph-scale').textContent = `${formatNetworkBytes(peak)}/s`;
   document.getElementById('network-received').textContent = `${formatNetworkBytes(sample.receivedRate)}/s`;
   document.getElementById('network-sent').textContent = `${formatNetworkBytes(sample.sentRate)}/s`;
   document.getElementById('network-total').textContent = `Received ${formatNetworkBytes(sample.received)} · Sent ${formatNetworkBytes(sample.sent)}`;
@@ -18,6 +32,7 @@ function renderNetworkMetrics() {
 function updateNetworkMetrics() {
   clearInterval(networkTimer);
   networkMetrics.enable(networkToggle.checked);
+  networkHistory.length = 0;
   networkReadout.hidden = !networkToggle.checked;
   if (networkToggle.checked) {
     renderNetworkMetrics();
@@ -346,6 +361,7 @@ function stop() {
   connection = null;
   old?.stop();
   networkMetrics.reset();
+  networkHistory.length = 0;
   if (networkToggle.checked) renderNetworkMetrics();
   screen.replaceChildren();
   lastGuestSize = null;
