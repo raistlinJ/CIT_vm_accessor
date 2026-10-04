@@ -117,6 +117,16 @@ Set `ENABLE_VM_FILE_UPLOAD=true` to send files from the user's browser computer 
 
 Uploads use the existing SPICE guest-agent file transfer protocol. The agent decides where transferred files are saved in the guest; the browser shows progress and completion. Uploads are limited to 512 MiB per file.
 
+Both directions also require an explicit per-VM policy in Proxmox Notes, managed by SCE-web:
+
+```json
+{"AccessForge": {"file_upload": true, "file_download": false}}
+```
+
+Global Compose switches are the final authority: VM notes cannot enable a globally disabled direction. Missing, duplicate, malformed, or unreadable policy disables transfers. The console session response controls the popup's enabled controls. Downloads reread the policy before every file chunk. The SPICE bridge inspects client messages, checks policy before upload starts and periodically during upload traffic (a one-second recheck interval), and closes the connection if the policy denies transfer. A modified browser client cannot bypass this by re-enabling the file input. Reconnect after changing an initially disabled upload policy to enabled.
+
+`GET /api/file-transfer/capabilities` exposes only the global upload/download booleans. Configure SCE-web's `CIT_VM_ACCESSOR_URL` with this app's origin so its controls can respect these switches. This policy governs AccessForge transfers; grant VM-note editing only to users authorized to change the policy. Clipboard text and external clients with their own Proxmox access are separate capabilities.
+
 Downloads use Proxmox's QEMU guest-agent `file-read` API. Enable the QEMU guest agent in the VM's Proxmox options, install and start it inside the guest, and grant the AccessForge login file-read permission (`VM.Monitor` on Proxmox 8; `VM.GuestAgent.FileRead` or `VM.GuestAgent.Unrestricted` on Proxmox 9). Enter an absolute path *inside the guest*, such as `/home/user/report.txt` or `C:\Users\user\report.txt`. The guest agent must be able to read that file. Proxmox may run it with elevated guest privileges, so grant file-read permission only to users authorized to retrieve guest files.
 
 AccessForge first requests 1 MiB chunks using Proxmox's newer `count`, `offset`, and `decode` parameters; downloads are limited to 64 MiB on nodes that support them. If the node rejects those parameters with HTTP 400, AccessForge retries the older `file`-only API, which reads the whole file at once and is limited to 16 MiB. A larger file on an older node produces a size-limit error instead of a partial download. File data is held in the browser until the download starts and is not stored by AccessForge. [Proxmox guest-agent API](https://github.com/proxmox/qemu-server/blob/master/src/PVE/API2/Qemu/Agent.pm), [Proxmox file-read compatibility changes](https://lore.proxmox.com/pve-devel/20260226123122.60418-1-info@ebner-markus.de/), [SPICE file transfer](https://www.spice-space.org/api/spice-gtk/SpiceFileTransferTask.html).

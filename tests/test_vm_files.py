@@ -64,7 +64,7 @@ def test_legacy_switch_falls_back_per_direction(client, monkeypatch):
 def test_reads_binary_chunk_from_current_cluster_node(client, monkeypatch):
     monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
     chunk = b"\x00\xffcaf\xc3\xa9\n"
-    with patch.object(main, "proxmox_get", side_effect=[vm_resources(), response({
+    with patch.object(main, "proxmox_get", side_effect=[vm_resources(), response({"description": '{"AccessForge":{"file_upload":true,"file_download":true}}'}), response({
         "content": base64.b64encode(chunk).decode(), "bytes-read": len(chunk), "truncated": 1,
     })]) as get:
         result = read_request(client, offset=17)
@@ -117,7 +117,7 @@ def test_file_read_enforces_upstream_permission_and_validates_data(client, monke
         (response({"content": "not base64", "bytes-read": 10}), 502),
         (response({"content": "", "bytes-read": 0, "truncated": 1}), 502),
     ]:
-        with patch.object(main, "proxmox_get", side_effect=[vm_resources(), upstream]):
+        with patch.object(main, "proxmox_get", side_effect=[vm_resources(), response({"description": '{"AccessForge":{"file_download":true}}'}), upstream]):
             assert read_request(client).status_code == expected
 
 

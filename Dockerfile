@@ -24,7 +24,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt \
     && python -m pip check
 
 # Copy application (single-file app plus static assets)
-COPY main.py spice_bridge.py ./
+COPY main.py spice_bridge.py spice_policy.py transfer_policy.py ./
 COPY static ./static
 COPY templates ./templates
 

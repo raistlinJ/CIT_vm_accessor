@@ -18,6 +18,7 @@ from jinja2 import ChoiceLoader, DictLoader, FileSystemLoader
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.http import parse_cookie
 from spice_bridge import SpiceBridge, Target, session_owner
+from transfer_policy import parse_transfer_policy
 import concurrent.futures
 import re
 import html
@@ -1493,6 +1494,28 @@ def vm_file_transfer_enabled(direction):
   return setting.strip().lower() == "true"
 
 
+@app.route("/api/file-transfer/capabilities")
+def file_transfer_capabilities():
+  result = jsonify(upload=vm_file_transfer_enabled("UPLOAD"),
+                   download=vm_file_transfer_enabled("DOWNLOAD"))
+  result.headers["Cache-Control"] = "no-store"
+  return result
+
+
+def vm_transfer_policy(node, vmid, cookies, headers, fetch=None):
+  """Fail closed, using the signed-in user's current configuration access."""
+  try:
+    config = (fetch or proxmox_get)(f"/nodes/{node}/qemu/{vmid}/config", params={"current": 1},
+                         cookies=cookies, headers=headers, timeout=10)
+    config.raise_for_status()
+    policy = parse_transfer_policy(config.json()["data"].get("description"))
+    return {key: enabled and vm_file_transfer_enabled(direction) for key, direction, enabled in
+            (("file_upload", "UPLOAD", policy["file_upload"]),
+             ("file_download", "DOWNLOAD", policy["file_download"]))}
+  except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError):
+    return {"file_upload": False, "file_download": False}
+
+
 def validate_console_request():
   # Require a page-issued token as well as a same-origin browser request. This
   # app allows iframe embedding, so cookies alone don't prevent console CSRF.
@@ -1639,6 +1662,8 @@ def console_file_read(vmid):
       raise ValueError("Invalid VM node")
     if vm.get("status") != "running":
       return jsonify(error="Start the VM before downloading a file."), 409
+    if not vm_transfer_policy(node, vmid, cookies, headers)["file_download"]:
+      return jsonify(error="File downloads are disabled for this VM or its policy cannot be read."), 403
     result = proxmox_get(f"/nodes/{node}/qemu/{vmid}/agent/file-read",
                          params={"file": path, "offset": offset, "count": 1024 * 1024, "decode": 0},
                          cookies=cookies, headers=headers, timeout=30)
@@ -1720,9 +1745,31 @@ def spice_session(vmid):
     config = config_response.json()["data"]
     target = Target.from_config(config, proxy_host, os.environ.get("SPICE_PROXY_PORT", "3128"))
     lifetime = max(1, 110 * 60 - (time.time() - session.get("pve_login_time", time.time())))
-    token = spice_bridge.issue(target, session_owner(session["pve_ticket"]), origin, lifetime)
+    policy = vm_transfer_policy(node, vmid, cookies, headers)
+    api_base = f"https://{session.get('pve_host', PROXMOX_HOST)}:{session.get('pve_port', PROXMOX_PORT)}/api2/json"
+    api_verify = session.get("pve_verify_ssl", VERIFY_SSL)
+    def background_get(path, **kwargs):
+      # The bridge worker has no Flask request/session context.
+      return requests.get(api_base + path, verify=api_verify, **kwargs)
+    def upload_check():
+      # Resolve migration and policy afresh before new uploads and during transfers.
+      try:
+        current = background_get("/cluster/resources", params={"type": "vm"},
+                              cookies=cookies, headers=headers, timeout=10)
+        current.raise_for_status()
+        row = next(v for v in current.json()["data"] if str(v.get("vmid")) == str(vmid)
+                   and v.get("type") == "qemu")
+        current_node = row.get("node", "")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", current_node):
+          return False
+        return vm_transfer_policy(current_node, vmid, cookies, headers, fetch=background_get)["file_upload"]
+      except (requests.RequestException, ValueError, KeyError, TypeError, StopIteration):
+        return False
+    token = spice_bridge.issue(target, session_owner(session["pve_ticket"]), origin, lifetime,
+                               upload_allowed=policy["file_upload"], upload_check=upload_check)
     result = jsonify(websocket=f"/spice/ws?token={token}", password=config["password"],
-                     title=config.get("title", f"VM {vmid}"), node=node, fallback=fallback)
+                     title=config.get("title", f"VM {vmid}"), node=node, fallback=fallback,
+                     file_upload=policy["file_upload"], file_download=policy["file_download"])
     result.headers["Cache-Control"] = "no-store"
     return result
   except RuntimeError as exc:

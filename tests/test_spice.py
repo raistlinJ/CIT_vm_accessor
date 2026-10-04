@@ -2,6 +2,7 @@ import datetime
 import errno
 import gc
 import json
+import struct
 import socket
 import socketserver
 import ssl
@@ -351,7 +352,10 @@ def test_real_connect_tls_and_multichannel_binary_relay(live_bridge, proxy):
         for ws in (main_channel, display_channel):
             assert ws.subprotocol == "binary"
             assert ws.recv(timeout=5) == b"server hello"
-            payload = bytes(range(256)) * 1024
+            payload = (struct.pack("<4sIII", b"REDQ", 2, 2, 22) +
+                       struct.pack("<IBBIII", 0, 2, 0, 1, 0, 18) + struct.pack("<I", 9) +
+                       struct.pack("<I", 1) + bytes(128) +
+                       struct.pack("<HI", 101, 262144) + bytes(range(256)) * 1024)
             ws.send(payload)
             assert read_bytes(ws, len(payload)) == payload
         assert len(proxy.authorities) == 2
@@ -457,7 +461,10 @@ def test_bridge_relays_and_shuts_down_when_native_socketpair_is_denied(certifica
         token = bridge.issue(target, "owner", "https://accessforge.test", 60)
         with websocket(f"ws://127.0.0.1:{port}/spice/ws?token={token}") as ws:
             assert ws.recv(timeout=5) == b"server hello"
-            payload = bytes(range(256)) * 1024
+            payload = (struct.pack("<4sIII", b"REDQ", 2, 2, 22) +
+                       struct.pack("<IBBIII", 0, 2, 0, 1, 0, 18) + struct.pack("<I", 9) +
+                       struct.pack("<I", 1) + bytes(128) +
+                       struct.pack("<HI", 101, 262144) + bytes(range(256)) * 1024)
             ws.send(payload)
             assert read_bytes(ws, len(payload)) == payload
             # Revocation schedules a coroutine from the Flask thread. It must

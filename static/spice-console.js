@@ -60,6 +60,8 @@ const fileDownloadPath = document.getElementById('file-download-path');
 const fileDownload = document.getElementById('file-download');
 const fileDownloadStatus = document.getElementById('file-download-status');
 let connection = null;
+let uploadAllowed = false;
+let downloadAllowed = false;
 let pending = null;
 let generation = 0;
 let resizeTimer;
@@ -86,7 +88,7 @@ if (fileUpload) {
     const files = Array.from(fileUpload.files || []);
     fileUpload.value = '';
     if (!files.length) return;
-    if (!connection?.agent_connected) {
+    if (!uploadAllowed || !connection?.agent_connected) {
       showFileStatus(fileUploadStatus, 'Sending requires a connected SPICE guest agent.', true);
       return;
     }
@@ -103,7 +105,7 @@ if (fileUpload) {
 
 if (fileDownload) {
   fileDownload.addEventListener('click', async () => {
-    if (fileDownloadController) return;
+    if (fileDownloadController || !downloadAllowed) return;
     const path = fileDownloadPath.value;
     if (!path.trim()) {
       showFileStatus(fileDownloadStatus, 'Enter the full path to a file in the VM.', true);
@@ -384,6 +386,11 @@ async function connect() {
       throw new Error('The console service is unavailable. Reload this page or sign in again.');
     }
     const config = await response.json();
+    uploadAllowed = config.file_upload === true;
+    downloadAllowed = config.file_download === true;
+    if (fileDownload) fileDownload.disabled = !downloadAllowed;
+    if (fileUploadStatus && !uploadAllowed) showFileStatus(fileUploadStatus, 'Uploads are disabled for this VM.');
+    if (fileDownloadStatus && !downloadAllowed) showFileStatus(fileDownloadStatus, 'Downloads are disabled for this VM.');
     if (attempt !== generation) return;
     pending = null;
     if (config.fallback) {
@@ -410,7 +417,7 @@ async function connect() {
       },
       onagent() {
         if (attempt !== generation) return;
-        if (fileUpload) fileUpload.disabled = false;
+        if (fileUpload) fileUpload.disabled = !uploadAllowed;
         lastGuestSize = null;
         resize();
       },
@@ -421,7 +428,7 @@ async function connect() {
         lastGuestSize = null;
         resize();
         clipboardSendButton.disabled = !ready;
-        if (fileUpload) fileUpload.disabled = !connection?.agent_connected;
+        if (fileUpload) fileUpload.disabled = !uploadAllowed || !connection?.agent_connected;
         showClipboardStatus(ready ? 'Clipboard ready. Send text to the VM or copy text inside it.' :
           'Clipboard sharing requires a connected SPICE guest agent.');
       },

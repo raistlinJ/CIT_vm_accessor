@@ -196,7 +196,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                              "bytes-read": end - offset, "truncated": end < len(guest_file)})
         assert path == "/nodes/node-b/qemu/101/config"
         assert kwargs["params"] == {"current": 1}
-        return response({"vga": "qxl,memory=128"})
+        return response({"vga": "qxl,memory=128", "description": '{"AccessForge":{"file_upload":true,"file_download":true}}'})
 
     def proxmox_post(path, **kwargs):
         if path.endswith("/spiceproxy"):
@@ -209,6 +209,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
         return response("UPID:node-b:power-task:")
 
     monkeypatch.setattr(main, "proxmox_get", proxmox_get)
+    monkeypatch.setattr(main.requests, "get", lambda url, **kwargs: proxmox_get(url.split("/api2/json", 1)[1], **kwargs))
     monkeypatch.setenv("ENABLE_VM_FILE_UPLOAD", "true")
     monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
     monkeypatch.setattr(main, "proxmox_post", proxmox_post)

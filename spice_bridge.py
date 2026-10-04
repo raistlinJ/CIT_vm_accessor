@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 from cryptography import x509
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
+from spice_policy import SpiceClientInspector, SpicePolicyError
 
 logger = logging.getLogger(__name__)
 # WebSocket debug logging includes cookies and grant URLs.
@@ -172,6 +173,8 @@ class Grant:
     connect_until: float
     expires: float
     connections: set = field(default_factory=set)
+    upload_allowed: bool = False
+    upload_check: object = None
 
 
 class SpiceBridge:
@@ -190,7 +193,7 @@ class SpiceBridge:
     def running(self):
         return self.thread is not None and self.thread.is_alive() and self.server is not None
 
-    def issue(self, target, owner, origin, lifetime):
+    def issue(self, target, owner, origin, lifetime, *, upload_allowed=False, upload_check=None):
         now = time.monotonic()
         with self.lock:
             self._prune(now)
@@ -199,7 +202,8 @@ class SpiceBridge:
                 raise RuntimeError("Too many open consoles. Close a console and try again.")
             token = secrets.token_urlsafe(32)
             # QEMU expires newly issued SPICE passwords after 30 seconds.
-            self.grants[token] = Grant(target, owner, origin, now + 25, now + lifetime)
+            self.grants[token] = Grant(target, owner, origin, now + 25, now + lifetime,
+                                       upload_allowed=upload_allowed, upload_check=upload_check)
         return token
 
     def _prune(self, now):
@@ -246,12 +250,22 @@ class SpiceBridge:
                     await websocket.send(data)
 
             async def to_vm():
+                inspector = SpiceClientInspector()
+                checked_at = -float("inf")
                 async for data in websocket:
                     if not isinstance(data, bytes):
                         await websocket.close(1003, "Binary SPICE frames required")
                         return
-                    writer.write(data)
-                    await writer.drain()
+                    for frame, upload, start in inspector.feed(data):
+                        if upload:
+                            if not grant.upload_allowed:
+                                raise SpicePolicyError("VM file uploads are disabled")
+                            if start or time.monotonic() - checked_at >= 1:
+                                if grant.upload_check is None or not await asyncio.to_thread(grant.upload_check):
+                                    raise SpicePolicyError("VM file uploads are disabled")
+                                checked_at = time.monotonic()
+                        writer.write(frame)
+                        await writer.drain()
 
             tasks = [asyncio.create_task(to_browser()), asyncio.create_task(to_vm())]
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -259,6 +273,8 @@ class SpiceBridge:
                 task.result()
         except ConnectionClosed:
             pass
+        except SpicePolicyError:
+            await websocket.close(1008, "SPICE traffic rejected by VM transfer policy. Reconnect the console.")
         except Exception as exc:
             # Exception messages may contain a signed proxy ticket. Log types only.
             logger.warning("SPICE tunnel failed (%s)", type(exc).__name__)
