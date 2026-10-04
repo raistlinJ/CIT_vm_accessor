@@ -70,6 +70,8 @@ The UI is available at `http://localhost:8080`, but browser SPICE requires a sam
 
 ## How browser SPICE connects
 
+The SPICE controls drawer includes a **Scrolling** section, collapsed by default, with **Scroll speed** (Very slow, Slow, Normal, Fast), saved in your browser across VMs. Small trackpad movements accumulate into guest scroll steps instead of sending a full step for every browser event. Choose Slow or Very slow to reduce sensitivity.
+
 When opening a VM, AccessForge resolves its current cluster node and reads its current configuration (excluding pending changes). Displays `qxl`, `qxl2`, `qxl3`, and `qxl4` with no `clipboard` override select SPICE. `clipboard=vnc`, other display types, or unavailable configuration select noVNC. Detection uses the signed-in user's permissions; users without `VM.Audit` configuration access fall back to noVNC. The explicit **Use noVNC** link bypasses detection. Clipboard transfer itself still requires a working guest agent.
 
 ```text

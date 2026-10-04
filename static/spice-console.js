@@ -1,6 +1,8 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
 import { ClipboardSpiceConnection } from './spice-clipboard.js';
 import { Constants } from './vendor/spice-html5/src/enums.js';
+import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
+import { WheelAccumulator } from './spice-scroll.js';
 
 const status = document.getElementById('status');
 const controlsDrawer = document.getElementById('controls-drawer');
@@ -9,6 +11,27 @@ const controlsAlert = document.getElementById('controls-alert');
 const displayNotice = document.getElementById('display-notice');
 const consoleControls = document.getElementById('console-controls');
 const screen = document.getElementById('spice-screen');
+const scrollSpeed = document.getElementById('scroll-speed');
+const wheel = new WheelAccumulator();
+try {
+  const saved = localStorage.getItem('spice-scroll-speed');
+  if (['0.25', '0.5', '1', '2'].includes(saved)) scrollSpeed.value = saved;
+} catch { /* Storage may be unavailable in private browsing. */ }
+scrollSpeed.addEventListener('change', () => {
+  wheel.reset();
+  try { localStorage.setItem('spice-scroll-speed', scrollSpeed.value); } catch { }
+});
+screen.addEventListener('wheel', (event) => {
+  const canvas = event.target;
+  if (canvas.tagName !== 'CANVAS') return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (canvas.sc?.inputs?.state !== 'ready') { wheel.reset(); return; }
+  const steps = wheel.consume(event, Number(scrollSpeed.value), screen.clientHeight);
+  for (let i = 0; i < Math.abs(steps); i++) {
+    handle_mousewheel.call(canvas, { deltaY: Math.sign(steps), preventDefault() {} });
+  }
+}, { capture: true, passive: false });
 const area = document.getElementById('spice-area');
 const viewport = document.getElementById('spice-viewport');
 const screenshotButton = document.getElementById('take-screenshot');
