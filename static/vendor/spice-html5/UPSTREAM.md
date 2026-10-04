@@ -14,6 +14,10 @@ and replaces the upstream focus-triggered system clipboard access.
 
 Local input fixes:
 
+- `src/spiceconn.js` and `src/wire.js`: share an optional byte-count observer
+  across console channels for client-side throughput metrics. Disabled metrics
+  leave the observer callback unset; payloads are neither copied nor parsed.
+
 - `src/spicemsg.js`: encode relative mouse motion as 10 bytes (signed dx/dy
   and a 16-bit button mask), without the absolute-position display-id byte.
   Layout: https://gitlab.com/spice/spice-common/-/blob/master/spice.proto

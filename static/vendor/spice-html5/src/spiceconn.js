@@ -51,6 +51,8 @@ function SpiceConn(o)
         throw new Error("You must specify a uri");
 
     this.ws = new WebSocket(o.uri, 'binary');
+    // Share one optional observer across all console channels.
+    this.networkObserver = o.networkObserver || o.parent?.networkObserver;
 
     if (! this.ws.binaryType)
         throw new Error("WebSocket doesn't support binaryType.  Try a different browser.");
@@ -184,6 +186,7 @@ SpiceConn.prototype =
         DEBUG > 1 && console.log("Sending header:");
         DEBUG > 2 && hexdump_buffer(mb);
         this.ws.send(mb);
+        this.networkObserver?.record?.('sent', mb.byteLength);
     },
 
     send_ticket: function(ticket)
@@ -198,6 +201,7 @@ SpiceConn.prototype =
         DEBUG > 1 && console.log("Sending ticket:");
         DEBUG > 2 && hexdump_buffer(mb);
         this.ws.send(mb);
+        this.networkObserver?.record?.('sent', mb.byteLength);
     },
 
     send_msg: function(msg)
@@ -208,6 +212,7 @@ SpiceConn.prototype =
         DEBUG > 0 && console.log(">> hdr " + this.channel_type() + " type " + msg.type + " size " + mb.byteLength);
         DEBUG > 2 && hexdump_buffer(mb);
         this.ws.send(mb);
+        this.networkObserver?.record?.('sent', mb.byteLength);
     },
 
     process_inbound: function(mb, saved_header)

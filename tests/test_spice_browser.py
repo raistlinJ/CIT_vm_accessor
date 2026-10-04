@@ -390,8 +390,16 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                         received_resizes.get_nowait()
                 page.locator("#spice-screen").evaluate("e => e.style.transform = 'scale(1)'")
                 page.get_by_role("button", name="Open console controls").click()
+                page.locator("#network-panel > summary").click()
+                expect(page.locator("#network-enabled")).not_to_be_checked()
+                page.locator("#network-enabled").check()
                 page.get_by_role("button", name="Re-Fit Window", exact=True).click()
                 page.wait_for_function(fitted)
+                page.wait_for_function("() => !document.getElementById('network-total').textContent.includes('Received 0 B') && !document.getElementById('network-total').textContent.includes('Sent 0 B')")
+                assert page.evaluate("localStorage.getItem('spice-network-enabled')") == "true"
+                page.locator("#network-enabled").uncheck()
+                expect(page.locator("#network-readout")).to_be_hidden()
+                assert page.evaluate("localStorage.getItem('spice-network-enabled')") == "false"
                 if agent_enabled:
                     # A fresh session requests the current size again.
                     assert received_resizes.get(timeout=5) == expected_size

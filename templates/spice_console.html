@@ -78,6 +78,15 @@
           </select>
         </label>
       </details>
+      <details id="network-panel">
+        <summary>Network Activity</summary>
+        <label><input id="network-enabled" type="checkbox"> Show console network metrics</label>
+        <div id="network-readout" hidden>
+          <p>↓ Received: <strong id="network-received">0 B/s</strong><br>↑ Sent: <strong id="network-sent">0 B/s</strong></p>
+          <p id="network-total">Received 0 B · Sent 0 B</p>
+        </div>
+        <p class="clipboard-help">SPICE console traffic only, across all console channels. Excludes VM network interface traffic, HTTP downloads, and transport overhead. Totals reset when reconnecting or enabling metrics. Calculated in this browser once per second.</p>
+      </details>
     </aside>
   </div>
   <main id="spice-area" aria-label="Virtual machine display">

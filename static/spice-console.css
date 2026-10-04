@@ -33,12 +33,12 @@ button:disabled { opacity: .45; cursor: default; }
 .scroll-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
 .scroll-setting select { font: inherit; color: #e6edf7; background: #192332; padding: 4px; }
 [hidden] { display: none !important; }
-#scroll-panel, #clipboard-panel, #file-panel { padding: 0 16px 12px; border-top: 1px solid #46566b; background: #192332; }
-#scroll-panel:not([open]), #clipboard-panel:not([open]), #file-panel:not([open]) { padding-bottom: 0; }
-#scroll-panel > summary, #clipboard-panel > summary, #file-panel > summary { display: flex; align-items: center; justify-content: space-between; margin: 0 -16px; padding: 12px 16px; cursor: pointer; font-weight: 600; list-style: none; }
-#scroll-panel > summary::-webkit-details-marker, #clipboard-panel > summary::-webkit-details-marker, #file-panel > summary::-webkit-details-marker { display: none; }
-#scroll-panel > summary::after, #clipboard-panel > summary::after, #file-panel > summary::after { content: '▸'; }
-#scroll-panel[open] > summary::after, #clipboard-panel[open] > summary::after, #file-panel[open] > summary::after { content: '▾'; }
+#network-panel, #scroll-panel, #clipboard-panel, #file-panel { padding: 0 16px 12px; border-top: 1px solid #46566b; background: #192332; }
+#network-panel:not([open]), #scroll-panel:not([open]), #clipboard-panel:not([open]), #file-panel:not([open]) { padding-bottom: 0; }
+#network-panel > summary, #scroll-panel > summary, #clipboard-panel > summary, #file-panel > summary { display: flex; align-items: center; justify-content: space-between; margin: 0 -16px; padding: 12px 16px; cursor: pointer; font-weight: 600; list-style: none; }
+#network-panel > summary::-webkit-details-marker, #scroll-panel > summary::-webkit-details-marker, #clipboard-panel > summary::-webkit-details-marker, #file-panel > summary::-webkit-details-marker { display: none; }
+#network-panel > summary::after, #scroll-panel > summary::after, #clipboard-panel > summary::after, #file-panel > summary::after { content: '▸'; }
+#network-panel[open] > summary::after, #scroll-panel[open] > summary::after, #clipboard-panel[open] > summary::after, #file-panel[open] > summary::after { content: '▾'; }
 #clipboard-panel[data-error="true"] > summary, #file-panel[data-error="true"] > summary { color: #ffc1b5; }
 #clipboard-panel[data-error="true"] > summary::after, #file-panel[data-error="true"] > summary::after { content: '! ▸'; }
 #clipboard-panel[data-error="true"][open] > summary::after, #file-panel[data-error="true"][open] > summary::after { content: '! ▾'; }

@@ -130,6 +130,7 @@ SpiceWireReader.prototype =
 
 function wire_blob_catcher(e)
 {
+    this.wire_reader.sc.networkObserver?.record?.('received', e.data.byteLength);
     DEBUG > 1 && console.log(">> WebSockets.onmessage");
     DEBUG > 1 && console.log("id " + this.wire_reader.sc.connection_id +"; type " + this.wire_reader.sc.type);
     SpiceWireReader.prototype.inbound.call(this.wire_reader, e.data);

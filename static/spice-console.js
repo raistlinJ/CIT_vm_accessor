@@ -3,6 +3,38 @@ import { ClipboardSpiceConnection } from './spice-clipboard.js';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
 import { WheelAccumulator } from './spice-scroll.js';
+import { ConsoleNetworkMetrics, formatNetworkBytes } from './spice-network.js';
+
+const networkMetrics = new ConsoleNetworkMetrics();
+const networkToggle = document.getElementById('network-enabled');
+const networkReadout = document.getElementById('network-readout');
+let networkTimer;
+function renderNetworkMetrics() {
+  const sample = networkMetrics.sample();
+  document.getElementById('network-received').textContent = `${formatNetworkBytes(sample.receivedRate)}/s`;
+  document.getElementById('network-sent').textContent = `${formatNetworkBytes(sample.sentRate)}/s`;
+  document.getElementById('network-total').textContent = `Received ${formatNetworkBytes(sample.received)} · Sent ${formatNetworkBytes(sample.sent)}`;
+}
+function updateNetworkMetrics() {
+  clearInterval(networkTimer);
+  networkMetrics.enable(networkToggle.checked);
+  networkReadout.hidden = !networkToggle.checked;
+  if (networkToggle.checked) {
+    renderNetworkMetrics();
+    networkTimer = setInterval(renderNetworkMetrics, 1000);
+  }
+}
+try { networkToggle.checked = localStorage.getItem('spice-network-enabled') === 'true'; } catch { }
+networkToggle.addEventListener('change', () => {
+  try { localStorage.setItem('spice-network-enabled', String(networkToggle.checked)); } catch { }
+  updateNetworkMetrics();
+});
+updateNetworkMetrics();
+window.addEventListener('pagehide', () => {
+  clearInterval(networkTimer);
+  networkMetrics.enable(false);
+});
+window.addEventListener('pageshow', event => { if (event.persisted) updateNetworkMetrics(); });
 
 const status = document.getElementById('status');
 const controlsDrawer = document.getElementById('controls-drawer');
@@ -313,6 +345,8 @@ function stop() {
   const old = connection;
   connection = null;
   old?.stop();
+  networkMetrics.reset();
+  if (networkToggle.checked) renderNetworkMetrics();
   screen.replaceChildren();
   lastGuestSize = null;
   fitDisplay();
@@ -407,6 +441,7 @@ async function connect() {
     const url = new URL(config.websocket, window.location.href);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     connection = new ClipboardSpiceConnection({
+      networkObserver: networkMetrics.observer,
       uri: url.href, password: config.password,
       screen_id: 'spice-screen', message_id: 'message-div', dump_id: 'debug-div',
       onsuccess() {

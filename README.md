@@ -100,6 +100,8 @@ The popup's **Start VM** and **Restart VM** buttons first show a confirmation di
 
 Use **Take screenshot** in the controls drawer to download a PNG of the VM display at its full guest resolution, even when the popup is scaled down. The filename includes the VM ID and UTC timestamp. Screenshots are generated locally in the browser and exclude the controls drawer and mouse pointer.
 
+**Network Activity** in the SPICE controls drawer offers optional received/sent throughput and byte totals. It is off by default; the browser remembers your choice. Counters cover existing SPICE WebSocket payloads across all channels, including SPICE uploads, and update once per second without polling Proxmox or parsing traffic. They exclude VM network interface traffic, HTTP file downloads, and WebSocket/TLS overhead. Totals start when enabled and reset on reconnect. Disabling removes the counting callback and update timer.
+
 ## Clipboard
 
 Open the collapsible **Clipboard** section in the left-edge controls drawer to share text. Sharing requires a running SPICE guest agent inside the VM; users do not install anything on their own computers.
