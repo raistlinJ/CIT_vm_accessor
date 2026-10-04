@@ -832,7 +832,7 @@ TPL_HOME = """
 </div>
 {% endif %}
 <div id="appConfig" data-api-vms="{{ url_for('api_vms') }}" data-session-reset="{{ url_for('session_reset', reason='invalid') }}" data-jobs-status="{{ url_for('api_jobs_status') }}" data-notes-url="{{ url_for('api_vm_notes') }}" style="display:none"></div>
-<script src="/static/app.js" defer></script>
+<script src="/static/app.js?v=20261004a" defer></script>
 {% endblock %}
 """
 
@@ -2329,6 +2329,50 @@ def api_vms():
     logger.exception(f"[{req_id()}] /api/vms exception")
     return jsonify({"error": "exception"}), 500
 
+def _extract_vm_credentials(notes):
+  """Read credential fields from notes containing separate metadata objects."""
+  empty = {"username": "", "password": ""}
+  if not isinstance(notes, str) or not notes:
+    return empty
+  decoder = json.JSONDecoder()
+  # Parse literal JSON first so HTML-like characters in passwords stay intact.
+  for source in dict.fromkeys((notes, html.unescape(notes))):
+    cursor = 0
+    while cursor < len(source):
+      start = source.find("{", cursor)
+      if start < 0:
+        break
+      try:
+        obj, length = decoder.raw_decode(source[start:])
+      except ValueError:
+        cursor = start + 1
+        continue
+      cursor = start + length
+      if not isinstance(obj, dict):
+        continue
+      fields = {key.lower(): value for key, value in obj.items()}
+      credentials = {
+        name: next((fields[key] for key in aliases
+                    if isinstance(fields.get(key), str) and fields[key]), "")
+        for name, aliases in (("username", ("user", "vmuser", "username")),
+                              ("password", ("pass", "vmpass", "password")))
+      }
+      if any(credentials.values()):
+        return credentials
+  # Preserve the legacy plain-text User: / Pass: format, without showing notes.
+  text = re.sub(r"<[^>]+>", "\n", html.unescape(notes))
+  credentials = dict(empty)
+  for name, keys in (("username", "User|VMUser|Username"),
+                     ("password", "Pass|VMPass|Password")):
+    match = re.search(rf"^\s*(?:{keys})\s*[:=]\s*([^\r\n]+)", text, re.I | re.M)
+    if match:
+      value = match[1].strip()
+      if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
+        value = value[1:-1]
+      credentials[name] = value
+  return credentials
+
+
 @app.route("/api/vm-notes", methods=["GET"])
 @require_session(api=True)
 def api_vm_notes():
@@ -2349,7 +2393,7 @@ def api_vm_notes():
       return jsonify({"error": "upstream", "status": r.status_code}), 502
     data = r.json().get("data", {})
     notes = data.get("description") or ""
-    return jsonify({"notes": notes})
+    return jsonify({"notes": notes, "credentials": _extract_vm_credentials(notes)})
   except Exception:
     logger.exception(f"[{req_id()}] /api/vm-notes exception")
     return jsonify({"error": "exception"}), 500

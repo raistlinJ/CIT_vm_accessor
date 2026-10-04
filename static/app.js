@@ -485,49 +485,21 @@
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
         if (requestId !== notesRequest) return;
-        let notesText = (data && typeof data.notes === 'string') ? data.notes : '';
-
-        // Try to parse JSON to show formatted User/Pass
-        try {
-          // Decode HTML entities if present (sometimes Proxmox sends &quot;)
-          const txt = document.createElement('textarea');
-          txt.innerHTML = notesText;
-          const decoded = txt.value;
-
-          let obj = {};
-          try {
-            // Try strict JSON first
-            obj = JSON.parse(decoded);
-          } catch (e) {
-            // Fallback: Regex for "Key: Value" or "Key: 'Value'"
-            // Matches User: "kali" or User: kali
-            const uMatch = decoded.match(/(?:User|Username)\s*[:=]\s*["']?([^"'\n,]+)["']?/i);
-            if (uMatch) obj.User = uMatch[1].trim();
-            const pMatch = decoded.match(/(?:Pass|Password)\s*[:=]\s*["']?([^"'\n,]+)["']?/i);
-            if (pMatch) obj.Pass = pMatch[1].trim();
-          }
-
-          const user = (obj && (obj.User || obj.VMUser || obj.username)) || '';
-          const pass = (obj && (obj.Pass || obj.VMPass || obj.password)) || '';
-
-          if (user || pass) {
-            notesText = `<div style="font-family:system-ui; font-size:0.85rem; line-height:1.5;">` +
-              `<div style="margin-bottom:0.4rem;">` +
-              `<span style="display:inline-block; width:80px; font-weight:600; color:var(--accent); letter-spacing:0.3px;">Username:</span>` +
-              `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${escapeNotes(user)}</span>` +
-              `</div><div>` +
-              `<span style="display:inline-block; width:80px; font-weight:600; color:var(--accent); letter-spacing:0.3px;">Password:</span>` +
-              `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${escapeNotes(pass)}</span>` +
-              `</div></div>`;
-          } else {
-            // Fallback for non-auth JSON
-            notesText = `<pre style="margin:0">${escapeNotes(notesText)}</pre>`;
-          }
-        } catch (e) {
-          // Not JSON or parsing failed, show detailed raw text
+        const credentials = data && data.credentials;
+        const user = credentials && typeof credentials.username === 'string' ? credentials.username : '';
+        const pass = credentials && typeof credentials.password === 'string' ? credentials.password : '';
+        let notesText = 'No login credentials configured for this VM.';
+        if (user || pass) {
+          notesText = `<div style="font-family:system-ui; font-size:0.85rem; line-height:1.5;">` +
+            `<div style="margin-bottom:0.4rem;">` +
+            `<span style="display:inline-block; width:80px; font-weight:600; color:var(--accent); letter-spacing:0.3px;">Username:</span>` +
+            `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${escapeNotes(user)}</span>` +
+            `</div><div>` +
+            `<span style="display:inline-block; width:80px; font-weight:600; color:var(--accent); letter-spacing:0.3px;">Password:</span>` +
+            `<span style="font-family:var(--mono); background:var(--count-bg); padding:1px 6px; border-radius:4px; color:var(--text); border:1px solid var(--border);">${escapeNotes(pass)}</span>` +
+            `</div></div>`;
         }
-
-        showNotesPopup(btn, notesText || 'No notes.');
+        showNotesPopup(btn, notesText);
       } catch (e) {
         if (requestId === notesRequest) showNotesPopup(btn, 'Failed to load login details: ' + escapeNotes(e.message));
       }
