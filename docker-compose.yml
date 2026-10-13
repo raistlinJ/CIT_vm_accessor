@@ -63,7 +63,8 @@ services:
   # (remove ports when using host networking)
 
   nginx-proxmox:
-    image: nginx:stable-alpine
+    # Pin a patched stable release; CVE-2026-42533 is fixed in 1.30.4+.
+    image: nginx:1.30.5-alpine
     container_name: proxclient-nginx-proxmox
     depends_on:
       certs:

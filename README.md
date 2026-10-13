@@ -43,13 +43,26 @@ Nginx forwards application traffic to host loopback port 8080 and `/spice/ws` to
 
 Compose sets `PUBLIC_SCHEME=https` so Waitress knows the browser uses HTTPS even though Nginx forwards plain HTTP. Nginx preserves the browser's host and port. Both hostname and IP URLs work; the Proxmox API address entered at login is independent of the browser URL.
 
-When upgrading an existing installation, rebuild the app **and** reload the Nginx configuration:
+The proxy image is pinned to Nginx 1.30.5, which includes the fix for
+[CVE-2026-42533](https://nginx.org/en/security_advisories.html) (fixed in stable
+1.30.4 and later). Keep this pin current when applying future security updates.
+
+When upgrading an existing installation, pull the pinned proxy image, rebuild
+the app, and recreate the proxy so both the image and configuration are updated.
+Restarting the old container alone does not update its image. Recreating the
+proxy briefly interrupts HTTPS access:
 
 ```bash
+docker compose pull nginx-proxmox
 docker compose up --build -d proxclient
+docker compose up -d --no-deps --force-recreate nginx-proxmox
 docker compose exec nginx-proxmox nginx -t
-docker compose restart nginx-proxmox
+docker compose exec nginx-proxmox nginx -v
 ```
+
+Verify that the running proxy reports `nginx/1.30.5`, then rerun the vulnerability
+scan against the same host and port. Updating this repository alone does not
+patch a running deployment.
 
 The Compose configuration defaults `PROXMOX_HOST` to the existing deployment hostname, `arlsouth4.utep.edu`. Override it for other installations. If API access uses an address that cannot reach the SPICE proxy, set `SPICE_PROXY_HOST` to the internal address of a cluster node. Inside Docker, `127.0.0.1` refers to the container, not the Proxmox host.
 
