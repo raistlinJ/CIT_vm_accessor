@@ -10,16 +10,23 @@ last_preferred=
 
 while :; do
     # QXL publishes each client-requested size as the preferred (+) RandR
-    # mode. The active mode is marked (*). Read both from the same snapshot.
+    # mode. Read the active size from the output header: some QXL versions
+    # omit the usual (*) marker on the active mode line.
     modes=$(xrandr --query 2>/dev/null | awk '
         $1 ~ /^Virtual-[0-9]+$/ && $2 == "connected" && !output {
             output = $1
+            for (i = 3; i <= NF; i++) {
+                if ($i ~ /^[0-9]+x[0-9]+\+/) {
+                    split($i, geometry, /\+/)
+                    current = geometry[1]
+                    break
+                }
+            }
             in_output = 1
             next
         }
         in_output && /^[^[:space:]]/ { exit }
         in_output && /\+/ { preferred = $1 }
-        in_output && /\*/ { current = $1 }
         END {
             if (output != "" && preferred != "" && current != "")
                 print output, preferred, current
