@@ -386,11 +386,12 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 if agent_enabled:
                     while received_resizes.get(timeout=5) != expected_size:
                         pass
-                    # The simulated guest ignores monitor configuration, so
-                    # the browser should retry rather than treating send as apply.
-                    assert received_resizes.get(timeout=5) == expected_size
                     while not received_resizes.empty():
                         received_resizes.get_nowait()
+                    # An ignored request must not start a delayed loop of
+                    # monitor changes that can disrupt a live guest session.
+                    with pytest.raises(queue.Empty):
+                        received_resizes.get(timeout=3.5)
                 page.locator("#spice-screen").evaluate("e => e.style.transform = 'scale(1)'")
                 page.get_by_role("button", name="Open console controls").click()
                 page.locator("#network-panel > summary").click()

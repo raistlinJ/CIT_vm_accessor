@@ -4,7 +4,6 @@ import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
 import { WheelAccumulator } from './spice-scroll.js';
 import { ConsoleNetworkMetrics, formatNetworkBytes } from './spice-network.js';
-import { GuestResize } from './spice-guest-resize.js';
 
 const networkMetrics = new ConsoleNetworkMetrics();
 const networkToggle = document.getElementById('network-enabled');
@@ -116,6 +115,7 @@ let generation = 0;
 let resizeTimer;
 let connectTimer;
 let guestClipboard = null;
+let lastGuestSize = null;
 let takingScreenshot = false;
 let powerRequest = null;
 let connectionIntent = 0;
@@ -124,12 +124,6 @@ let powerCooldownUntil = 0;
 let powerCooldownTimer;
 let pendingPowerAction = null;
 let fileDownloadController = null;
-const guestResize = new GuestResize({
-  area: () => ({ width: area.clientWidth, height: area.clientHeight }),
-  surface: () => screen.querySelector('canvas'),
-  connected: () => Boolean(connection?.agent_connected),
-  send: (width, height) => connection.resize_window(0, width, height, 32, 0, 0),
-});
 
 function showFileStatus(element, message, error = false) {
   if (!element) return;
@@ -373,7 +367,6 @@ function stop() {
   pending?.abort();
   pending = null;
   clearTimeout(resizeTimer);
-  guestResize.reset();
   clearTimeout(connectTimer);
   const old = connection;
   connection = null;
@@ -382,6 +375,7 @@ function stop() {
   networkHistory.length = 0;
   if (networkToggle.checked) renderNetworkMetrics();
   screen.replaceChildren();
+  lastGuestSize = null;
   fitDisplay();
   document.getElementById('message-div').replaceChildren();
   reconnect.disabled = false;
@@ -421,10 +415,20 @@ function fitDisplay() {
   viewport.style.height = `${canvas.height * scale}px`;
 }
 
+function requestGuestResize() {
+  if (!connection?.agent_connected || !area.clientWidth || !area.clientHeight) return;
+  const width = Math.max(320, Math.floor(area.clientWidth / 8) * 8);
+  const height = Math.max(200, Math.floor(area.clientHeight / 8) * 8);
+  const size = `${width}x${height}`;
+  if (size === lastGuestSize) return;
+  connection.resize_window(0, width, height, 32, 0, 0);
+  lastGuestSize = size;
+}
+
 function resize() {
   fitDisplay();
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => guestResize.request(), 200);
+  resizeTimer = setTimeout(requestGuestResize, 200);
 }
 
 async function connect() {
@@ -477,15 +481,11 @@ async function connect() {
       onagent() {
         if (attempt !== generation) return;
         if (fileUpload) fileUpload.disabled = !uploadAllowed;
-        guestResize.reset();
+        lastGuestSize = null;
         resize();
       },
       onclipboardstate(ready) {
         if (attempt !== generation) return;
-        // Retry after guest capabilities arrive; an earlier resize may have
-        // been sent while the guest agent was still initializing.
-        guestResize.reset();
-        resize();
         clipboardSendButton.disabled = !ready;
         if (fileUpload) fileUpload.disabled = !uploadAllowed || !connection?.agent_connected;
         showClipboardStatus(ready ? 'Clipboard ready. Send text to the VM or copy text inside it.' :
