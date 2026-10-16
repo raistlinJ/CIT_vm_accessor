@@ -26,7 +26,6 @@
 **--------------------------------------------------------------------------------------*/
 
 import { DEBUG } from './utils.js';
-import { combine_array_buffers } from './utils.js';
 
 function SpiceWireReader(sc, callback)
 {
@@ -36,6 +35,8 @@ function SpiceWireReader(sc, callback)
     this.size = 0;
 
     this.buffers = [];
+    this.buffer_head = 0;
+    this.buffer_offset = 0;
 
     this.sc.ws.wire_reader = this;
     this.sc.ws.binaryType = "arraybuffer";
@@ -50,66 +51,65 @@ SpiceWireReader.prototype =
     **----------------------------------------------------------------------*/
     inbound: function (mb)
     {
-        /* Just buffer if we don't need anything yet */
-        if (this.needed == 0)
+        if (mb.byteLength)
         {
             this.buffers.push(mb);
             this.size += mb.byteLength;
-            return;
         }
 
-        /* Optimization - if we have just one inbound block, and it's
-            suitable for our needs, just use it.  */
-        if (this.buffers.length == 0 && mb.byteLength >= this.needed)
+        /* A WebSocket packet may contain several SPICE messages, or only
+           part of one. Keep unread bytes in the original packet and copy
+           only when a message crosses packet boundaries. The callback can
+           change needed after each header or body. */
+        while (this.needed > 0 && this.size >= this.needed)
         {
-            if (mb.byteLength > this.needed)
+            var needed = this.needed;
+            var first = this.buffers[this.buffer_head];
+            var available = first.byteLength - this.buffer_offset;
+            var frame;
+            if (available >= needed)
             {
-                this.size = mb.byteLength - this.needed;
-                this.buffers.push(mb.slice(this.needed));
-                mb = mb.slice(0, this.needed);
-            }
-            this.callback.call(this.sc, mb,
-                        this.saved_msg_header || undefined);
-        }
-        else
-        {
-            this.buffers.push(mb);
-            this.size += mb.byteLength;
-        }
-
-
-        /* Optimization - All it takes is one combine  */
-        while (this.size >= this.needed) {
-            var count = 0;
-            var frame = new ArrayBuffer(this.needed);
-            var view = new Uint8Array(frame);
-
-            while (count < frame.byteLength && this.buffers.length > 0) {
-                var buf = this.buffers.shift();
-                if (!buf) {
-                    return;
-                }
-                var uint8 = new Uint8Array(buf);
-                var step = frame.byteLength - count;
-
-                /* Optimization - use dataview.set() instead of combine_array_buffers() */
-                if (uint8.length <= step) {
-                    view.set(uint8, count);
-                    count += uint8.length;
-                    this.size -= uint8.length;
-                } else {
-                    var temp = uint8.slice(0, step);
-                    view.set(temp, count);
-                    count += temp.length;
-                    this.size -= temp.length;
-            
-                    this.buffers.unshift(uint8.slice(step));
+                frame = this.buffer_offset === 0 && available === needed ?
+                    first : first.slice(this.buffer_offset, this.buffer_offset + needed);
+                this.buffer_offset += needed;
+                if (this.buffer_offset === first.byteLength)
+                {
+                    this.buffer_head++;
+                    this.buffer_offset = 0;
                 }
             }
-
+            else
+            {
+                frame = new ArrayBuffer(needed);
+                var view = new Uint8Array(frame);
+                var copied = 0;
+                while (copied < needed)
+                {
+                    var buffer = this.buffers[this.buffer_head];
+                    var take = Math.min(buffer.byteLength - this.buffer_offset, needed - copied);
+                    view.set(new Uint8Array(buffer, this.buffer_offset, take), copied);
+                    copied += take;
+                    this.buffer_offset += take;
+                    if (this.buffer_offset === buffer.byteLength)
+                    {
+                        this.buffer_head++;
+                        this.buffer_offset = 0;
+                    }
+                }
+            }
+            this.size -= needed;
+            if (this.buffer_head === this.buffers.length)
+            {
+                this.buffers = [];
+                this.buffer_head = 0;
+            }
+            else if (this.buffer_head >= 64 && this.buffer_head * 2 >= this.buffers.length)
+            {
+                this.buffers = this.buffers.slice(this.buffer_head);
+                this.buffer_head = 0;
+            }
             this.callback.call(this.sc, frame, this.saved_msg_header || undefined);
         }
-
     },
 
     request: function(n)

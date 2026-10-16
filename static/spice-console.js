@@ -118,6 +118,7 @@ let lastGuestSize = null;
 let takingScreenshot = false;
 let powerRequest = null;
 let connectionIntent = 0;
+const backlogRecoveries = [];
 let powerCooldownUntil = 0;
 let powerCooldownTimer;
 let pendingPowerAction = null;
@@ -499,6 +500,20 @@ async function connect() {
         stop();
         showStatus('Connection lost or unavailable. Click Re-Fit Window, or try noVNC.', true);
       },
+      onbacklog() {
+        if (attempt !== generation) return;
+        const now = Date.now();
+        while (backlogRecoveries.length && now - backlogRecoveries[0] > 60000)
+          backlogRecoveries.shift();
+        if (backlogRecoveries.length >= 2) {
+          stop();
+          showStatus('The SPICE display is repeatedly falling behind. Try noVNC.', true);
+          return;
+        }
+        backlogRecoveries.push(now);
+        showStatus('The SPICE display fell behind. Reconnecting…');
+        setTimeout(() => { if (attempt === generation) connect(); }, 0);
+      },
     });
     connectTimer = setTimeout(() => {
       if (attempt === generation && !screen.querySelector('canvas')) {
@@ -513,7 +528,7 @@ async function connect() {
   }
 }
 
-reconnect.addEventListener('click', () => { connectionIntent++; area.scrollTo(0, 0); connect(); });
+reconnect.addEventListener('click', () => { connectionIntent++; backlogRecoveries.length = 0; area.scrollTo(0, 0); connect(); });
 fallback.addEventListener('click', stop);
 screenshotButton.addEventListener('click', async () => {
   const canvas = screen.querySelector('canvas');

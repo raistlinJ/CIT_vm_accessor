@@ -208,6 +208,7 @@ function handle_draw_jpeg_onerror()
     if (this.o.sc.streams && this.o.sc.streams[this.o.id])
         this.o.sc.streams[this.o.id].frames_loading--;
     /* An image that will never decode must not hold the queue. */
+    this.o.finished = true;
     this.o.sc.mark_ready(this.o.op, null);
 }
 
@@ -219,6 +220,10 @@ function SpiceDisplayConn()
 {
     SpiceConn.apply(this, arguments);
     this.ops = [];
+    this.ops_head = 0;
+    this.image_jobs = new Map();
+    this.image_jobs_bytes = 0;
+    this.next_image_job = 0;
 }
 
 SpiceDisplayConn.prototype = Object.create(SpiceConn.prototype);
@@ -226,7 +231,7 @@ SpiceDisplayConn.prototype = Object.create(SpiceConn.prototype);
 /*----------------------------------------------------------------------------
 **  Draw queue
 **      Every drawing message becomes an op on one in-order queue, and a
-**      draw that decodes asynchronously (JPEG) holds the ops behind it
+**      draw that decodes asynchronously (JPEG or worker image) holds the ops behind it
 **      until it is ready, so what the server sent after the JPEG lands
 **      after the JPEG. The queue is drained from a microtask at the end
 **      of the task that filled it, which is the websocket message: no
@@ -238,11 +243,59 @@ SpiceDisplayConn.prototype = Object.create(SpiceConn.prototype);
 **--------------------------------------------------------------------------*/
 var FLUSH_BUDGET_MS = 8;
 var FLUSH_FALLBACK_MS = 100;
+var MAX_DRAW_OPS = 1024;
+var MAX_DRAW_AGE_MS = 3000;
+var MAX_IMAGE_JOBS = 128;
+var MAX_IMAGE_JOB_BYTES = 128 * 1024 * 1024;
+
+SpiceDisplayConn.prototype.check_render_backlog = function()
+{
+    if (this.render_overloaded || !this.parent || !this.parent.onbacklog)
+        return;
+    var queued = this.ops.length - this.ops_head;
+    var oldest = queued ? this.ops[this.ops_head] : undefined;
+    if (queued <= MAX_DRAW_OPS &&
+        (!oldest || performance.now() - oldest.queued_at <= MAX_DRAW_AGE_MS) &&
+        this.image_jobs.size <= MAX_IMAGE_JOBS &&
+        this.image_jobs_bytes <= MAX_IMAGE_JOB_BYTES)
+        return;
+    this.request_render_recovery();
+}
+
+SpiceDisplayConn.prototype.request_render_recovery = function()
+{
+    if (this.render_overloaded || !this.parent?.onbacklog)
+        return false;
+    this.render_overloaded = true;
+    var parent = this.parent;
+    /* Reconnecting inside a WebSocket message handler would tear down the
+       channel while it is still parsing that message. */
+    Promise.resolve().then(function() { parent.onbacklog(); });
+    return true;
+}
+
+SpiceDisplayConn.prototype.watch_render_backlog = function()
+{
+    if (typeof window == 'undefined' || this.backlog_timer !== undefined ||
+        this.render_overloaded || !this.parent?.onbacklog ||
+        this.ops_head >= this.ops.length)
+        return;
+    var sc = this;
+    var age = performance.now() - this.ops[this.ops_head].queued_at;
+    this.backlog_timer = window.setTimeout(function()
+    {
+        sc.backlog_timer = undefined;
+        sc.check_render_backlog();
+        sc.watch_render_backlog();
+    }, Math.max(1, MAX_DRAW_AGE_MS - age + 1));
+}
 
 SpiceDisplayConn.prototype.enqueue = function(draw)
 {
-    var op = { ready: true, draw: draw };
+    var op = { ready: true, draw: draw, queued_at: performance.now() };
     this.ops.push(op);
+    this.check_render_backlog();
+    this.watch_render_backlog();
     this.schedule_flush();
     return op;
 }
@@ -250,8 +303,10 @@ SpiceDisplayConn.prototype.enqueue = function(draw)
 /* An op whose draw is not known yet; mark_ready() supplies it. */
 SpiceDisplayConn.prototype.enqueue_pending = function()
 {
-    var op = { ready: false, draw: null };
+    var op = { ready: false, draw: null, queued_at: performance.now() };
     this.ops.push(op);
+    this.check_render_backlog();
+    this.watch_render_backlog();
     return op;
 }
 
@@ -296,16 +351,38 @@ SpiceDisplayConn.prototype.flush = function(budget_ms)
 {
     this.cancel_flush();
     var deadline = performance.now() + budget_ms;
-    while (this.ops.length > 0 && this.ops[0].ready)
+    while (this.ops_head < this.ops.length && this.ops[this.ops_head].ready)
     {
-        var op = this.ops.shift();
+        var op = this.ops[this.ops_head];
+        this.ops[this.ops_head++] = undefined;
         if (op.draw)
             op.draw.call(this);
-        if (performance.now() > deadline && this.ops.length > 0 && this.ops[0].ready)
+        if (performance.now() > deadline && this.ops_head < this.ops.length && this.ops[this.ops_head].ready)
         {
+            this.compact_queue();
             this.schedule_frame();
             return;
         }
+    }
+    this.compact_queue();
+    this.watch_render_backlog();
+}
+
+/* Avoid shifting every draw; compact consumed slots only occasionally. */
+SpiceDisplayConn.prototype.compact_queue = function()
+{
+    if (this.ops_head === this.ops.length)
+    {
+        this.ops = [];
+        this.ops_head = 0;
+        if (this.backlog_timer !== undefined)
+            window.clearTimeout(this.backlog_timer);
+        this.backlog_timer = undefined;
+    }
+    else if (this.ops_head >= 64 && this.ops_head * 2 >= this.ops.length)
+    {
+        this.ops = this.ops.slice(this.ops_head);
+        this.ops_head = 0;
     }
 }
 
@@ -318,7 +395,20 @@ SpiceDisplayConn.prototype.flush_all = function()
 SpiceDisplayConn.prototype.drop_queue = function()
 {
     this.cancel_flush();
+    if (this.backlog_timer !== undefined)
+        window.clearTimeout(this.backlog_timer);
+    this.backlog_timer = undefined;
     this.ops = [];
+    this.ops_head = 0;
+}
+
+SpiceDisplayConn.prototype.stop_image_worker = function()
+{
+    if (this.image_worker)
+        this.image_worker.terminate();
+    this.image_worker = undefined;
+    this.image_jobs?.clear();
+    this.image_jobs_bytes = 0;
 }
 
 /* Whether a surface captured when an op was queued is still the live
@@ -331,11 +421,16 @@ SpiceDisplayConn.prototype.surface_live = function(surface)
 
 SpiceDisplayConn.prototype.cleanup = function()
 {
+    this.stop_image_worker();
     this.drop_queue();
     SpiceConn.prototype.cleanup.call(this);
 }
 SpiceDisplayConn.prototype.process_channel_message = function(msg)
 {
+    /* A reconnect has already been requested. Avoid decoding and retaining
+       more display messages from the current WebSocket task. */
+    if (this.render_overloaded)
+        return true;
     if (msg.type == Constants.SPICE_MSG_DISPLAY_MODE)
     {
         this.known_unimplemented(msg.type, "Display Mode");
@@ -386,37 +481,29 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
 
             if (draw_copy.data.src_bitmap.descriptor.type == Constants.SPICE_IMAGE_TYPE_QUIC)
             {
-                var canvas = this.surfaces[draw_copy.base.surface_id].canvas;
                 if (! draw_copy.data.src_bitmap.quic)
                 {
                     this.log_warn("FIXME: DrawCopy could not handle this QUIC file.");
                     return false;
                 }
-                var source_img = Quic.convert_spice_quic_to_web(canvas.context,
-                                        draw_copy.data.src_bitmap.quic);
-
-                return this.draw_copy_helper(
+                return this.draw_copy_async(
                     { base: draw_copy.base,
                       src_area: draw_copy.data.src_area,
-                      image_data: source_img,
-                      tag: "copyquic." + draw_copy.data.src_bitmap.quic.type,
-                      has_alpha: (draw_copy.data.src_bitmap.quic.type == Quic.Constants.QUIC_IMAGE_TYPE_RGBA ? true : false) ,
+                      tag: "copyquic",
                       descriptor : draw_copy.data.src_bitmap.descriptor,
                       scale_mode : draw_copy.data.scale_mode
-                    });
+                    }, 'quic', draw_copy.data.src_bitmap.quic);
             }
             else if (draw_copy.data.src_bitmap.descriptor.type == Constants.SPICE_IMAGE_TYPE_FROM_CACHE ||
                     draw_copy.data.src_bitmap.descriptor.type == Constants.SPICE_IMAGE_TYPE_FROM_CACHE_LOSSLESS)
             {
-                /* A cached JPEG is stored when its draw runs, which may be
-                   after this message arrives; an image not in the cache
-                   yet is looked up again when this op's turn comes. */
+                /* Cache writes and invalidations run in draw order, so look
+                   up the image when this operation reaches the queue head. */
                 var cache_id = draw_copy.data.src_bitmap.descriptor.id;
                 var sc = this;
                 return this.draw_copy_helper(
                     { base: draw_copy.base,
                       src_area: draw_copy.data.src_area,
-                      image_data: this.cache ? this.cache[cache_id] : undefined,
                       resolve: function()
                       {
                           if (sc.cache && sc.cache[cache_id])
@@ -514,10 +601,24 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
 
                 if (this.surfaces[draw_copy.base.surface_id].format == Constants.SPICE_SURFACE_FMT_32_ARGB)
                 {
-
-                    var canvas = this.surfaces[draw_copy.base.surface_id].canvas;
-                    img.alpha_img = convert_spice_lz_to_web(canvas.context,
-                                            draw_copy.data.src_bitmap.jpeg_alpha.alpha);
+                    img.o.alpha_pending = true;
+                    var sc = this;
+                    var alpha = draw_copy.data.src_bitmap.jpeg_alpha.alpha;
+                    this.queue_image_job({ kind: 'lz', source: alpha,
+                        o: { surface: this.surfaces[draw_copy.base.surface_id] },
+                        width: alpha.width, height: alpha.height,
+                        finish: function(image)
+                        {
+                            img.alpha_img = image;
+                            img.o.alpha_failed = !image;
+                            img.o.alpha_ready = true;
+                            if (img.o.jpeg_ready && !img.o.finished)
+                            {
+                                img.o.finished = true;
+                                sc.mark_ready(img.o.op,
+                                    image ? function() { draw_jpeg_now(img); } : null);
+                            }
+                        } });
                 }
                 img.onload = handle_draw_jpeg_onload;
                 img.onerror = handle_draw_jpeg_onerror;
@@ -527,59 +628,37 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
             }
             else if (draw_copy.data.src_bitmap.descriptor.type == Constants.SPICE_IMAGE_TYPE_BITMAP)
             {
-                var canvas = this.surfaces[draw_copy.base.surface_id].canvas;
                 if (! draw_copy.data.src_bitmap.bitmap)
                 {
                     this.log_err("null bitmap");
                     return false;
                 }
 
-                var source_img = convert_spice_bitmap_to_web(canvas.context,
-                                        draw_copy.data.src_bitmap.bitmap);
-                if (! source_img)
-                {
-                    this.log_warn("FIXME: Unable to interpret bitmap of format: " +
-                        draw_copy.data.src_bitmap.bitmap.format);
-                    return false;
-                }
-
-                return this.draw_copy_helper(
+                return this.draw_copy_async(
                     { base: draw_copy.base,
                       src_area: draw_copy.data.src_area,
-                      image_data: source_img,
                       tag: "bitmap." + draw_copy.data.src_bitmap.bitmap.format,
                       has_alpha: draw_copy.data.src_bitmap.bitmap.format != Constants.SPICE_BITMAP_FMT_32BIT,
                       descriptor : draw_copy.data.src_bitmap.descriptor,
                       scale_mode : draw_copy.data.scale_mode
-                    });
+                    }, 'bitmap', draw_copy.data.src_bitmap.bitmap);
             }
             else if (draw_copy.data.src_bitmap.descriptor.type == Constants.SPICE_IMAGE_TYPE_LZ_RGB)
             {
-                var canvas = this.surfaces[draw_copy.base.surface_id].canvas;
                 if (! draw_copy.data.src_bitmap.lz_rgb)
                 {
                     this.log_err("null lz_rgb ");
                     return false;
                 }
 
-                var source_img = convert_spice_lz_to_web(canvas.context,
-                                            draw_copy.data.src_bitmap.lz_rgb);
-                if (! source_img)
-                {
-                    this.log_warn("FIXME: Unable to interpret bitmap of type: " +
-                        draw_copy.data.src_bitmap.lz_rgb.type);
-                    return false;
-                }
-
-                return this.draw_copy_helper(
+                return this.draw_copy_async(
                     { base: draw_copy.base,
                       src_area: draw_copy.data.src_area,
-                      image_data: source_img,
                       tag: "lz_rgb." + draw_copy.data.src_bitmap.lz_rgb.type,
                       has_alpha: draw_copy.data.src_bitmap.lz_rgb.type == Constants.LZ_IMAGE_TYPE_RGBA ? true : false ,
                       descriptor : draw_copy.data.src_bitmap.descriptor,
                       scale_mode : draw_copy.data.scale_mode
-                    });
+                    }, 'lz', draw_copy.data.src_bitmap.lz_rgb);
             }
             else
             {
@@ -759,7 +838,7 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
 
     if (msg.type == Constants.SPICE_MSG_DISPLAY_INVAL_ALL_PIXMAPS)
     {
-        this.known_unimplemented(msg.type, "Display Inval All Pixmaps");
+        this.enqueue(function() { this.cache = {}; });
         return true;
     }
 
@@ -887,9 +966,10 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
             s.video = v;
             s.media = media;
             s.queue = new Array();
-            s.start_time = 0;
+            s.start_time = null;
             s.cluster_time = 0;
             s.append_okay = false;
+            s.waiting_for_keyframe = false;
 
             media.stream = s;
             media.spiceconn = this;
@@ -980,11 +1060,13 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
     if (msg.type == Constants.SPICE_MSG_DISPLAY_INVAL_LIST)
     {
         var m = new Messages.SpiceMsgDisplayInvalList(msg.data);
-        var i;
         Utils.DEBUG > 1 && console.log(this.type + ": MsgInvalList " + m.count + " items");
-        for (i = 0; i < m.count; i++)
-            if (this.cache && this.cache[m.resources[i].id] != undefined)
-                delete this.cache[m.resources[i].id];
+        this.enqueue(function()
+        {
+            for (var i = 0; i < m.count; i++)
+                if (this.cache)
+                    delete this.cache[m.resources[i].id];
+        });
         return true;
     }
 
@@ -1019,17 +1101,18 @@ SpiceDisplayConn.prototype.delete_surface = function(surface_id)
 }
 
 
-SpiceDisplayConn.prototype.draw_copy_helper = function(o)
+SpiceDisplayConn.prototype.prepare_draw_copy = function(o)
 {
     o.surface = this.surfaces[o.base.surface_id];
 
     /* FIXME - This is based on trial + error, not a serious thoughtful
                analysis of what Spice requires.  See display.js for more. */
     o.opaque = ! o.has_alpha || o.surface.format == Constants.SPICE_SURFACE_FMT_32_xRGB;
+}
 
-    /* The cache is filled now, not when the op runs, so a draw from the
-       cache that follows this message finds the image whether or not
-       either has been drawn yet. */
+SpiceDisplayConn.prototype.cache_draw_copy = function(o)
+{
+    /* Cache changes follow protocol draw order, including invalidations. */
     if (o.image_data && o.descriptor && (o.descriptor.flags & Constants.SPICE_IMAGE_FLAGS_CACHE_ME))
     {
         if (o.opaque && o.has_alpha)
@@ -1038,12 +1121,185 @@ SpiceDisplayConn.prototype.draw_copy_helper = function(o)
             this.cache = {};
         this.cache[o.descriptor.id] = o.image_data;
     }
+}
+
+SpiceDisplayConn.prototype.draw_copy_helper = function(o)
+{
+    this.prepare_draw_copy(o);
 
     this.enqueue(function()
     {
+        this.cache_draw_copy(o);
         this.draw_copy_now(o);
     });
     return true;
+}
+
+SpiceDisplayConn.prototype.decode_image_now = function(kind, source, context)
+{
+    if (kind == 'quic')
+        return Quic.convert_spice_quic_to_web(context, source);
+    if (kind == 'lz')
+        return convert_spice_lz_to_web(context, source);
+    return convert_spice_bitmap_to_web(context, source);
+}
+
+SpiceDisplayConn.prototype.complete_image_job = function(job, image_data, type)
+{
+    if (job.kind == 'quic')
+        job.o.has_alpha = type == Quic.Constants.QUIC_IMAGE_TYPE_RGBA;
+    job.o.opaque = !job.o.has_alpha || job.o.surface.format == Constants.SPICE_SURFACE_FMT_32_xRGB;
+    job.o.image_data = image_data;
+    if (!image_data)
+        this.log_warn('Could not decode SPICE ' + job.kind + ' image');
+    var o = job.o;
+    this.mark_ready(job.op, image_data ? function()
+    {
+        this.cache_draw_copy(o);
+        this.draw_copy_now(o);
+    } : null);
+}
+
+SpiceDisplayConn.prototype.finish_image_job = function(job, image_data, type)
+{
+    if (job.finish)
+        job.finish(image_data, type);
+    else
+        this.complete_image_job(job, image_data, type);
+}
+
+SpiceDisplayConn.prototype.fail_image_worker = function()
+{
+    if (this.image_worker_disabled)
+        return;
+    this.image_worker_disabled = true;
+    var jobs = Array.from(this.image_jobs.values());
+    var bytes = this.image_jobs_bytes;
+    this.stop_image_worker();
+    /* A failed worker should not move an entire decode backlog onto the
+       input thread. A fresh connection may start a new worker. */
+    if ((jobs.length > 8 || bytes > 16 * 1024 * 1024) &&
+        this.request_render_recovery())
+        return;
+    for (var i = 0; i < jobs.length; i++)
+    {
+        var job = jobs[i];
+        try
+        {
+            var image = this.decode_image_now(job.kind, job.source, job.o.surface.canvas.context);
+            this.finish_image_job(job, image, job.source.type);
+        }
+        catch (error)
+        {
+            this.log_warn('SPICE image decode failed: ' + error);
+            this.finish_image_job(job, undefined);
+        }
+    }
+}
+
+SpiceDisplayConn.prototype.ensure_image_worker = function()
+{
+    if (this.image_worker_disabled || typeof Worker == 'undefined')
+        return false;
+    if (this.image_worker)
+        return true;
+    try
+    {
+        var sc = this;
+        this.image_worker = new Worker(new URL('./image-worker.js', import.meta.url), { type: 'module' });
+        this.image_worker.onmessage = function(event)
+        {
+            var result = event.data;
+            var job = sc.image_jobs.get(result.id);
+            if (!job)
+                return;
+            sc.image_jobs.delete(result.id);
+            sc.image_jobs_bytes -= job.bytes;
+            if (result.error)
+            {
+                sc.log_warn('SPICE image worker: ' + result.error);
+                sc.finish_image_job(job, undefined);
+                return;
+            }
+            try
+            {
+                var pixels = new Uint8ClampedArray(result.pixels);
+                var image;
+                if (typeof ImageData != 'undefined')
+                    image = new ImageData(pixels, result.width, result.height);
+                else
+                {
+                    image = job.o.surface.canvas.context.createImageData(result.width, result.height);
+                    image.data.set(pixels);
+                }
+                sc.finish_image_job(job, image, result.type);
+            }
+            catch (error)
+            {
+                sc.log_warn('SPICE image result failed: ' + error);
+                sc.finish_image_job(job, undefined);
+            }
+        };
+        this.image_worker.onerror = function(event)
+        {
+            event.preventDefault();
+            sc.fail_image_worker();
+        };
+        this.image_worker.onmessageerror = function() { sc.fail_image_worker(); };
+        return true;
+    }
+    catch (error)
+    {
+        this.image_worker_disabled = true;
+        return false;
+    }
+}
+
+SpiceDisplayConn.prototype.queue_image_job = function(job)
+{
+    var source = job.source;
+    var kind = job.kind;
+    if (this.ensure_image_worker())
+    {
+        var width = Math.max(job.width, source.width || source.x || 0);
+        var height = Math.max(job.height, source.height || source.y || 0);
+        job.bytes = (source.data?.byteLength || 0) + width * height * 4;
+        var id = ++this.next_image_job;
+        this.image_jobs.set(id, job);
+        this.image_jobs_bytes += job.bytes;
+        this.check_render_backlog();
+        if (this.render_overloaded)
+            return true;
+        try
+        {
+            this.image_worker.postMessage({ id: id, kind: kind, source: source });
+            return true;
+        }
+        catch (error)
+        {
+            this.fail_image_worker();
+            return true;
+        }
+    }
+    try
+    {
+        var image = this.decode_image_now(kind, source, job.o.surface.canvas.context);
+        this.finish_image_job(job, image, source.type);
+    }
+    catch (error)
+    {
+        this.log_warn('SPICE image decode failed: ' + error);
+        this.finish_image_job(job, undefined);
+    }
+    return true;
+}
+
+SpiceDisplayConn.prototype.draw_copy_async = function(o, kind, source)
+{
+    this.prepare_draw_copy(o);
+    return this.queue_image_job({ o: o, kind: kind, source: source,
+        width: o.descriptor.width, height: o.descriptor.height,
+        op: this.enqueue_pending() });
 }
 
 SpiceDisplayConn.prototype.draw_copy_now = function(o)
@@ -1243,6 +1499,7 @@ SpiceDisplayConn.prototype.destroy_stream = function(id)
         stream.source_buffer = null;
         stream.media = null;
         stream.video = null;
+        stream.queue = [];
     }
     this.streams[id] = undefined;
 }
@@ -1293,8 +1550,14 @@ function handle_draw_jpeg_onload()
     if (this.o.sc.streams && this.o.sc.streams[this.o.id])
         this.o.sc.streams[this.o.id].frames_loading--;
 
-    var img = this;
-    this.o.sc.mark_ready(this.o.op, function() { draw_jpeg_now(img); });
+    this.o.jpeg_ready = true;
+    if ((!this.o.alpha_pending || this.o.alpha_ready) && !this.o.finished)
+    {
+        this.o.finished = true;
+        var img = this;
+        this.o.sc.mark_ready(this.o.op,
+            this.o.alpha_failed ? null : function() { draw_jpeg_now(img); });
+    }
 }
 
 /* Runs from the draw queue once every op queued before the JPEG has run. */
@@ -1533,11 +1796,13 @@ function append_video_buffer(sb, mb)
 function handle_append_video_buffer_done(e)
 {
     var stream = this.stream;
+    if (!stream.video)
+        return;
 
-    if (stream.current_frame && "report" in stream)
+    if (stream.current_frame && stream.current_frame.kind == "frame" && "report" in stream)
     {
-        var sc = this.stream.media.spiceconn;
-        var t = this.stream.current_frame.msg_mmtime;
+        var sc = stream.media.spiceconn;
+        var t = stream.current_frame.msg_mmtime;
         process_stream_data_report(sc, stream.id, t, t - sc.parent.relative_now());
     }
 
@@ -1548,22 +1813,19 @@ function handle_append_video_buffer_done(e)
     }
     else
     {
+        stream.current_frame = null;
         stream.append_okay = true;
     }
 
-    if (!stream.video)
+    if (stream.video.buffered.length > 0)
     {
-        if (Utils.STREAM_DEBUG > 0)
-            console.log("Stream id " + stream.id + " received updateend after video is gone.");
-        return;
-    }
-
-    if (stream.video.buffered.length > 0 &&
-        stream.video.currentTime < stream.video.buffered.start(stream.video.buffered.length - 1))
-    {
-        console.log("Video appears to have fallen behind; advancing to " +
-            stream.video.buffered.start(stream.video.buffered.length - 1));
-        stream.video.currentTime = stream.video.buffered.start(stream.video.buffered.length - 1);
+        var last = stream.video.buffered.length - 1;
+        var start = stream.video.buffered.start(last);
+        var end = stream.video.buffered.end(last);
+        /* MediaSource can retain a continuous old range even after our JS
+           queue is trimmed. Seek near the live edge when playback is late. */
+        if (stream.video.currentTime < start || end - stream.video.currentTime > 2)
+            stream.video.currentTime = Math.max(start, end - 0.3);
     }
 
     /* Modern browsers try not to auto play video. */
@@ -1580,11 +1842,35 @@ function handle_video_buffer_error(e)
     p.log_err('source_buffer error ' + e.message);
 }
 
-function push_or_queue(stream, msg, mb)
+var MAX_VP8_QUEUE_FRAMES = 30;
+var MAX_VP8_QUEUE_BYTES = 8 * 1024 * 1024;
+var MAX_VP8_QUEUE_MS = 1000;
+
+function vp8_is_keyframe(data)
+{
+    /* The low bit of the VP8 uncompressed frame tag is zero for a keyframe.
+       WebM cluster boundaries alone say nothing about decoder references. */
+    return data.byteLength > 0 && (data[0] & 1) == 0;
+}
+
+function report_video_drop(stream, time)
+{
+    if ("report" in stream && stream.media && stream.media.spiceconn)
+    {
+        var sc = stream.media.spiceconn;
+        stream.report.num_drops++;
+        process_stream_data_report(sc, stream.id, time, time - sc.parent.relative_now());
+    }
+}
+
+function push_or_queue(stream, msg, mb, kind, keyframe)
 {
     var frame =
     {
         msg_mmtime : msg.base.multi_media_time,
+        kind : kind,
+        keyframe : !!keyframe,
+        data : kind == "frame" ? msg.data : null,
     };
 
     if (stream.append_okay)
@@ -1605,10 +1891,10 @@ function video_simple_block(stream, msg, keyframe)
     var mb = new ArrayBuffer(simple.buffer_size());
     simple.to_buffer(mb);
 
-    push_or_queue(stream, msg, mb);
+    push_or_queue(stream, msg, mb, "frame", keyframe);
 }
 
-function new_video_cluster(stream, msg)
+function new_video_cluster(stream, msg, keyframe)
 {
     stream.cluster_time = msg.base.multi_media_time;
     var c = new Webm.Cluster(stream.cluster_time - stream.start_time, msg.data);
@@ -1616,23 +1902,95 @@ function new_video_cluster(stream, msg)
     var mb = new ArrayBuffer(c.buffer_size());
     c.to_buffer(mb);
 
-    push_or_queue(stream, msg, mb);
+    push_or_queue(stream, msg, mb, "cluster", false);
 
-    video_simple_block(stream, msg, true);
+    video_simple_block(stream, msg, keyframe);
+}
+
+function trim_video_queue(stream)
+{
+    var frames = stream.queue.filter(function(item) { return item.kind == "frame"; });
+    if (frames.length == 0)
+        return;
+    var bytes = stream.queue.reduce(function(total, item) { return total + item.mb.byteLength; }, 0);
+    var age = frames[frames.length - 1].msg_mmtime - frames[0].msg_mmtime;
+    if (frames.length <= MAX_VP8_QUEUE_FRAMES && bytes <= MAX_VP8_QUEUE_BYTES && age <= MAX_VP8_QUEUE_MS)
+        return;
+
+    /* Keep the newest decodable run: its keyframe and every later delta.
+       Dropping a delta inside that run could break all following frames.
+       Re-encode the WebM timecodes against a fresh cluster. */
+    var latest = frames[frames.length - 1].msg_mmtime;
+    var keyframe_index = -1;
+    for (var i = frames.length - 1; i >= 0; i--)
+    {
+        if (frames[i].keyframe)
+        {
+            keyframe_index = i;
+            break;
+        }
+    }
+    var kept = keyframe_index < 0 ? [] : frames.slice(keyframe_index);
+    var kept_bytes = kept.reduce(function(total, item) { return total + item.mb.byteLength; }, 0);
+    if (kept.length > MAX_VP8_QUEUE_FRAMES || kept_bytes > MAX_VP8_QUEUE_BYTES ||
+        (kept.length && latest - kept[0].msg_mmtime > MAX_VP8_QUEUE_MS))
+        kept = [];
+
+    stream.queue = [];
+    if (kept.length)
+    {
+        /* The source buffer is still busy, so these become the new queue. */
+        for (var j = 0; j < kept.length; j++)
+        {
+            var msg = { base: { multi_media_time: kept[j].msg_mmtime }, data: kept[j].data };
+            if (j == 0)
+                new_video_cluster(stream, msg, true);
+            else
+                video_simple_block(stream, msg, false);
+        }
+    }
+    else
+        stream.waiting_for_keyframe = true;
+
+    for (var k = 0; k < frames.length - kept.length; k++)
+    {
+        report_video_drop(stream, frames[k].msg_mmtime);
+    }
 }
 
 function process_video_stream_data(stream, msg)
 {
-    if (stream.start_time == 0)
+    var keyframe = vp8_is_keyframe(msg.data);
+    if (stream.waiting_for_keyframe)
     {
+        if (!keyframe)
+        {
+            report_video_drop(stream, msg.base.multi_media_time);
+            return;
+        }
+        stream.waiting_for_keyframe = false;
+        if (stream.start_time === null)
+            stream.start_time = msg.base.multi_media_time;
+        new_video_cluster(stream, msg, true);
+    }
+    else if (stream.start_time === null)
+    {
+        if (!keyframe)
+        {
+            stream.waiting_for_keyframe = true;
+            report_video_drop(stream, msg.base.multi_media_time);
+            return;
+        }
         stream.start_time = msg.base.multi_media_time;
-        new_video_cluster(stream, msg);
+        new_video_cluster(stream, msg, true);
     }
 
     else if (msg.base.multi_media_time - stream.cluster_time >= Webm.Constants.MAX_CLUSTER_TIME)
-        new_video_cluster(stream, msg);
+        new_video_cluster(stream, msg, keyframe);
     else
-        video_simple_block(stream, msg, false);
+        video_simple_block(stream, msg, keyframe);
+
+    trim_video_queue(stream);
 }
 
 function video_handle_event_debug(e)
@@ -1688,4 +2046,6 @@ function listen_for_video_events(stream)
 
 export {
   SpiceDisplayConn,
+  process_video_stream_data,
+  handle_append_video_buffer_done,
 };

@@ -1278,15 +1278,10 @@ SpiceQuic.prototype =
             throw("quic: no quic encoder");
         this.data_size = dv.getUint32(at, true);
         at += 4;
-        var buf = new Uint8Array(mb.slice(at));
-        this.outptr = encoder.simple_quic_decode(buf);
-        if (this.outptr)
-        {
-            this.type = encoder.type;
-            this.width = encoder.width;
-            this.height = encoder.height;
-        }
-        at += buf.length;
+        /* Keep the encoded bytes until the display channel can decode them
+           in a worker. Decoding here stalls all input on the main thread. */
+        this.data = mb.slice(at);
+        at += this.data.byteLength;
         return at;
     },
 }
@@ -1296,6 +1291,15 @@ SpiceQuic.prototype =
    bitmap.js. QUIC carries its alpha inverted. */
 function convert_spice_quic_to_web(context, spice_quic)
 {
+    if (!spice_quic.outptr)
+    {
+        spice_quic.outptr = encoder.simple_quic_decode(new Uint8Array(spice_quic.data));
+        if (!spice_quic.outptr)
+            return undefined;
+        spice_quic.type = encoder.type;
+        spice_quic.width = encoder.width;
+        spice_quic.height = encoder.height;
+    }
     const ret = context.createImageData(spice_quic.width, spice_quic.height);
     const src = spice_quic.outptr;
     const words = new DataView(src.buffer, src.byteOffset, src.byteLength);
