@@ -1136,11 +1136,13 @@ function SpiceMsgcMouseMotion(sc, e)
         this.x = position.x;
         this.y = position.y;
 
-        if (sc.mousex !== undefined)
+        if (sc.mousex !== undefined && sc.mousey !== undefined)
         {
             this.x -= sc.mousex;
             this.y -= sc.mousey;
         }
+        else
+            this.x = this.y = 0;
         sc.mousex = position.x;
         sc.mousey = position.y;
     }

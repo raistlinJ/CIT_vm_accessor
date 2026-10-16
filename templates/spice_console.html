@@ -50,7 +50,7 @@
         <p class="clipboard-help">Text only, up to 1 MiB. After sending, paste inside the VM. If browser clipboard access is blocked, use the text boxes to paste or copy manually.</p>
       </details>
       {% if file_upload_enabled or file_download_enabled %}
-      <details id="file-panel">
+      <details id="file-panel" hidden>
         <summary>File Transfer</summary>
         {% if file_upload_enabled %}
         <label for="file-upload">Send files from this computer to the VM</label>
@@ -67,6 +67,9 @@
         {% endif %}
       </details>
       {% endif %}
+      <div id="file-disabled" {% if file_upload_enabled or file_download_enabled %}hidden{% endif %}>
+        <span>File Transfer</span><span class="file-disabled-state"><span aria-hidden="true">✕</span> Disabled</span>
+      </div>
       <details id="scroll-panel">
         <summary>Scrolling</summary>
         <label class="scroll-setting" for="scroll-speed">Scroll speed

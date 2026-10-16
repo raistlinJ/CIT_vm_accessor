@@ -24,7 +24,10 @@ def test_disabled_switches_hide_controls_and_block_endpoint(client, monkeypatch)
     monkeypatch.delenv("ENABLE_VM_FILE_TRANSFER", raising=False)
     monkeypatch.delenv("ENABLE_VM_FILE_UPLOAD", raising=False)
     monkeypatch.delenv("ENABLE_VM_FILE_DOWNLOAD", raising=False)
-    assert b"file-panel" not in client.get("/console/spice/101").data
+    page = client.get("/console/spice/101").data
+    assert b"file-panel" not in page
+    assert b'id="file-disabled"' in page
+    assert b"Disabled" in page
     with patch.object(main, "proxmox_get") as get:
         assert read_request(client).status_code == 404
         get.assert_not_called()

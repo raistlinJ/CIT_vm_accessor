@@ -22,6 +22,9 @@ Local changes:
   packet queue for every message.
 - `src/display.js`: drain the ordered draw queue with a head index and
   occasional compaction instead of shifting the array for every draw.
+- `src/display.js` and `src/spicemsg.js`: detach a destroyed primary canvas
+  before a resolution change can reuse its surface ID, and reset relative
+  mouse coordinates so the first movement on the new framebuffer cannot jump.
 - `src/display.js`: bound queued VP8 video by frame count, bytes, and age.
   Recover from overload at a VP8 keyframe with a fresh WebM cluster, and
   report dropped frames to the SPICE server. Seek near the MediaSource live

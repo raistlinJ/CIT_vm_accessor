@@ -871,6 +871,12 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
             return false;
         }
 
+        /* Resolution changes can reuse the primary surface ID before its
+           queued destroy runs. Do not leave the old canvas first in the
+           screen: fitDisplay would size and map the mouse against it. */
+        if (this.surfaces[m.surface.surface_id] !== undefined)
+            this.delete_surface(m.surface.surface_id);
+
         var canvas = document.createElement("canvas");
         canvas.setAttribute('width', m.surface.width);
         canvas.setAttribute('height', m.surface.height);
@@ -894,6 +900,7 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
         if (m.surface.flags & Constants.SPICE_SURFACE_FLAGS_PRIMARY)
         {
             this.primary_surface = m.surface.surface_id;
+            this.parent.mousex = this.parent.mousey = undefined;
 
             /* This .save() is done entirely to enable SPICE_MSG_DISPLAY_RESET */
             canvas.context.save();
@@ -913,6 +920,9 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
         var doomed = this.surfaces ? this.surfaces[m.surface_id] : undefined;
         if (doomed === undefined)
             return true;
+        /* Stop hit testing and sizing against this canvas immediately. Draws
+           queued before the destroy may still use its detached pixels. */
+        this.retire_surface(doomed);
         this.enqueue(function()
         {
             if (this.surface_live(doomed))
@@ -1085,18 +1095,25 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
     return false;
 }
 
-SpiceDisplayConn.prototype.delete_surface = function(surface_id)
+SpiceDisplayConn.prototype.retire_surface = function(surface)
 {
-    var canvas = document.getElementById("spice_surface_" + surface_id);
-    if (Utils.DUMP_CANVASES && this.parent.dump_id)
-        document.getElementById(this.parent.dump_id).removeChild(canvas);
-    if (this.primary_surface == surface_id)
+    if (this.primary_surface == surface.surface_id &&
+        this.surfaces[surface.surface_id] === surface)
     {
         this.unhook_events();
         this.primary_surface = undefined;
-        document.getElementById(this.parent.screen_id).removeChild(canvas);
+        this.parent.mousex = this.parent.mousey = undefined;
     }
+    if (surface.canvas.parentNode)
+        surface.canvas.parentNode.removeChild(surface.canvas);
+}
 
+SpiceDisplayConn.prototype.delete_surface = function(surface_id)
+{
+    var surface = this.surfaces && this.surfaces[surface_id];
+    if (surface === undefined)
+        return;
+    this.retire_surface(surface);
     delete this.surfaces[surface_id];
 }
 

@@ -386,6 +386,9 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 if agent_enabled:
                     while received_resizes.get(timeout=5) != expected_size:
                         pass
+                    # The simulated guest ignores monitor configuration, so
+                    # the browser should retry rather than treating send as apply.
+                    assert received_resizes.get(timeout=5) == expected_size
                     while not received_resizes.empty():
                         received_resizes.get_nowait()
                 page.locator("#spice-screen").evaluate("e => e.style.transform = 'scale(1)'")
@@ -442,6 +445,13 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.screenshot(path=str(tmp_path / "spice-small-window.png"))
                 page.set_viewport_size({"width": 1100, "height": 760})
                 page.wait_for_function("() => document.querySelector('canvas').getBoundingClientRect().width === 640")
+                expanded_size = tuple(page.locator("#spice-area").evaluate("""e => [
+                  Math.max(320, Math.floor(e.clientWidth / 8) * 8),
+                  Math.max(200, Math.floor(e.clientHeight / 8) * 8)
+                ]"""))
+                if agent_enabled:
+                    while received_resizes.get(timeout=5) != expanded_size:
+                        pass
                 page.get_by_role("button", name="Open console controls").click()
                 expect(page.locator("#clipboard-panel")).to_be_visible()
                 expect(page.locator("#clipboard-panel > summary")).to_have_text("Clipboard")
