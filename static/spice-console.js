@@ -401,18 +401,24 @@ function fitDisplay() {
   if (!canvas) {
     viewport.style.width = viewport.style.height = '0px';
     screen.style.transform = '';
+    screen.style.left = screen.style.top = '0px';
     return;
   }
   if (!canvas.width || !canvas.height || !area.clientWidth || !area.clientHeight) return;
-  const scale = Math.min(1, area.clientWidth / canvas.width, area.clientHeight / canvas.height);
+  const monitor = canvas.spiceMonitor;
+  const width = monitor?.width || canvas.width;
+  const height = monitor?.height || canvas.height;
+  const scale = Math.min(1, area.clientWidth / width, area.clientHeight / height);
   // Transform the entire surface (including video/cursor overlays). The
   // canvas keeps its native dimensions; input handlers map pointer locations
   // back into that coordinate space so SPICE mouse positions remain accurate.
   screen.style.width = `${canvas.width}px`;
   screen.style.height = `${canvas.height}px`;
   screen.style.transform = `scale(${scale})`;
-  viewport.style.width = `${canvas.width * scale}px`;
-  viewport.style.height = `${canvas.height * scale}px`;
+  screen.style.left = `${-(monitor?.x || 0) * scale}px`;
+  screen.style.top = `${-(monitor?.y || 0) * scale}px`;
+  viewport.style.width = `${width * scale}px`;
+  viewport.style.height = `${height * scale}px`;
 }
 
 function requestGuestResize() {
@@ -484,6 +490,9 @@ async function connect() {
         lastGuestSize = null;
         resize();
       },
+      onmonitorchange() {
+        if (attempt === generation) fitDisplay();
+      },
       onclipboardstate(ready) {
         if (attempt !== generation) return;
         clipboardSendButton.disabled = !ready;
@@ -545,18 +554,22 @@ screenshotButton.addEventListener('click', async () => {
   takingScreenshot = true;
   screenshotButton.disabled = true;
   try {
-    // Copy at native resolution, independently of the popup's CSS scale.
+    // Capture the visible monitor at native resolution, independently of CSS scale.
+    const monitor = canvas.spiceMonitor;
+    const originX = monitor?.x || 0;
+    const originY = monitor?.y || 0;
     const snapshot = document.createElement('canvas');
-    snapshot.width = canvas.width;
-    snapshot.height = canvas.height;
+    snapshot.width = monitor?.width || canvas.width;
+    snapshot.height = monitor?.height || canvas.height;
     const context = snapshot.getContext('2d');
-    context.drawImage(canvas, 0, 0);
+    context.drawImage(canvas, -originX, -originY);
     // VP8 streams are separate video overlays; include their current frames
     // in DOM paint order, preserving the guest's clip and vertical direction.
     for (const video of screen.querySelectorAll('video')) {
       const stream = video.spice_stream;
       if (!stream || video.readyState < 2) continue;
       context.save();
+      context.translate(-originX, -originY);
       if (stream.clip?.type === Constants.SPICE_CLIP_TYPE_RECTS) {
         context.beginPath();
         for (const rect of stream.clip.rects?.rects || []) {

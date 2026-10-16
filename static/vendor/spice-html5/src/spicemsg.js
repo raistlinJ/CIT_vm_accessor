@@ -912,6 +912,30 @@ function SpiceMsgSurfaceDestroy(a, at)
     this.from_buffer(a, at);
 }
 
+/* The display channel reports visible monitor rectangles separately from the
+   backing surface. QXL can keep a larger surface after a guest resize. */
+function SpiceMsgDisplayMonitorsConfig(a)
+{
+    var dv = new DataView(a);
+    if (dv.byteLength < 4)
+        return;
+    this.count = dv.getUint16(0, true);
+    this.max_allowed = dv.getUint16(2, true);
+    if (this.count > 256 || dv.byteLength < 4 + this.count * 28)
+        return;
+    this.heads = [];
+    for (var i = 0, at = 4; i < this.count; i++, at += 28)
+        this.heads.push({
+            id: dv.getUint32(at, true),
+            surface_id: dv.getUint32(at + 4, true),
+            width: dv.getUint32(at + 8, true),
+            height: dv.getUint32(at + 12, true),
+            x: dv.getInt32(at + 16, true),
+            y: dv.getInt32(at + 20, true),
+            flags: dv.getUint32(at + 24, true),
+        });
+}
+
 SpiceMsgSurfaceDestroy.prototype =
 {
     from_buffer: function(a, at)
@@ -1084,18 +1108,22 @@ function mouse_position(e)
     {
         var rect = canvas.getBoundingClientRect();
         if (rect.width && rect.height)
+        {
+            var monitor = canvas.spiceMonitor;
+            var x = Math.floor((e.clientX - rect.left) * canvas.width / rect.width);
+            var y = Math.floor((e.clientY - rect.top) * canvas.height / rect.height);
             return {
-                x: Math.max(0, Math.min(canvas.width - 1, Math.floor((e.clientX - rect.left) * canvas.width / rect.width))),
-                y: Math.max(0, Math.min(canvas.height - 1, Math.floor((e.clientY - rect.top) * canvas.height / rect.height)))
+                x: Math.max(0, Math.min((monitor ? monitor.width : canvas.width) - 1, x - (monitor ? monitor.x : 0))),
+                y: Math.max(0, Math.min((monitor ? monitor.height : canvas.height) - 1, y - (monitor ? monitor.y : 0)))
             };
+        }
     }
     return { x: e.offsetX, y: e.offsetY };
 }
 
 function SpiceMsgcMousePosition(sc, e)
 {
-    // FIXME - figure out how to correctly compute display_id
-    this.display_id = 0;
+    this.display_id = e?.currentTarget?.spiceMonitor?.id || 0;
     this.buttons_state = sc.buttons_state;
     if (e)
     {
@@ -1511,6 +1539,7 @@ export {
   SpiceMsgDisplayCopyBits,
   SpiceMsgSurfaceCreate,
   SpiceMsgSurfaceDestroy,
+  SpiceMsgDisplayMonitorsConfig,
   SpiceMsgInputsInit,
   SpiceMsgInputsKeyModifiers,
   SpiceMsgCursorInit,

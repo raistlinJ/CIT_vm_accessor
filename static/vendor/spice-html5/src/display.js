@@ -219,6 +219,7 @@ function handle_draw_jpeg_onerror()
 function SpiceDisplayConn()
 {
     SpiceConn.apply(this, arguments);
+    this.monitor_heads = [];
     this.ops = [];
     this.ops_head = 0;
     this.image_jobs = new Map();
@@ -227,6 +228,25 @@ function SpiceDisplayConn()
 }
 
 SpiceDisplayConn.prototype = Object.create(SpiceConn.prototype);
+
+SpiceDisplayConn.prototype.update_primary_monitor = function()
+{
+    var surface = this.surfaces && this.surfaces[this.primary_surface];
+    if (!surface)
+        return;
+    var heads = (this.monitor_heads || []).filter(function(head) {
+        return head.surface_id === surface.surface_id && head.id <= 255 &&
+               head.width > 0 && head.height > 0 &&
+               head.x >= 0 && head.y >= 0 &&
+               head.x + head.width <= surface.width &&
+               head.y + head.height <= surface.height;
+    });
+    var head = heads.find(function(candidate) { return candidate.id === 0; }) || heads[0];
+    surface.canvas.spiceMonitor = head || null;
+    this.parent.mousex = this.parent.mousey = undefined;
+    if (this.parent.onmonitorchange)
+        this.parent.onmonitorchange();
+};
 
 /*----------------------------------------------------------------------------
 **  Draw queue
@@ -909,6 +929,7 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
             /* We're going to leave width dynamic, but correctly set the height */
             document.getElementById(this.parent.screen_id).style.height = m.surface.height + "px";
             this.hook_events();
+            this.update_primary_monitor();
         }
         return true;
     }
@@ -1082,7 +1103,14 @@ SpiceDisplayConn.prototype.process_channel_message = function(msg)
 
     if (msg.type == Constants.SPICE_MSG_DISPLAY_MONITORS_CONFIG)
     {
-        this.known_unimplemented(msg.type, "Display Monitors Config");
+        var config = new Messages.SpiceMsgDisplayMonitorsConfig(msg.data);
+        if (!config.heads)
+        {
+            this.log_warn("Ignoring malformed display monitors config");
+            return true;
+        }
+        this.monitor_heads = config.heads;
+        this.update_primary_monitor();
         return true;
     }
 

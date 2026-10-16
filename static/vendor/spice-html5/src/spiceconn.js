@@ -170,7 +170,8 @@ SpiceConn.prototype =
         }
         else if (msg.channel_type == Constants.SPICE_CHANNEL_DISPLAY)
         {
-            var caps =  (1 << Constants.SPICE_DISPLAY_CAP_SIZED_STREAM) |
+            var caps =  (1 << Constants.SPICE_DISPLAY_CAP_MONITORS_CONFIG) |
+                        (1 << Constants.SPICE_DISPLAY_CAP_SIZED_STREAM) |
                         (1 << Constants.SPICE_DISPLAY_CAP_STREAM_REPORT) |
                         (1 << Constants.SPICE_DISPLAY_CAP_MULTI_CODEC) |
                         (1 << Constants.SPICE_DISPLAY_CAP_CODEC_MJPEG);

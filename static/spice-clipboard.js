@@ -57,6 +57,7 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     super(options);
     this.onclipboard = options.onclipboard || (() => {});
     this.onclipboardstate = options.onclipboardstate || (() => {});
+    this.onmonitorchange = options.onmonitorchange || (() => {});
     this.onfiletransfer = options.onfiletransfer || (() => {});
     this.agentReader = new AgentMessageReader();
     this.localClipboard = null;

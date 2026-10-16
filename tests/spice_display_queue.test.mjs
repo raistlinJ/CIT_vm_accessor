@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SpiceDisplayConn } from '../static/vendor/spice-html5/src/display.js';
 import { Constants } from '../static/vendor/spice-html5/src/enums.js';
-import { SpiceMsgcMouseMotion } from '../static/vendor/spice-html5/src/spicemsg.js';
+import { SpiceMsgcMouseMotion, SpiceMsgcMousePosition, SpiceMsgDisplayMonitorsConfig } from '../static/vendor/spice-html5/src/spicemsg.js';
 
 function displayQueue() {
   const display = Object.create(SpiceDisplayConn.prototype);
@@ -115,4 +115,52 @@ test('relative mouse motion starts from the new framebuffer without a jump', () 
   assert.deepEqual([sc.mousex, sc.mousey], [512, 384]);
   const second = new SpiceMsgcMouseMotion(sc, event(276, 217));
   assert.deepEqual([second.x, second.y], [20, 10]);
+});
+
+test('monitor geometry selects the visible head and maps absolute input locally', () => {
+  const bytes = new ArrayBuffer(4 + 2 * 28);
+  const view = new DataView(bytes);
+  view.setUint16(0, 2, true);
+  const head = (at, id, surface, width, height, x, y) => {
+    view.setUint32(at, id, true);
+    view.setUint32(at + 4, surface, true);
+    view.setUint32(at + 8, width, true);
+    view.setUint32(at + 12, height, true);
+    view.setInt32(at + 16, x, true);
+    view.setInt32(at + 20, y, true);
+  };
+  head(4, 9, 8, 100, 100, 0, 0);
+  head(32, 3, 0, 400, 300, 80, 40);
+  assert.equal(new SpiceMsgDisplayMonitorsConfig(bytes).heads.length, 2);
+
+  let changed = 0;
+  const display = displayQueue();
+  const canvas = {
+    width: 640, height: 480,
+    getBoundingClientRect: () => ({ left: 20, top: 30, width: 320, height: 240 }),
+  };
+  display.surfaces = { 0: { surface_id: 0, width: 640, height: 480, canvas } };
+  display.primary_surface = 0;
+  display.parent = { mousex: 17, mousey: 20, onmonitorchange() { changed++; } };
+  assert.equal(display.process_channel_message({ type: Constants.SPICE_MSG_DISPLAY_MONITORS_CONFIG, data: bytes }), true);
+  assert.equal(canvas.spiceMonitor.id, 3);
+  assert.deepEqual([canvas.spiceMonitor.x, canvas.spiceMonitor.y, canvas.spiceMonitor.width, canvas.spiceMonitor.height], [80, 40, 400, 300]);
+  assert.deepEqual([display.parent.mousex, display.parent.mousey, changed], [undefined, undefined, 1]);
+
+  const sc = { buttons_state: 0 };
+  const position = new SpiceMsgcMousePosition(sc, { currentTarget: canvas, clientX: 20 + (80 + 125) / 2, clientY: 30 + (40 + 75) / 2 });
+  assert.deepEqual([position.x, position.y, position.display_id], [125, 75, 3]);
+  const edge = new SpiceMsgcMousePosition(sc, { currentTarget: canvas, clientX: 20 + 600 / 2, clientY: 30 + 450 / 2 });
+  assert.deepEqual([edge.x, edge.y], [399, 299]);
+});
+
+test('truncated monitor config is ignored without changing the display', () => {
+  const display = displayQueue();
+  let warned = 0;
+  display.log_warn = () => warned++;
+  display.parent = {};
+  const bytes = new ArrayBuffer(4);
+  new DataView(bytes).setUint16(0, 1, true);
+  assert.equal(display.process_channel_message({ type: Constants.SPICE_MSG_DISPLAY_MONITORS_CONFIG, data: bytes }), true);
+  assert.equal(warned, 1);
 });
