@@ -54,6 +54,8 @@ How it works
 - We redirect the user to Proxmox's built-in noVNC page for the VM they chose.
 """
 
+MAX_VM_FILE_BYTES = 1024 * 1024 * 1024
+
 PROXMOX_HOST = os.environ.get("PROXMOX_HOST", "127.0.0.1").strip()
 PROXMOX_REALM = os.environ.get("PROXMOX_REALM", "pam").strip()
 PROXMOX_PORT = os.environ.get("PROXMOX_PORT", "8006").strip()
@@ -1640,7 +1642,7 @@ def console_file_read(vmid):
       not (path.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", path)) or
       any(c in path for c in "\x00\r\n") or
       isinstance(offset, bool) or not isinstance(offset, int) or
-      not 0 <= offset <= 64 * 1024 * 1024):
+      not 0 <= offset <= MAX_VM_FILE_BYTES):
     return jsonify(error="Enter an absolute VM file path."), 400
   cookies = {"PVEAuthCookie": session["pve_ticket"]}
   headers = {"CSRFPreventionToken": session.get("pve_csrf")}
@@ -1687,6 +1689,8 @@ def console_file_read(vmid):
       raise ValueError("Invalid guest-agent file response")
     if legacy and chunk.get("truncated"):
       return jsonify(error="This Proxmox version cannot download files larger than 16 MiB through the guest-agent API."), 413
+    if offset + len(content) > MAX_VM_FILE_BYTES:
+      return jsonify(error="Files over 1 GiB cannot be downloaded."), 413
     reply = make_response(content)
     reply.headers["Content-Type"] = "application/octet-stream"
     reply.headers["Cache-Control"] = "no-store"

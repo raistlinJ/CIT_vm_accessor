@@ -102,6 +102,7 @@ const clipboardReceive = document.getElementById('clipboard-receive');
 const clipboardSendButton = document.getElementById('clipboard-send-button');
 const clipboardCopy = document.getElementById('clipboard-copy');
 const clipboardPaste = document.getElementById('clipboard-paste');
+const MAX_VM_FILE_BYTES = 1024 * 1024 * 1024;
 const fileUpload = document.getElementById('file-upload');
 const fileUploadStatus = document.getElementById('file-upload-status');
 const fileDownloadPath = document.getElementById('file-download-path');
@@ -151,8 +152,8 @@ if (fileUpload) {
       return;
     }
     for (const file of files) {
-      if (file.size > 512 * 1024 * 1024) {
-        showFileStatus(fileUploadStatus, `${file.name} exceeds the 512 MiB limit.`, true);
+      if (file.size > MAX_VM_FILE_BYTES) {
+        showFileStatus(fileUploadStatus, `${file.name} exceeds the 1 GiB limit.`, true);
         continue;
       }
       connection.file_xfer_start(file);
@@ -177,7 +178,7 @@ if (fileDownload) {
       const chunks = [];
       let offset = 0;
       while (true) {
-        if (offset > 64 * 1024 * 1024) throw new Error('Files over 64 MiB cannot be downloaded.');
+        if (offset > MAX_VM_FILE_BYTES) throw new Error('Files over 1 GiB cannot be downloaded.');
         const response = await fetch(`/api/spice/${document.body.dataset.vmid}/file-read`, {
           method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
           headers: { 'Content-Type': 'application/json', 'X-Console-CSRF': document.body.dataset.csrf },
@@ -196,8 +197,8 @@ if (fileDownload) {
         if (bytes.byteLength > chunkLimit * 1024 * 1024 || (!bytes.byteLength && response.headers.get('X-File-More') === 'true')) {
           throw new Error('The VM returned an invalid file chunk.');
         }
-        if (offset + bytes.byteLength > 64 * 1024 * 1024) {
-          throw new Error('Files over 64 MiB cannot be downloaded.');
+        if (offset + bytes.byteLength > MAX_VM_FILE_BYTES) {
+          throw new Error('Files over 1 GiB cannot be downloaded.');
         }
         chunks.push(bytes);
         offset += bytes.byteLength;

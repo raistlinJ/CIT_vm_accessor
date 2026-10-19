@@ -84,7 +84,7 @@ def test_reads_binary_chunk_from_current_cluster_node(client, monkeypatch):
 
 @pytest.mark.parametrize("path,offset", [
     ("relative/file", 0), ("/bad\x00name", 0), ("/bad\nname", 0),
-    ("/file", -1), ("/file", 64 * 1024 * 1024 + 1), ("/file", True),
+    ("/file", -1), ("/file", 1024 * 1024 * 1024 + 1), ("/file", True),
 ])
 def test_rejects_invalid_file_requests(client, monkeypatch, path, offset):
     monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
@@ -135,3 +135,27 @@ def test_proxmox_file_content_and_path_are_not_logged(client, caplog):
     assert secret not in caplog.text
     assert path not in caplog.text
     assert base64.b64encode(secret.encode()).decode() not in caplog.text
+
+
+@pytest.mark.parametrize("offset,content,expected", [
+    (64 * 1024 * 1024 + 1, b"after old limit", 200),
+    (1024 * 1024 * 1024 - 1, b"x", 200),
+    (1024 * 1024 * 1024, b"", 200),
+    (1024 * 1024 * 1024 - 1, b"xx", 413),
+    (1024 * 1024 * 1024, b"x", 413),
+])
+def test_download_one_gib_boundary(client, monkeypatch, offset, content, expected):
+    monkeypatch.setenv("ENABLE_VM_FILE_DOWNLOAD", "true")
+    with patch.object(main, "proxmox_get", side_effect=[
+        vm_resources(),
+        response({"description": '{"AccessForge":{"file_download":true}}'}),
+        response({"content": base64.b64encode(content).decode(),
+                  "bytes-read": len(content), "truncated": 0}),
+    ]) as get:
+        result = read_request(client, offset=offset)
+    assert result.status_code == expected
+    assert get.call_args.kwargs["params"]["offset"] == offset
+    if expected == 200:
+        assert result.data == content
+    else:
+        assert "1 GiB" in result.json["error"]
