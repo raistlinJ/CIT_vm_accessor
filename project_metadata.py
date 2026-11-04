@@ -1,4 +1,4 @@
-"""Project display names and external material links from Proxmox VM notes."""
+"""Material categories and external material links from Proxmox VM notes."""
 import html
 from urllib.parse import urlsplit
 
@@ -10,8 +10,9 @@ def parse_project_metadata(notes):
     if metadata is None and isinstance(notes, str):
         metadata = parse_accessforge_metadata(html.unescape(notes))
     metadata = metadata or {}
-    name = metadata.get("Project Name")
-    name = name.strip() if isinstance(name, str) else ""
+    category = metadata.get("Material Category")
+    category = category.strip() if isinstance(category, str) else ""
+    category = category or "Misc"
     materials = []
     entries = metadata.get("materials")
     if isinstance(entries, list):
@@ -32,21 +33,24 @@ def parse_project_metadata(notes):
             title = entry.get("title")
             title = title.strip() if isinstance(title, str) else ""
             materials.append({"title": title or url, "url": url})
-    return {"name": name, "materials": materials}
+    return {"category": category, "materials": materials}
 
 
 def collect_project_metadata(vms, scenario):
-    """Combine visible VMs in a Scenario, preferring the lowest VM ID."""
-    project = {"name": scenario, "materials": []}
-    seen_urls = set()
-    named = False
+    """Group visible VM links by category, deduplicating URLs within each category."""
+    project = {"name": scenario, "categories": []}
+    categories = {}
+    seen_urls = {}
     for vm in sorted(vms, key=lambda vm: int(vm["vmid"])):
         metadata = parse_project_metadata(vm.get("notes"))
-        if metadata["name"] and not named:
-            project["name"] = metadata["name"]
-            named = True
+        category = metadata["category"]
         for material in metadata["materials"]:
-            if material["url"] not in seen_urls:
-                seen_urls.add(material["url"])
-                project["materials"].append(material)
+            if category not in categories:
+                group = {"name": category, "materials": []}
+                categories[category] = group
+                seen_urls[category] = set()
+                project["categories"].append(group)
+            if material["url"] not in seen_urls[category]:
+                seen_urls[category].add(material["url"])
+                categories[category]["materials"].append(material)
     return project

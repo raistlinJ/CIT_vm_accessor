@@ -429,6 +429,10 @@ TPL_BASE = """
   .project-name { min-width:0; overflow-wrap:anywhere; }
   .project-materials { margin:0 0 1rem; padding:.7rem .8rem; border:1px solid var(--muted); background:var(--item-bg); }
   .project-materials h3 { margin:0 0 .45rem; font-size:.8rem; color:var(--text); }
+  .material-category + .material-category { margin-top:.4rem; }
+  .material-category summary { cursor:pointer; padding:.45rem 0; color:var(--text); font-size:.85rem; font-weight:600; }
+  .material-category summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  .material-category[open] summary { margin-bottom:.3rem; }
   .project-materials ul { display:flex; flex-wrap:wrap; gap:.45rem 1rem; list-style:none; margin:0; padding:0; }
   .project-materials li { min-width:0; max-width:100%; }
   .project-materials a { display:inline-block; padding:.3rem 0; color:var(--accent); font-size:.85rem; overflow-wrap:anywhere; text-underline-offset:.2em; }
@@ -781,14 +785,19 @@ TPL_HOME = """
         {% endif %}
         <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY backend VMs for this scenario">Reset Network Backend</button>
       </div>
-      {% if project.materials %}
+      {% if project.categories %}
       <section class="project-materials" aria-label="Materials for {{ project.name }}">
         <h3>Materials</h3>
-        <ul>
-          {% for material in project.materials %}
-          <li><a href="{{ material.url }}" target="_blank" rel="noopener noreferrer">{{ material.title }}</a></li>
-          {% endfor %}
-        </ul>
+        {% for category in project.categories %}
+        <details class="material-category">
+          <summary>{{ category.name }}</summary>
+          <ul>
+            {% for material in category.materials %}
+            <li><a href="{{ material.url }}" target="_blank" rel="noopener noreferrer">{{ material.title }}</a></li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endfor %}
       </section>
       {% endif %}
       <div class="vm-list">
