@@ -433,9 +433,10 @@ TPL_BASE = """
   .material-category summary { cursor:pointer; padding:.45rem 0; color:var(--text); font-size:.85rem; font-weight:600; }
   .material-category summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
   .material-category[open] summary { margin-bottom:.3rem; }
-  .project-materials ul { display:flex; flex-wrap:wrap; gap:.45rem 1rem; list-style:none; margin:0; padding:0; }
+  .project-materials ul { display:grid; gap:.5rem; list-style:none; margin:0; padding:0; }
   .project-materials li { min-width:0; max-width:100%; }
-  .project-materials a { display:inline-block; padding:.3rem 0; color:var(--accent); font-size:.85rem; overflow-wrap:anywhere; text-underline-offset:.2em; }
+  .project-materials a { display:block; padding:.65rem .8rem; border:1px solid var(--muted); background:var(--scenario-bg); color:var(--accent); font-size:.85rem; overflow-wrap:anywhere; text-underline-offset:.2em; }
+  .project-materials a:hover { border-color:var(--accent); background:var(--item-hover); }
   .project-materials a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
   [data-theme="original"] .scenario-header, [data-theme="pokemon"] .scenario-header { text-shadow:none; }
   .vm-list { margin: 0; }
