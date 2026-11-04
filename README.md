@@ -5,6 +5,7 @@ AccessForge signs into the Proxmox VE API and opens browser consoles across your
 ## Features
 
 - Proxmox login and VM listing, grouped by scenario
+- Optional project names and materials links displayed with each project's VMs
 - Browser SPICE with Re-Fit Window, Ctrl+Alt+Del, and a noVNC fallback
 - Clipboard panel for two-way text transfer, including browsers that deny clipboard permission
 - Optional browser-to-VM uploads and VM-to-browser downloads
@@ -125,6 +126,33 @@ Open the collapsible **Clipboard** section in the left-edge controls drawer to s
 - Transfers support UTF-8 text, including multiple lines, up to **1 MiB**. Images and files are not supported by this clipboard panel. Large text is reassembled across agent packets.
 - Sharing is explicit: focusing the VM never reads or overwrites the computer's clipboard. Guest copies update only the incoming text box until the user clicks **Copy from VM**. Clipboard text is held in the console's memory, cleared on disconnect/reconnect, and is not saved to browser storage or logged by AccessForge.
 - If **Send to VM** stays disabled, verify the VM's SPICE agent is connected and supports clipboard sharing. No Proxmox host configuration is changed by this feature.
+
+## Project names and materials
+
+Add an optional `"Project Name"` and `materials` list inside the existing `AccessForge` object in a visible VM's Proxmox Notes, at the same level as `file_upload` and `file_download`:
+
+```json
+{
+  "Scenario": "network-lab",
+  "User": "student",
+  "Pass": "your-existing-guest-password",
+  "AccessForge": {
+    "file_upload": false,
+    "file_download": false,
+    "Project Name": "Network Fundamentals",
+    "materials": [
+      {"title": "Lab instructions", "url": "https://example.edu/labs/networking"},
+      {"title": "Reference PDF", "url": "https://example.edu/files/reference.pdf"}
+    ]
+  }
+}
+```
+
+Extend the existing `AccessForge` object rather than adding a second one, and retain the current credentials and transfer settings. These fields can also live in a separate `AccessForge` JSON object alongside the legacy credential JSON, provided there is only one `AccessForge` object in the Notes.
+
+`Scenario` continues to group VMs and identify backend reset actions. `Project Name` is an optional display title for that group; without a nonempty string, the heading uses `Scenario`. Configure it on one visible VM per group, or use the same name on all of them. If names conflict, the name on the lowest-ID visible VM with a name wins. Different Scenarios remain separate even if their display names match.
+
+Materials appear inside the project box above its VMs. Links are collected only from visible VMs in that Scenario and deduplicated by URL, using the title from the lowest-ID VM when duplicated. Only absolute HTTP/HTTPS links are accepted. `title` is optional and defaults to the URL. Links open in a new tab; PDFs and other hosted files follow the destination server's viewing/download behavior. AccessForge does not host or fetch these files, and VM file-transfer switches do not affect these links. Empty or invalid metadata shows no Materials section. Reload the page after editing Notes; **Refresh Status** updates only VM and backend status.
 
 ## VM file transfer
 

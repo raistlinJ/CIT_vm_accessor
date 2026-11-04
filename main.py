@@ -19,6 +19,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.http import parse_cookie
 from spice_bridge import SpiceBridge, Target, session_owner
 from transfer_policy import parse_transfer_policy
+from project_metadata import collect_project_metadata
 import concurrent.futures
 import re
 import html
@@ -424,7 +425,14 @@ TPL_BASE = """
   .vm-item { position:relative; display:flex; align-items:flex-start; gap:.5rem; border:1px solid var(--muted); border-radius:0; padding:.55rem .65rem .55rem 2.2rem; flex-wrap:wrap; background:var(--item-bg); min-height:60px; overflow:hidden; cursor:pointer; transition:border-color .18s, box-shadow .18s, background .25s; }
   .vm-item:hover { border-color:var(--border); background:var(--item-hover); box-shadow:0 0 8px var(--shadow-base); }
   .scenario-section { border: 1px solid var(--muted); background: var(--scenario-bg); border-radius: 0; padding: 1rem; margin-bottom: 2rem; box-shadow: inset 0 0 10px var(--scenario-shadow); }
-  .scenario-header { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.8rem 0.2rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--muted); display: flex; align-items: center; gap: 0.5rem; text-shadow:0 0 2px var(--accent); }
+  .scenario-header { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.8rem 0.2rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--muted); display: flex; flex-wrap:wrap; align-items: center; gap: 0.5rem; text-shadow:0 0 2px var(--accent); }
+  .project-name { min-width:0; overflow-wrap:anywhere; }
+  .project-materials { margin:0 0 1rem; padding:.7rem .8rem; border:1px solid var(--muted); background:var(--item-bg); }
+  .project-materials h3 { margin:0 0 .45rem; font-size:.8rem; color:var(--text); }
+  .project-materials ul { display:flex; flex-wrap:wrap; gap:.45rem 1rem; list-style:none; margin:0; padding:0; }
+  .project-materials li { min-width:0; max-width:100%; }
+  .project-materials a { display:inline-block; padding:.3rem 0; color:var(--accent); font-size:.85rem; overflow-wrap:anywhere; text-underline-offset:.2em; }
+  .project-materials a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
   [data-theme="original"] .scenario-header, [data-theme="pokemon"] .scenario-header { text-shadow:none; }
   .vm-list { margin: 0; }
   .scenario-btn { margin-left: auto; padding: 0.35rem 0.8rem; font-size: 0.72rem; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); border-radius: 0; cursor: pointer; font-weight: 700; transition: all 0.2s; letter-spacing: 0.3px; text-shadow: none; box-shadow: 0 2px 4px var(--shadow-base); }
@@ -760,9 +768,10 @@ TPL_HOME = """
 <div class="vm-action-layout">
   <div>
     {% for scenario, group_vms in grouped_vms.items() %}
+    {% set project = projects[scenario] %}
     <div class="scenario-section">
       <div class="scenario-header">
-        {{ scenario }}
+        <span class="project-name">{{ project.name }}</span>
         <span class="scenario-count">{{ group_vms|length }}</span>
         {% if backend_health.get(scenario) %}
           {% set b_health = backend_health[scenario] %}
@@ -772,6 +781,16 @@ TPL_HOME = """
         {% endif %}
         <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY backend VMs for this scenario">Reset Network Backend</button>
       </div>
+      {% if project.materials %}
+      <section class="project-materials" aria-label="Materials for {{ project.name }}">
+        <h3>Materials</h3>
+        <ul>
+          {% for material in project.materials %}
+          <li><a href="{{ material.url }}" target="_blank" rel="noopener noreferrer">{{ material.title }}</a></li>
+          {% endfor %}
+        </ul>
+      </section>
+      {% endif %}
       <div class="vm-list">
       {% for vm in group_vms %}
         <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
@@ -1254,6 +1273,7 @@ def home():
   # Enrich VMs with notes in parallel to determine Scenario
   # Limit workers to avoid hammering Proxmox
   grouped_vms = {}
+  projects = {}
   backend_health = {}
   if raw_vms:
     # Prepare shared auth for threads
@@ -1295,6 +1315,7 @@ def home():
         sorted_keys.remove("Uncategorized")
         sorted_keys.append("Uncategorized")
     grouped_vms = {k: grouped_vms[k] for k in sorted_keys}
+    projects = {sc: collect_project_metadata(group, sc) for sc, group in grouped_vms.items()}
 
     # Calculate backend network health for each scenario
     visible_vmid_set = set(str(v["vmid"]) for v in vms)
@@ -1381,6 +1402,7 @@ def home():
     TPL_HOME,
     vms=vms,
     grouped_vms=grouped_vms,
+    projects=projects,
     backend_health=backend_health,
     last_action=last_action,
     show_dock=True,
