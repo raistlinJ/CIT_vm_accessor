@@ -178,11 +178,20 @@ def test_fallback_available_even_when_bridge_is_down(client):
         assert session_request(client).status_code == 503
 
 
-def test_websocket_cookie_rejects_tampering_and_expired_login(client):
+@pytest.mark.parametrize("age_minutes", [111, 180])
+def test_websocket_cookie_accepts_old_login_but_rejects_tampering(client, age_minutes):
     assert main.spice_cookie_owner("session=forged") is None
     with client.session_transaction() as session:
-        session["pve_login_time"] = time.time() - 111 * 60
-    assert spice_owner_from_client(client) is None
+        session["pve_login_time"] = time.time() - age_minutes * 60
+        data = dict(session)
+    # Age both the legacy login timestamp and the signed cookie itself.
+    signer = main.app.session_interface.get_signing_serializer(main.app)
+    with patch("itsdangerous.timed.TimestampSigner.get_timestamp",
+               return_value=int(time.time() - age_minutes * 60)):
+        cookie = signer.dumps(data)
+    name = main.app.config["SESSION_COOKIE_NAME"]
+    assert main.spice_cookie_owner(f"{name}={cookie}") == session_owner("test-ticket")
+    assert main.spice_cookie_owner(f"{name}={cookie}tampered") is None
 
 
 def test_session_rejects_cross_origin(client):
@@ -194,7 +203,10 @@ def test_session_rejects_cross_origin(client):
     assert result.status_code == 403
 
 
-def test_resolves_migrated_vm_and_keeps_routing_credentials_server_side(client, certificates, monkeypatch):
+@pytest.mark.parametrize("age_minutes", [0, 111, 180])
+def test_resolves_migrated_vm_and_keeps_routing_credentials_server_side(client, certificates, monkeypatch, age_minutes):
+    with client.session_transaction() as session:
+        session["pve_login_time"] = time.time() - age_minutes * 60
     bridge = SpiceBridge(main.spice_cookie_owner)
     monkeypatch.setattr(main, "spice_bridge", bridge)
     with patch.object(SpiceBridge, "running", True), patch.object(main, "proxmox_get", return_value=response([
@@ -329,7 +341,7 @@ def live_bridge(certificates, proxy):
     bridge.start(port=0)
     port = bridge.server.sockets[0].getsockname()[1]
     target = Target.from_config(certificates.config, "127.0.0.1", proxy.port)
-    token = bridge.issue(target, "owner", "https://accessforge.test", 60)
+    token = bridge.issue(target, "owner", "https://accessforge.test")
     yield SimpleNamespace(bridge=bridge, url=f"ws://127.0.0.1:{port}/spice/ws?token={token}", token=token)
     bridge.stop()
 
@@ -399,6 +411,24 @@ def test_expired_grant_rejected_before_network_access(live_bridge, proxy):
     assert not proxy.authorities
 
 
+def test_established_tunnel_survives_admission_expiry_and_age(live_bridge, proxy):
+    with websocket(live_bridge.url) as ws:
+        assert ws.recv(timeout=5) == b"server hello"
+        bridge = live_bridge.bridge
+        with bridge.lock:
+            grant = bridge.grants[live_bridge.token]
+            grant.connect_until = time.monotonic() - 3 * 60 * 60
+            bridge._prune(time.monotonic())
+            assert bridge.grants[live_bridge.token] is grant
+        # An established channel stays usable; another channel cannot join late.
+        assert ws.ping().wait(5)
+        assert not proxy.closed.is_set()
+        with pytest.raises(InvalidStatus):
+            with websocket(live_bridge.url):
+                pass
+        assert ws.ping().wait(5)
+
+
 def test_logout_closes_active_tunnels(live_bridge, proxy):
     with websocket(live_bridge.url) as ws:
         assert ws.recv(timeout=5) == b"server hello"
@@ -440,9 +470,9 @@ def test_text_websocket_frames_are_rejected(live_bridge):
 def test_session_and_channel_limits(certificates):
     bridge = SpiceBridge(lambda _: "owner", max_sessions=1, max_channels=1)
     target = Target.from_config(certificates.config, "node-a")
-    token = bridge.issue(target, "owner", "https://accessforge.test", 60)
+    token = bridge.issue(target, "owner", "https://accessforge.test")
     with pytest.raises(RuntimeError):
-        bridge.issue(target, "owner", "https://accessforge.test", 60)
+        bridge.issue(target, "owner", "https://accessforge.test")
     bridge.grants[token].connections.add("existing-channel")
     request = SimpleNamespace(path=f"/spice/ws?token={token}", headers={"Origin": "https://accessforge.test"})
     assert bridge._lookup(request) is None
@@ -458,7 +488,7 @@ def test_bridge_relays_and_shuts_down_when_native_socketpair_is_denied(certifica
         assert bridge.loop._ssock.getsockname()[0] == "127.0.0.1"
         port = bridge.server.sockets[0].getsockname()[1]
         target = Target.from_config(certificates.config, "127.0.0.1", proxy.port)
-        token = bridge.issue(target, "owner", "https://accessforge.test", 60)
+        token = bridge.issue(target, "owner", "https://accessforge.test")
         with websocket(f"ws://127.0.0.1:{port}/spice/ws?token={token}") as ws:
             assert ws.recv(timeout=5) == b"server hello"
             payload = (struct.pack("<4sIII", b"REDQ", 2, 2, 22) +

@@ -113,10 +113,9 @@ def spice_cookie_owner(cookie_header):
   if not cookie:
     return None
   try:
-    data = app.session_interface.get_signing_serializer(app).loads(cookie, max_age=110 * 60)
+    data = app.session_interface.get_signing_serializer(app).loads(cookie)
     ticket = data.get("pve_ticket")
-    issued = data.get("pve_login_time", 0)
-    if not ticket or time.time() - issued >= 110 * 60:
+    if not ticket:
       return None
     return session_owner(ticket)
   except (BadSignature, TypeError, ValueError):
@@ -968,9 +967,10 @@ def fetch_vm_notes(vm, cookies, headers, host, port, verify):
 # ---------- Routes ----------
 
 def require_session(api: bool = False):
-  """Decorator to ensure an active (and not soft-expired) Proxmox session.
-  If api=True, returns JSON errors; otherwise redirects to login (with force on soft expiry).
-  Soft expiry set to 110 minutes to preempt default Proxmox ticket timeout (~120m)."""
+  """Require a signed-in session; Proxmox validates its own ticket lifetime.
+
+  If api=True, return JSON errors; otherwise redirect to login.
+  """
   def deco(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
@@ -980,12 +980,6 @@ def require_session(api: bool = False):
           return jsonify({"error": "unauthorized"}), 401
         session.clear()
         return redirect(url_for("session_reset", reason="missing"))
-      issued = session.get("pve_login_time")
-      if issued and (time.time() - issued) > (110*60):
-        if api:
-          return jsonify({"error": "expired"}), 401
-        session.clear()
-        return redirect(url_for("session_reset", reason="expired"))
       return fn(*args, **kwargs)
     return wrapper
   return deco
@@ -1065,7 +1059,6 @@ def login():
     session["pve_user"] = user_with_realm
     session["pve_ticket"] = ticket
     session["pve_csrf"] = csrf
-    session["pve_login_time"] = time.time()
     session["pve_host"] = host_override
     session["pve_port"] = port_override
     resp = make_response(redirect(url_for("home")))
@@ -1748,7 +1741,6 @@ def spice_session(vmid):
                      fallback=fallback), 502
     config = config_response.json()["data"]
     target = Target.from_config(config, proxy_host, os.environ.get("SPICE_PROXY_PORT", "3128"))
-    lifetime = max(1, 110 * 60 - (time.time() - session.get("pve_login_time", time.time())))
     policy = vm_transfer_policy(node, vmid, cookies, headers)
     api_base = f"https://{session.get('pve_host', PROXMOX_HOST)}:{session.get('pve_port', PROXMOX_PORT)}/api2/json"
     api_verify = session.get("pve_verify_ssl", VERIFY_SSL)
@@ -1769,7 +1761,7 @@ def spice_session(vmid):
         return vm_transfer_policy(current_node, vmid, cookies, headers, fetch=background_get)["file_upload"]
       except (requests.RequestException, ValueError, KeyError, TypeError, StopIteration):
         return False
-    token = spice_bridge.issue(target, session_owner(session["pve_ticket"]), origin, lifetime,
+    token = spice_bridge.issue(target, session_owner(session["pve_ticket"]), origin,
                                upload_allowed=policy["file_upload"], upload_check=upload_check)
     result = jsonify(websocket=f"/spice/ws?token={token}", password=config["password"],
                      title=config.get("title", f"VM {vmid}"), node=node, fallback=fallback,

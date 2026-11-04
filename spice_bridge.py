@@ -171,7 +171,6 @@ class Grant:
     owner: str
     origin: str
     connect_until: float
-    expires: float
     connections: set = field(default_factory=set)
     upload_allowed: bool = False
     upload_check: object = None
@@ -193,7 +192,7 @@ class SpiceBridge:
     def running(self):
         return self.thread is not None and self.thread.is_alive() and self.server is not None
 
-    def issue(self, target, owner, origin, lifetime, *, upload_allowed=False, upload_check=None):
+    def issue(self, target, owner, origin, *, upload_allowed=False, upload_check=None):
         now = time.monotonic()
         with self.lock:
             self._prune(now)
@@ -202,13 +201,13 @@ class SpiceBridge:
                 raise RuntimeError("Too many open consoles. Close a console and try again.")
             token = secrets.token_urlsafe(32)
             # QEMU expires newly issued SPICE passwords after 30 seconds.
-            self.grants[token] = Grant(target, owner, origin, now + 25, now + lifetime,
+            self.grants[token] = Grant(target, owner, origin, now + 25,
                                        upload_allowed=upload_allowed, upload_check=upload_check)
         return token
 
     def _prune(self, now):
         for token, grant in list(self.grants.items()):
-            if not grant.connections and now >= min(grant.connect_until, grant.expires):
+            if not grant.connections and now >= grant.connect_until:
                 del self.grants[token]
 
     def _lookup(self, request):
@@ -221,7 +220,7 @@ class SpiceBridge:
         now = time.monotonic()
         if (not grant or not owner or owner != grant.owner or
                 request.headers.get("Origin") != grant.origin or
-                now >= min(grant.connect_until, grant.expires) or
+                now >= grant.connect_until or
                 len(grant.connections) >= self.max_channels):
             return None
         return grant
@@ -311,16 +310,9 @@ class SpiceBridge:
     async def _reap(self):
         while True:
             await asyncio.sleep(5)
-            connections = []
             with self.lock:
-                now = time.monotonic()
-                self._prune(now)
-                for token, grant in list(self.grants.items()):
-                    if now >= grant.expires:
-                        connections.extend(grant.connections)
-                        del self.grants[token]
-            for connection in connections:
-                await connection.close(1008, "Session expired; sign in again")
+                # Admission expires, but established tunnels have no age limit.
+                self._prune(time.monotonic())
 
     def start(self, host="127.0.0.1", port=8081):
         ready = threading.Event()
