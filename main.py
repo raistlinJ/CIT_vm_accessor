@@ -438,7 +438,7 @@ TPL_BASE = """
   .materials-table thead th { position:sticky; top:0; z-index:1; background:var(--item-bg); color:var(--muted); text-align:left; font-weight:600; }
   .materials-table thead th:first-child { width:34%; }
   .materials-table th, .materials-table td { padding:.5rem .6rem; border-bottom:1px solid var(--muted); vertical-align:top; overflow-wrap:anywhere; }
-  .materials-table tbody th { text-align:left; font-weight:400; }
+  .materials-table tbody th { text-align:left; font-weight:400; vertical-align:middle; }
   .materials-table tbody:last-child tr:last-child td, .materials-table tbody:last-child th { border-bottom:0; }
   .materials-table tbody tr:hover { background:var(--item-hover); }
   .materials-table td:last-child { padding:0; }
