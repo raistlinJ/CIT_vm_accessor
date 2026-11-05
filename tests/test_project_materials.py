@@ -139,10 +139,10 @@ def test_home_renders_materials_in_correct_project_and_preserves_scenario_action
     assert len(groups) == 2
     network, other = groups
     assert '<span class="project-name">network-lab</span>' in network
-    assert '<td>Networking project</td>' in network
+    assert '<th scope="rowgroup" rowspan="2">Networking project</th>' in network
     assert '<div class="scenario-content has-materials">' in network
     assert 'aria-label="Materials for network-lab"' in network
-    assert network.index('<div class="vm-list">') < network.index('class="project-materials"')
+    assert network.index('class="project-materials"') < network.index('<div class="vm-list">')
     assert 'href="https://example.edu/reference.pdf" target="_blank" rel="noopener noreferrer"' in network
     assert 'data-scenario="network-lab"' in network
     assert network.count("Lab instructions") == 1
@@ -150,7 +150,7 @@ def test_home_renders_materials_in_correct_project_and_preserves_scenario_action
     assert "Other guide" not in network
     assert '<span class="project-name">other-lab</span>' in other
     assert "Other guide" in other and "Lab instructions" not in other
-    assert "<td>Misc</td>" in other
+    assert '<th scope="rowgroup" rowspan="1">Misc</th>' in other
     assert "Hidden name" not in body and "Secret guide" not in body and "VM 104" not in body
     with client.session_transaction() as session:
         assert session["backend_map"]["network-lab"] == ["104"]
@@ -180,7 +180,7 @@ def test_home_renders_categories_and_links_in_one_scrollable_materials_table(cli
     groups = [part.split('</tr>', 1)[0] for part in table.split('<tr>')[2:]]
     assert len(groups) == 3
     for group, category, link in zip(groups, ["Guides", "Downloads", "Misc"], ["guide", "download", "misc"]):
-        assert f'<td>{category}</td>' in group
+        assert f'<th scope="rowgroup" rowspan="1">{category}</th>' in group
         assert f'href="https://example.edu/{link}"' in group
         assert group.count('<a ') == 1
     assert body.count('<table class="materials-table"') == 1

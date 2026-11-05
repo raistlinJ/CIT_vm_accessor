@@ -428,17 +428,18 @@ TPL_BASE = """
   .scenario-header { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.8rem 0.2rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--muted); display: flex; flex-wrap:wrap; align-items: center; gap: 0.5rem; text-shadow:0 0 2px var(--accent); }
   .project-name { min-width:0; overflow-wrap:anywhere; }
   .scenario-content { min-width:0; }
-  .scenario-content.has-materials { display:grid; grid-template-columns:minmax(0,1fr) minmax(17rem,.9fr); gap:1rem; align-items:start; }
+  .scenario-content.has-materials { display:grid; grid-template-columns:minmax(17rem,.9fr) minmax(0,1fr); gap:1rem; align-items:start; }
   .scenario-content .vm-list { min-width:0; grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr)); }
   .project-materials { min-width:0; border:1px solid var(--muted); background:var(--item-bg); }
   .project-materials h3 { margin:0; padding:.65rem .7rem; border-bottom:1px solid var(--muted); font-size:.8rem; color:var(--text); }
   .materials-scroll { max-height:20rem; overflow:auto; }
   .materials-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   .materials-table { width:100%; table-layout:fixed; border-spacing:0; font-size:.75rem; }
-  .materials-table th { position:sticky; top:0; z-index:1; background:var(--item-bg); color:var(--muted); text-align:left; font-weight:600; }
-  .materials-table th:first-child { width:34%; }
+  .materials-table thead th { position:sticky; top:0; z-index:1; background:var(--item-bg); color:var(--muted); text-align:left; font-weight:600; }
+  .materials-table thead th:first-child { width:34%; }
   .materials-table th, .materials-table td { padding:.5rem .6rem; border-bottom:1px solid var(--muted); vertical-align:top; overflow-wrap:anywhere; }
-  .materials-table tbody tr:last-child td { border-bottom:0; }
+  .materials-table tbody th { text-align:left; font-weight:400; }
+  .materials-table tbody:last-child tr:last-child td, .materials-table tbody:last-child th { border-bottom:0; }
   .materials-table tbody tr:hover { background:var(--item-hover); }
   .materials-table td:last-child { padding:0; }
   .project-materials a { display:flex; align-items:baseline; gap:.35rem; padding:.5rem .6rem; color:var(--accent); text-underline-offset:.2em; }
@@ -794,6 +795,26 @@ TPL_HOME = """
         <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY backend VMs for this scenario">Reset Network Backend</button>
       </div>
       <div class="scenario-content{% if project.categories %} has-materials{% endif %}">
+      {% if project.categories %}
+      <section class="project-materials" aria-label="Materials for {{ project.name }}">
+        <h3>Materials</h3>
+        <div class="materials-scroll" role="region" aria-label="Material links for {{ project.name }}" tabindex="0">
+          <table class="materials-table" aria-label="Materials for {{ project.name }}">
+            <thead><tr><th scope="col">Category</th><th scope="col">Material</th></tr></thead>
+            {% for category in project.categories %}
+            <tbody>
+              {% for material in category.materials %}
+              <tr>
+                {% if loop.first %}<th scope="rowgroup" rowspan="{{ category.materials|length }}">{{ category.name }}</th>{% endif %}
+                <td><a href="{{ material.url }}" target="_blank" rel="noopener noreferrer"><span class="material-title">{{ material.title }}</span><span aria-hidden="true">↗</span></a></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+            {% endfor %}
+          </table>
+        </div>
+      </section>
+      {% endif %}
       <div class="vm-list">
       {% for vm in group_vms %}
         <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
@@ -808,26 +829,6 @@ TPL_HOME = """
         </label>
       {% endfor %}
       </div>
-      {% if project.categories %}
-      <section class="project-materials" aria-label="Materials for {{ project.name }}">
-        <h3>Materials</h3>
-        <div class="materials-scroll" role="region" aria-label="Material links for {{ project.name }}" tabindex="0">
-          <table class="materials-table" aria-label="Materials for {{ project.name }}">
-            <thead><tr><th scope="col">Category</th><th scope="col">Material</th></tr></thead>
-            <tbody>
-              {% for category in project.categories %}
-              {% for material in category.materials %}
-              <tr>
-                <td>{{ category.name }}</td>
-                <td><a href="{{ material.url }}" target="_blank" rel="noopener noreferrer"><span class="material-title">{{ material.title }}</span><span aria-hidden="true">↗</span></a></td>
-              </tr>
-              {% endfor %}
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      {% endif %}
       </div>
     </div>
     {% else %}
