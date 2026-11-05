@@ -139,10 +139,10 @@ def test_home_renders_materials_in_correct_project_and_preserves_scenario_action
     assert len(groups) == 2
     network, other = groups
     assert '<span class="project-name">network-lab</span>' in network
-    assert '<summary>Networking project</summary>' in network
-    assert '<details class="material-category">' in network
+    assert '<td>Networking project</td>' in network
+    assert '<div class="scenario-content has-materials">' in network
     assert 'aria-label="Materials for network-lab"' in network
-    assert network.index("Lab instructions") < network.index('<div class="vm-list">')
+    assert network.index('<div class="vm-list">') < network.index('class="project-materials"')
     assert 'href="https://example.edu/reference.pdf" target="_blank" rel="noopener noreferrer"' in network
     assert 'data-scenario="network-lab"' in network
     assert network.count("Lab instructions") == 1
@@ -150,7 +150,7 @@ def test_home_renders_materials_in_correct_project_and_preserves_scenario_action
     assert "Other guide" not in network
     assert '<span class="project-name">other-lab</span>' in other
     assert "Other guide" in other and "Lab instructions" not in other
-    assert "<summary>Misc</summary>" in other
+    assert "<td>Misc</td>" in other
     assert "Hidden name" not in body and "Secret guide" not in body and "VM 104" not in body
     with client.session_transaction() as session:
         assert session["backend_map"]["network-lab"] == ["104"]
@@ -169,19 +169,24 @@ def test_home_escapes_names_and_titles_and_preserves_link_query(client):
     assert "javascript:alert(1)" not in body
 
 
-def test_home_renders_a_dropdown_for_each_material_category(client):
+def test_home_renders_categories_and_links_in_one_scrollable_materials_table(client):
     result = render_home(client, {
         101: notes(category="Guides", materials=[{"title": "Guide", "url": "https://example.edu/guide"}]),
         102: notes(category="Downloads", materials=[{"title": "Download", "url": "https://example.edu/download"}]),
         103: notes(category="  ", materials=[{"title": "Uncategorized", "url": "https://example.edu/misc"}]),
     }, [101, 102, 103])
     body = result.get_data(as_text=True)
-    groups = [part.split('</details>', 1)[0] for part in body.split('<details class="material-category">')[1:]]
+    table = body.split('<table class="materials-table"', 1)[1].split('</table>', 1)[0]
+    groups = [part.split('</tr>', 1)[0] for part in table.split('<tr>')[2:]]
     assert len(groups) == 3
     for group, category, link in zip(groups, ["Guides", "Downloads", "Misc"], ["guide", "download", "misc"]):
-        assert f'<summary>{category}</summary>' in group
+        assert f'<td>{category}</td>' in group
         assert f'href="https://example.edu/{link}"' in group
-        assert group.count('<li>') == 1
+        assert group.count('<a ') == 1
+    assert body.count('<table class="materials-table"') == 1
+    assert '<th scope="col">Category</th><th scope="col">Material</th>' in table
+    assert 'class="materials-scroll" role="region" aria-label="Material links for network-lab" tabindex="0"' in body
+    assert '<details class="material-category">' not in body
     assert '<span class="project-name">network-lab</span>' in body
 
 

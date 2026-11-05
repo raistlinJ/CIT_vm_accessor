@@ -427,17 +427,24 @@ TPL_BASE = """
   .scenario-section { border: 1px solid var(--muted); background: var(--scenario-bg); border-radius: 0; padding: 1rem; margin-bottom: 2rem; box-shadow: inset 0 0 10px var(--scenario-shadow); }
   .scenario-header { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.8rem 0.2rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--muted); display: flex; flex-wrap:wrap; align-items: center; gap: 0.5rem; text-shadow:0 0 2px var(--accent); }
   .project-name { min-width:0; overflow-wrap:anywhere; }
-  .project-materials { margin:0 0 1rem; padding:.7rem .8rem; border:1px solid var(--muted); background:var(--item-bg); }
-  .project-materials h3 { margin:0 0 .45rem; font-size:.8rem; color:var(--text); }
-  .material-category + .material-category { margin-top:.4rem; }
-  .material-category summary { cursor:pointer; padding:.45rem 0; color:var(--text); font-size:.85rem; font-weight:600; }
-  .material-category summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
-  .material-category[open] summary { margin-bottom:.3rem; }
-  .project-materials ul { display:grid; gap:.5rem; list-style:none; margin:0; padding:0; }
-  .project-materials li { min-width:0; max-width:100%; }
-  .project-materials a { display:block; padding:.65rem .8rem; border:1px solid var(--muted); background:var(--scenario-bg); color:var(--accent); font-size:.85rem; overflow-wrap:anywhere; text-underline-offset:.2em; }
-  .project-materials a:hover { border-color:var(--accent); background:var(--item-hover); }
-  .project-materials a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  .scenario-content { min-width:0; }
+  .scenario-content.has-materials { display:grid; grid-template-columns:minmax(0,1fr) minmax(17rem,.9fr); gap:1rem; align-items:start; }
+  .scenario-content .vm-list { min-width:0; grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr)); }
+  .project-materials { min-width:0; border:1px solid var(--muted); background:var(--item-bg); }
+  .project-materials h3 { margin:0; padding:.65rem .7rem; border-bottom:1px solid var(--muted); font-size:.8rem; color:var(--text); }
+  .materials-scroll { max-height:20rem; overflow:auto; }
+  .materials-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .materials-table { width:100%; table-layout:fixed; border-spacing:0; font-size:.75rem; }
+  .materials-table th { position:sticky; top:0; z-index:1; background:var(--item-bg); color:var(--muted); text-align:left; font-weight:600; }
+  .materials-table th:first-child { width:34%; }
+  .materials-table th, .materials-table td { padding:.5rem .6rem; border-bottom:1px solid var(--muted); vertical-align:top; overflow-wrap:anywhere; }
+  .materials-table tbody tr:last-child td { border-bottom:0; }
+  .materials-table tbody tr:hover { background:var(--item-hover); }
+  .materials-table td:last-child { padding:0; }
+  .project-materials a { display:flex; align-items:baseline; gap:.35rem; padding:.5rem .6rem; color:var(--accent); text-underline-offset:.2em; }
+  .material-title { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .project-materials a:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  @media (max-width:760px){ .scenario-content.has-materials { grid-template-columns:minmax(0,1fr); } }
   [data-theme="original"] .scenario-header, [data-theme="pokemon"] .scenario-header { text-shadow:none; }
   .vm-list { margin: 0; }
   .scenario-btn { margin-left: auto; padding: 0.35rem 0.8rem; font-size: 0.72rem; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); border-radius: 0; cursor: pointer; font-weight: 700; transition: all 0.2s; letter-spacing: 0.3px; text-shadow: none; box-shadow: 0 2px 4px var(--shadow-base); }
@@ -464,7 +471,7 @@ TPL_BASE = """
   @keyframes pulse { 0% { transform:scale(.9); filter:brightness(1.4);} 70% { transform:scale(1.03);} 100% { transform:scale(1); filter:brightness(1);} }
   .bulk-actions { display:flex; gap:.6rem; flex-wrap:wrap; }
   .with-side { display:block; }
-  .vm-action-layout { display:grid; grid-template-columns: 1fr 210px; gap:1.25rem; align-items:start; }
+  .vm-action-layout { display:grid; grid-template-columns: minmax(0,1fr) 210px; gap:1.25rem; align-items:start; }
   @media (max-width:1050px){ .vm-action-layout { grid-template-columns:1fr; } .action-frame { position:relative; top:auto; } }
   .action-frame { position:sticky; top:68px; display:flex; flex-direction:column; gap:.65rem; background:var(--action-bg); backdrop-filter:blur(8px); padding:.9rem .95rem 1.1rem; border:1px solid var(--border); border-radius:0; box-shadow:inset 0 0 10px var(--shadow-dim); min-height:140px; }
   .action-frame h4 { margin:0 0 .4rem; font-size:.68rem; letter-spacing:.55px; font-weight:600; text-transform:uppercase; color:var(--accent); text-align:center; text-shadow:0 0 3px var(--accent); }
@@ -503,7 +510,7 @@ TPL_BASE = """
   .inline-form { display:inline; }
   .actions-row { margin-top:.4rem; }
   .vm-item:focus-within { outline:1px solid var(--accent); box-shadow:var(--accent-glow); }
-  @media (max-width:640px){ .vm-list { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); } }
+  @media (max-width:640px){ .vm-list, .scenario-content .vm-list { grid-template-columns:repeat(auto-fill,minmax(min(100%,170px),1fr)); } }
   .progress-overlay { position:fixed; inset:0; background:var(--prog-over); display:flex; align-items:center; justify-content:center; z-index:20000; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease-out; backdrop-filter: blur(2px); }
   .progress-overlay.visible { opacity:1; visibility:visible; pointer-events:auto; }
   .progress-card { background:var(--prog-card); color:var(--text); border:1px solid var(--border); border-radius:0; padding:1.4rem 1.5rem; min-width:360px; max-width:92vw; box-shadow:0 0 20px var(--pop-shadow); display:flex; flex-direction:column; gap:.75rem; text-align:center; font-family:var(--mono); }
@@ -786,21 +793,7 @@ TPL_HOME = """
         {% endif %}
         <button type="button" class="scenario-btn btn-scenario-reset" data-scenario="{{ scenario }}" title="Reset ONLY backend VMs for this scenario">Reset Network Backend</button>
       </div>
-      {% if project.categories %}
-      <section class="project-materials" aria-label="Materials for {{ project.name }}">
-        <h3>Materials</h3>
-        {% for category in project.categories %}
-        <details class="material-category">
-          <summary>{{ category.name }}</summary>
-          <ul>
-            {% for material in category.materials %}
-            <li><a href="{{ material.url }}" target="_blank" rel="noopener noreferrer">{{ material.title }}</a></li>
-            {% endfor %}
-          </ul>
-        </details>
-        {% endfor %}
-      </section>
-      {% endif %}
+      <div class="scenario-content{% if project.categories %} has-materials{% endif %}">
       <div class="vm-list">
       {% for vm in group_vms %}
         <label class="vm-item" data-node="{{ vm.get('node') }}" data-vmid="{{ vm.get('vmid') }}">
@@ -814,6 +807,27 @@ TPL_HOME = """
           </a>
         </label>
       {% endfor %}
+      </div>
+      {% if project.categories %}
+      <section class="project-materials" aria-label="Materials for {{ project.name }}">
+        <h3>Materials</h3>
+        <div class="materials-scroll" role="region" aria-label="Material links for {{ project.name }}" tabindex="0">
+          <table class="materials-table" aria-label="Materials for {{ project.name }}">
+            <thead><tr><th scope="col">Category</th><th scope="col">Material</th></tr></thead>
+            <tbody>
+              {% for category in project.categories %}
+              {% for material in category.materials %}
+              <tr>
+                <td>{{ category.name }}</td>
+                <td><a href="{{ material.url }}" target="_blank" rel="noopener noreferrer"><span class="material-title">{{ material.title }}</span><span aria-hidden="true">↗</span></a></td>
+              </tr>
+              {% endfor %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% endif %}
       </div>
     </div>
     {% else %}
