@@ -111,6 +111,21 @@ def test_admin_is_checked_on_configured_cluster_and_permissions_presence(checkou
     assert 'password' not in result.get_data(as_text=True)
 
 
+@pytest.mark.parametrize('entered,expected',[
+    ('jcacosta','jcacosta@pam'),(' jcacosta ','jcacosta@pam'),
+    ('jcacosta@pve','jcacosta@pve'),('jcacosta@ldap','jcacosta@ldap'),
+])
+def test_admin_bare_usernames_default_to_pam_independently_of_student_realm(checkout,monkeypatch,entered,expected):
+    monkeypatch.setattr(account_checkout,'authenticate_admin',REAL_ADMIN_AUTH)
+    monkeypatch.setitem(main.app.config,'CHECKOUT_PROXMOX_REALM','pve')
+    auth={'Authorization':'Basic '+base64.b64encode((entered+':admin-password').encode()).decode()}
+    with patch('account_checkout.requests.post',return_value=reply({'ticket':'ticket','CSRFPreventionToken':'csrf','username':expected})) as post,patch('account_checkout.requests.get',return_value=reply({'/':{'Sys.Modify':1}})):
+        response=checkout.get('/api/admin/checkouts/status',headers=auth)
+    assert response.status_code==200
+    assert post.call_args.kwargs['data']['username']==expected
+    assert response.get_json()['administrator']==expected
+
+
 def test_cookie_administration_requires_csrf_and_origin(checkout):
     setup_pool(checkout)
     with checkout.session_transaction() as session:

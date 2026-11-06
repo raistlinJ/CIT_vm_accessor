@@ -69,27 +69,31 @@ def authenticate_admin():
     admin_limit=None
     try:
         if authorization and authorization.type.lower()=='basic':
-            username,password=authorization.username,authorization.password
+            username,password=(authorization.username or '').strip(),authorization.password
             if not username or not password or len(username)>128 or len(password)>1024:
                 raise CheckoutError('An AccessForge administrator account is required.',401)
             if '@' not in username:
-                username+='@'+current_app.config['CHECKOUT_PROXMOX_REALM']
+                username+='@pam'
             admin_limit='admin:'+str(request.remote_addr)+':'+username
             CheckoutStore().limit(admin_limit,20,300)
             response=requests.post(backend_url()+'/access/ticket',data={'username':username,'password':password},timeout=(5,15),verify=verify,allow_redirects=False)
             if response.status_code != 200:
+                current_app.logger.warning('Checkout administrator login rejected for %s on %s (HTTP %s)',username,current_app.config['CHECKOUT_PROXMOX_HOST'],response.status_code)
                 raise CheckoutError('Administrator authentication failed.',401)
             data=response.json()['data']
             if data.get('NeedTFA') or str(data.get('ticket','')).startswith('PVE:!tfa!'):
+                current_app.logger.warning('Checkout administrator login requires interactive MFA for %s',username)
                 raise CheckoutError('Use an administrator account supported by the password login integration.',401)
             principal={'username':data.get('username') or username,'ticket':data['ticket'],'csrf':data['CSRFPreventionToken'],'password':password}
         if not principal['ticket'] or not principal['username']:
             raise CheckoutError('Sign in with an administrator account.',401)
         response=requests.get(backend_url()+'/access/permissions',params={'path':'/'},cookies={'PVEAuthCookie':principal['ticket']},timeout=(5,15),verify=verify,allow_redirects=False)
         if response.status_code!=200:
+            current_app.logger.warning('Checkout administrator permission lookup failed for %s (HTTP %s)',principal['username'],response.status_code)
             raise CheckoutError('Administrator session expired. Sign in again.',401)
         permissions=response.json().get('data',{}).get('/',{})
         if not isinstance(permissions,dict) or 'Sys.Modify' not in permissions:
+            current_app.logger.warning('Checkout administrator %s lacks Sys.Modify on / in %s',principal['username'],current_app.config['CHECKOUT_PROXMOX_HOST'])
             raise CheckoutError('Checkout administration requires Sys.Modify on / in the configured Proxmox cluster.',403)
         if admin_limit:
             with CheckoutStore().transaction() as db:
