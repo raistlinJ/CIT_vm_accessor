@@ -526,7 +526,7 @@ class CheckoutStore:
                         raise CheckoutError('Publish this account before managing its login.',409)
                     if row['email'] or row['release_pending']:
                         raise CheckoutError('Release the assigned account before resetting or re-enabling it.',409)
-                    if not row['login_disabled'] and action=='reset_passwords':
+                    if not row['login_disabled']:
                         raise CheckoutError('Disable this login before preparing it for checkout.',409)
                     if action=='reenable_logins' and not hmac.compare_digest(password.encode(),decrypt_str(row['password_enc']).encode()):
                         raise CheckoutError('Reset the saved password or publish the updated credentials before re-enabling.',409)
