@@ -28,7 +28,7 @@
       } else if (data.status === 'assigned') {
         start.hidden = true; verify.hidden = true; result.hidden = false;
         document.getElementById('checkout-project').textContent = data.project;
-        document.getElementById('checkout-assignment').textContent = `Assigned to ${data.name?data.name+' ('+data.email+')':data.email}. Return here with the same email and lab secret to recover this account.`;
+        document.getElementById('checkout-assignment').textContent = `Assigned to ${data.name?data.name+' ('+data.email+')':data.email}. Return with the same email and this project’s lab secret to recover this account.`;
         document.getElementById('checkout-username').value = data.username;
         document.getElementById('checkout-password').value = data.password;
         const login = document.getElementById('checkout-login');
@@ -51,17 +51,25 @@
   }
   start.addEventListener('submit', event => {
     event.preventDefault();
-    request('start', {name: document.getElementById('checkout-name').value.trim(), email: document.getElementById('checkout-email').value.trim(), secret: document.getElementById('checkout-secret').value});
+    return request('start', {name: document.getElementById('checkout-name').value.trim(), email: document.getElementById('checkout-email').value.trim(), secret: document.getElementById('checkout-secret').value});
   });
   verify.addEventListener('submit', event => {
     event.preventDefault();
-    request('verify', {challenge, code: document.getElementById('checkout-code').value.trim()});
+    return request('verify', {challenge, code: document.getElementById('checkout-code').value.trim()});
   });
-  document.getElementById('checkout-restart').addEventListener('click', () => {
-    challenge = ''; verify.hidden = true; start.hidden = false;
-    document.getElementById('checkout-code').value = '';
-    document.getElementById('checkout-email').focus(); feedback.textContent = '';
-  });
+  function resetCheckout(anotherProject=false){
+    challenge='';verify.hidden=true;result.hidden=true;start.hidden=false;
+    for(const id of ['checkout-code','checkout-secret','checkout-username','checkout-password'])document.getElementById(id).value='';
+    document.getElementById('checkout-password').type='password';
+    const show=document.getElementById('checkout-show');show.textContent='Show password';show.setAttribute('aria-pressed','false');
+    document.getElementById('checkout-project').textContent='';document.getElementById('checkout-assignment').textContent='';
+    const login=document.getElementById('checkout-login');
+    for(const name of ['username','password','host','port','realm','verify_ssl']){const field=login.elements.namedItem(name);if(field)field.value='';}
+    feedback.className='';feedback.textContent=anotherProject?'Your existing account stays reserved. Enter another project’s lab secret to get its account.':'';
+    document.getElementById(anotherProject?'checkout-secret':'checkout-email').focus();
+  }
+  document.getElementById('checkout-restart').addEventListener('click',()=>resetCheckout());
+  document.getElementById('checkout-another-project').addEventListener('click',()=>resetCheckout(true));
   document.getElementById('checkout-show').addEventListener('click', event => {
     const password = document.getElementById('checkout-password');
     const visible = password.type === 'password';

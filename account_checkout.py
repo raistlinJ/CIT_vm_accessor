@@ -37,6 +37,26 @@ def bind_checkout_session():
         current_app.logger.warning('Checkout assignment unavailable during sign-in')
 
 
+def bind_checkout_admin(permissions=None):
+    """Show management navigation only for a verified admin on the fixed cluster."""
+    session.pop('checkout_admin',None)
+    if not checkout_enabled() or not session.get('pve_ticket') or not session.get('pve_user') or not configured_checkout_cluster(session):
+        return
+    try:
+        if permissions is None:
+            response=requests.get(backend_url()+'/access/permissions',params={'path':'/'},
+                                  cookies={'PVEAuthCookie':session['pve_ticket']},timeout=(5,15),
+                                  verify=current_app.config['CHECKOUT_PROXMOX_VERIFY'],allow_redirects=False)
+            if response.status_code!=200:
+                return
+            permissions=response.json().get('data',{})
+        root=permissions.get('/',{}) if isinstance(permissions,dict) else {}
+        if isinstance(root,dict) and 'Sys.Modify' in root:
+            session['checkout_admin']=True
+    except (requests.RequestException,ValueError,KeyError,TypeError,AttributeError):
+        current_app.logger.warning('Could not check checkout management navigation permissions')
+
+
 def checkout_session_current(data,*,strict=False):
     if not checkout_enabled():
         return True
@@ -218,6 +238,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
         try:
             authenticate_admin()
         except CheckoutError as exc:
+            session.pop('checkout_admin',None)
             return render_template('checkout_admin.html',error=exc.message),exc.status
         session['checkout_admin']=True
         token=session.setdefault('checkout_admin_csrf',secrets.token_urlsafe(32))
@@ -257,7 +278,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
         if action=='save_login_manager':
             password=data.get('password')
             if not isinstance(password,str) or not 1<=len(password)<=1024:
-                raise CheckoutError('Enter an administrator password for automatic login disabling.')
+                raise CheckoutError('Enter your Proxmox administrator password. The lab secret is configured separately.')
             authenticate_manager_password(principal['username'],password)
             store.save_manager(pool_id,principal['username'],password)
             return jsonify(checkout=store.summary(pool_id))

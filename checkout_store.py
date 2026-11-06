@@ -302,7 +302,7 @@ class CheckoutStore:
                 raise CheckoutError('Set a lab secret before enabling checkout.')
             other = db.execute('SELECT id FROM pools WHERE secret_lookup=? AND id<>?', (pool.get('secret_lookup'), pool_id)).fetchone()
             if other:
-                raise CheckoutError('That lab secret is already used by another pool.', 409)
+                raise CheckoutError('That lab secret is already used by another project. Use a different secret for each project.', 409)
             db.execute('UPDATE pools SET enabled=?,verify_email=?,secret_hash=?,secret_lookup=? WHERE id=?', (pool['enabled'],pool['verify_email'],pool['secret_hash'],pool.get('secret_lookup'),pool_id))
             db.execute('DELETE FROM challenges WHERE pool_id=?', (pool_id,))
             self.event(db, pool_id, None, None, 'configured', actor)

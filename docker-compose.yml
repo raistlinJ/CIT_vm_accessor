@@ -59,7 +59,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEBUG_HTTP=${DEBUG_HTTP:-false}
       - DEFAULT_THEME=${DEFAULT_THEME:-pokemon}
-      # Local student checkout and administration; SCE-web only publishes / requests status.
+      # Local checkout state; the SCE-web plugin sends administrator actions and status requests.
       - ENABLE_ACCOUNT_CHECKOUT=${ENABLE_ACCOUNT_CHECKOUT:-false}
       - CHECKOUT_DATA_DIR=/app/data
       # Optional scoped token with User.Modify permission for disabling relinquished logins.

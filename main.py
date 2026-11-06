@@ -612,7 +612,8 @@ TPL_BASE = """
       </script>
       {% if session.get('pve_user') %}
         <span class="muted">{{ session.get('pve_user') }}</span> |
-        {% if checkout_enabled and session.get('checkout_admin') %}<a href="/admin/checkouts">Checkouts</a> |{% endif %}
+        {% if checkout_enabled %}<a href="{{ url_for('account_checkout') }}">Get lab access</a> |{% endif %}
+        {% if checkout_enabled and session.get('checkout_admin') %}<a href="/admin/checkouts">Management</a> |{% endif %}
         {% if checkout_enabled %}<button type="button" id="relinquish-account" class="btn-danger" hidden style="padding:.25rem .5rem; font-size:.7rem">Relinquish account</button>{% endif %}
         <a href="{{ url_for('logout') }}">Logout</a>
       {% endif %}
@@ -702,7 +703,6 @@ TPL_LOGIN = """
   <button type="submit">Sign in</button>
 </form>
 {% if checkout_enabled %}<p><a href="{{ url_for('account_checkout') }}">Get lab access</a> — check out or recover your student account.</p>{% endif %}
-{% if checkout_enabled %}<p><a href="/admin/checkouts">Manage account checkouts</a> (administrator sign-in)</p>{% endif %}
 <script>
  (function(){
    const u=document.getElementById('usernameInput');
@@ -1045,7 +1045,7 @@ def require_session(api: bool = False):
     return wrapper
   return deco
 
-from account_checkout import bind_checkout_session, checkout_session_current, register_account_checkout
+from account_checkout import bind_checkout_admin, bind_checkout_session, checkout_session_current, register_account_checkout
 from checkout_store import CheckoutError
 register_account_checkout(app, host=PROXMOX_HOST, port=PROXMOX_PORT, realm=PROXMOX_REALM, verify=VERIFY_SSL, revoke_sessions=spice_bridge.revoke)
 
@@ -1216,6 +1216,7 @@ def login():
         error="Ticket validation exception; please login again.",
       )
     bind_checkout_session()
+    bind_checkout_admin()
     return resp
   except CheckoutError as e:
     logger.warning("Checkout unavailable during login: %s",e.message)
@@ -1306,6 +1307,7 @@ def home():
           p = proxmox_get("/access/permissions", cookies=cookies, headers=headers)
           if p.ok:
               perms = p.json().get("data", {})
+              bind_checkout_admin(perms)
               for vm in raw_vms:
                   vmid = str(vm.get("vmid"))
                   vm_perms = perms.get(f"/vms/{vmid}", {})
@@ -1313,9 +1315,11 @@ def home():
                   if "VM.Console" in vm_perms:
                       vms.append(vm)
           else:
+              bind_checkout_admin({})
               logger.warning(f"[{req_id()}] Failed to fetch permissions: {p.status_code}")
               vms = raw_vms # fallback to all visible if perm check fails
       except Exception as p_ex:
+          bind_checkout_admin({})
           logger.exception(f"[{req_id()}] Exception fetching permissions")
           vms = raw_vms
     else:

@@ -1,0 +1,83 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const test=require('node:test');
+const source=fs.readFileSync('static/checkout-admin.js','utf8');
+const settle=()=>new Promise(resolve=>setImmediate(resolve));
+async function harness(){
+  const elements=new Map(),calls=[];let confirmation=true,email='student@example.edu',override;
+  class Element{
+    constructor(id=''){this.id=id;this.value='';this.textContent='';this.dataset={};this.checked=false;this.disabled=false;this.listeners={};this.boxes=[];}
+    addEventListener(type,fn){this.listeners[type]=fn;}
+    async fire(type='click'){return this.listeners[type]?.({target:this});}
+    set innerHTML(html){this.html=html;this.boxes=[...html.matchAll(/data-account="([^"]+)"/g)].map(match=>{const box=new Element();box.dataset.account=match[1];return box;});}
+    get innerHTML(){return this.html||'';}
+    replaceChildren(...children){if(!children.some(child=>child.value===this.value))this.value=children[0]?.value||'';}
+    querySelectorAll(selector){
+      if(selector==='button,select')return [...elements.values()].filter(el=>el.id!=='tbody');
+      if(selector==='[data-action-menu]')return [el('admin-credential-type'),el('admin-account-actions')];
+      return el('tbody').boxes.filter(box=>!selector.includes(':checked')||box.checked);
+    }
+  }
+  const el=id=>{if(!elements.has(id))elements.set(id,new Element(id));return elements.get(id);};
+  el('checkout-admin').dataset.csrf='test-csrf';
+  const pool={id:'lab',name:'Networking',enabled:true,verify_email:false,secret_set:true,login_management_ready:true,
+    accounts:{'student01@pve':{eligible:true},'student02@pve':{eligible:true}}};
+  const context={document:{getElementById:el,querySelector:()=>el('tbody'),createElement:()=>new Element()},
+    prompt:()=>email,confirm:()=>confirmation,fetch:async(url,options={})=>{
+      calls.push({url,options,body:options.body?JSON.parse(options.body):undefined});
+      if(override){const result=override(url,options);if(result)return result;}
+      return {ok:true,json:async()=>url.endsWith('/pools')?{pools:[pool]}:{checkout:pool,results:[]}};
+    }};
+  vm.runInNewContext(source,context);await settle();
+  return {el,calls,pool,confirm:value=>confirmation=value,email:value=>email=value,override:fn=>override=fn,
+    select:async index=>{const box=el('tbody').boxes[index];box.checked=true;await box.fire('change');},
+    action:async(menu,action)=>{el(menu).value=action;await el(menu).fire('change');}};
+}
+
+test('account menus require a selection and use SCE-web credential-type names',async()=>{
+  const h=await harness();assert.equal(h.el('admin-credential-type').disabled,true);assert.equal(h.el('admin-account-actions').disabled,true);
+  await h.select(0);assert.equal(h.el('admin-selection-count').textContent,'1 selected');assert.equal(h.el('admin-credential-type').disabled,false);
+  await h.action('admin-credential-type','disable');
+  assert.deepEqual(h.calls.find(call=>call.body?.action==='disable').body,{action:'disable',usernames:['student01@pve']});
+  assert.equal(h.el('admin-credential-type').value,'');assert.equal(h.el('admin-credential-type').disabled,true);
+  assert.equal(h.el('admin-feedback').textContent,'Selected accounts marked Permanent.');
+  await h.select(1);await h.action('admin-credential-type','enable');
+  assert.deepEqual(h.calls.find(call=>call.body?.action==='enable').body,{action:'enable',usernames:['student02@pve']});
+  assert.equal(h.el('admin-feedback').textContent,'Selected accounts marked On-Demand.');
+  const page=fs.readFileSync('templates/checkout_admin.html','utf8');
+  for(const label of ['Mark Permanent','Mark On-Demand','Assign','Relinquish','Remove'])assert.ok(page.includes(`>${label}</option>`));
+  assert.doesNotMatch(page,/Allow selected|Stop selected checkouts|Remove selected|Relinquish selected accounts<\/button>/);
+});
+
+test('Relinquish and Remove retain confirmation and reset their combobox after Cancel',async()=>{
+  const h=await harness();await h.select(0);h.confirm(false);
+  await h.action('admin-account-actions','release');assert.equal(h.calls.filter(call=>call.options.method==='POST').length,0);
+  assert.equal(h.el('admin-account-actions').value,'');assert.equal(h.el('admin-account-actions').disabled,false);
+  h.confirm(true);await h.action('admin-account-actions','remove');
+  assert.deepEqual(h.calls.find(call=>call.body?.action==='remove').body,{action:'remove',usernames:['student01@pve']});
+});
+
+test('per-account relinquishment failures stay visible',async()=>{
+  const h=await harness();await h.select(0);
+  h.override(url=>!url.endsWith('/pools')?{ok:true,json:async()=>({results:[{username:'student01@pve',released:false,error:'Could not disable the login.'}]})}:null);
+  await h.action('admin-account-actions','release');
+  assert.match(h.el('admin-feedback').textContent,/student01@pve: Could not disable/);assert.equal(h.el('admin-feedback').className,'error');
+});
+
+test('Assign requires exactly one selected account',async()=>{
+  const h=await harness();await h.select(0);await h.select(1);await h.action('admin-account-actions','assign');
+  assert.equal(h.el('admin-feedback').textContent,'Select one account to assign.');assert.equal(h.calls.filter(call=>call.body).length,0);
+  h.el('tbody').boxes[1].checked=false;await h.action('admin-account-actions','assign');
+  assert.deepEqual(h.calls.find(call=>call.body?.action==='assign').body,{action:'assign',usernames:['student01@pve'],email:'student@example.edu'});
+});
+
+test('administrator password and lab secret use separate fields and endpoints',async()=>{
+  const h=await harness();h.el('admin-manager-password').value='admin-password';h.el('admin-secret').value='lab-secret';
+  await h.el('admin-save-manager').fire();
+  const request=h.calls.find(call=>call.body?.action==='save_login_manager');assert.deepEqual(request.body,{action:'save_login_manager',password:'admin-password'});
+  assert.equal(h.el('admin-manager-password').value,'');assert.equal(h.el('admin-feedback').textContent,'Proxmox administrator password saved.');
+  h.el('admin-secret').value='updated-lab-secret';await h.el('admin-save').fire();
+  const settings=h.calls.find(call=>call.options.method==='PATCH');assert.equal(settings.body.secret,'updated-lab-secret');assert.ok(!('password' in settings.body));
+  const page=fs.readFileSync('templates/checkout_admin.html','utf8');assert.match(page,/Proxmox administrator password/);assert.match(page,/not the lab secret/);
+});

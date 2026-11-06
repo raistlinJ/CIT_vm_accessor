@@ -591,3 +591,126 @@ def test_release_clears_current_name_and_keeps_it_in_the_audit_history(checkout)
     with patch('account_checkout.set_login_enabled'):
         checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1'}]})
     assert start(checkout,'new@example.edu',name='Next Student').get_json()['name']=='Next Student'
+
+
+@pytest.mark.parametrize('username,permissions,visible',[
+    ('instructor',{'/':{'Sys.Modify':1}},True),
+    ('instructor',{'/':{'Sys.Modify':0}},True),
+    ('student01',{'/':{'VM.Console':1}},False),
+    ('sudo-user',{'/':{'Sys.Audit':1}},False),
+])
+def test_management_link_is_available_immediately_after_verified_admin_login(checkout,username,permissions,visible):
+    with checkout.session_transaction() as session:
+        session['checkout_admin']=True  # A new login must clear an old administrator marker.
+    with patch.object(main,'proxmox_post',return_value=reply({'ticket':'login-ticket','CSRFPreventionToken':'login-csrf'})),patch.object(main,'proxmox_get',return_value=reply({'version':'test'})),patch('account_checkout.requests.get',return_value=reply(permissions)) as get:
+        response=checkout.post('/login',data={'username':username,'password':'test-password','realm':'pam',
+                                             'host':main.app.config['CHECKOUT_PROXMOX_HOST'],'port':str(main.app.config['CHECKOUT_PROXMOX_PORT'])})
+    assert response.status_code==302
+    get.assert_called_once()
+    assert get.call_args.kwargs['params']=={'path':'/'}
+    assert get.call_args.kwargs['cookies']=={'PVEAuthCookie':'login-ticket'}
+    assert get.call_args.args[0]==account_checkout.backend_url()+'/access/permissions'
+    with checkout.session_transaction() as session:
+        assert bool(session.get('checkout_admin')) is visible
+    page=checkout.get('/checkout')
+    assert (b'<a href="/admin/checkouts">Management</a>' in page.data) is visible
+    assert b'Manage account checkouts' not in page.data
+
+
+@pytest.mark.parametrize('other_cluster,enabled',[(True,True),(False,False)])
+def test_management_navigation_never_checks_another_cluster_or_a_disabled_checkout_service(checkout,monkeypatch,other_cluster,enabled):
+    monkeypatch.setenv('ENABLE_ACCOUNT_CHECKOUT','true' if enabled else 'false')
+    with patch.object(main,'proxmox_post',return_value=reply({'ticket':'login-ticket','CSRFPreventionToken':'login-csrf'})),patch.object(main,'proxmox_get',return_value=reply({'version':'test'})),patch('account_checkout.requests.get') as get:
+        response=checkout.post('/login',data={'username':'instructor','password':'test-password','realm':'pam',
+                                             'host':'other-cluster.example' if other_cluster else main.app.config['CHECKOUT_PROXMOX_HOST'],
+                                             'port':str(main.app.config['CHECKOUT_PROXMOX_PORT'])})
+    assert response.status_code==302
+    get.assert_not_called()
+    with checkout.session_transaction() as session:
+        assert not session.get('checkout_admin')
+
+
+def test_management_permission_lookup_failure_hides_link_without_blocking_login(checkout):
+    with patch.object(main,'proxmox_post',return_value=reply({'ticket':'login-ticket','CSRFPreventionToken':'login-csrf'})),patch.object(main,'proxmox_get',return_value=reply({'version':'test'})),patch('account_checkout.requests.get',side_effect=requests.Timeout):
+        response=checkout.post('/login',data={'username':'instructor','password':'test-password','realm':'pam',
+                                             'host':main.app.config['CHECKOUT_PROXMOX_HOST'],'port':str(main.app.config['CHECKOUT_PROXMOX_PORT'])})
+    assert response.status_code==302
+    with checkout.session_transaction() as session:
+        assert session.get('pve_ticket')=='login-ticket' and not session.get('checkout_admin')
+
+
+def test_home_backfills_admin_navigation_for_existing_sessions_and_clears_revoked_roles(checkout):
+    with checkout.session_transaction() as session:
+        session.update(pve_user='instructor@pam',pve_ticket='ticket',pve_csrf='csrf',
+                       pve_host=main.app.config['CHECKOUT_PROXMOX_HOST'],pve_port=str(main.app.config['CHECKOUT_PROXMOX_PORT']))
+    for permissions,visible in [({'/':{'Sys.Modify':1}},True),({'/':{'VM.Console':1}},False)]:
+        with patch.object(main,'proxmox_get',side_effect=[reply([]),reply(permissions)]):
+            response=checkout.get('/')
+        assert response.status_code==200
+        assert (b'<a href="/admin/checkouts">Management</a>' in response.data) is visible
+
+
+def setup_second_project(client,verify_email=False):
+    endpoint='/api/admin/checkouts/pools/second-project'
+    assert client.put(endpoint,headers=BASIC,json={'name':'Digital Forensics','accounts':[
+        {'username':'forensics01','password':'forensics-password1'}]}).status_code==200
+    assert client.patch(endpoint,headers=BASIC,json={'secret':'forensics-secret','enabled':True,'verify_email':verify_email}).status_code==200
+    assert client.post(endpoint,headers=BASIC,json={'action':'enable','usernames':['forensics01']}).status_code==200
+    return endpoint
+
+
+def test_same_email_can_hold_and_recover_one_account_in_each_project(checkout):
+    setup_pool(checkout,names=['student01']);second=setup_second_project(checkout)
+    first_result=start(checkout,'same@example.edu',secret='class-secret').get_json()
+    second_result=start(checkout,'same@example.edu',secret='forensics-secret').get_json()
+    assert first_result['username']=='student01@pve' and first_result['project']=='Networking'
+    assert second_result['username']=='forensics01@pve' and second_result['project']=='Digital Forensics'
+    assert start(checkout,'same@example.edu',secret='class-secret').get_json()['username']==first_result['username']
+    assert start(checkout,'same@example.edu',secret='forensics-secret').get_json()['username']==second_result['username']
+    assert start(checkout,'different@example.edu',secret='class-secret').status_code==409
+    assert start(checkout,'different@example.edu',secret='forensics-secret').status_code==409
+    assert checkout.get(POOL,headers=BASIC).json['accounts']['student01@pve']['email']=='same@example.edu'
+    assert checkout.get(second,headers=BASIC).json['accounts']['forensics01@pve']['email']=='same@example.edu'
+
+
+def test_email_verification_is_independent_for_the_same_email_in_multiple_projects(checkout):
+    setup_pool(checkout,verify=True,names=['student01']);second=setup_second_project(checkout,verify_email=True)
+    with patch('account_checkout.send_verification') as send,patch('account_checkout.secrets.randbelow',side_effect=[123,456]):
+        first=start(checkout,'same@example.edu',secret='class-secret').json
+        second_request=start(checkout,'same@example.edu',secret='forensics-secret').json
+    assert first['status']==second_request['status']=='verification_required'
+    assert send.call_args_list[0].args[2]=='Networking' and send.call_args_list[1].args[2]=='Digital Forensics'
+    assert verify(checkout,first['challenge'],'00000456').status_code==403
+    assert verify(checkout,first['challenge'],'00000123').json['username']=='student01@pve'
+    assert verify(checkout,second_request['challenge'],'00000456').json['username']=='forensics01@pve'
+    assert checkout.get(second,headers=BASIC).json['accounts']['forensics01@pve']['email']=='same@example.edu'
+
+
+def test_rotating_one_projects_secret_does_not_invalidate_another_projects_verification(checkout):
+    setup_pool(checkout,verify=True,names=['student01']);setup_second_project(checkout,verify_email=True)
+    with patch('account_checkout.send_verification') as send:
+        first=start(checkout,'same@example.edu',secret='class-secret').json;first_code=send.call_args.args[1]
+        second=start(checkout,'same@example.edu',secret='forensics-secret').json;second_code=send.call_args.args[1]
+    assert checkout.patch(POOL,headers=BASIC,json={'secret':'new-networking-secret'}).status_code==200
+    assert verify(checkout,first['challenge'],first_code).status_code==403
+    assert verify(checkout,second['challenge'],second_code).json['username']=='forensics01@pve'
+
+
+def test_relinquishing_one_project_leaves_the_same_emails_other_project_account_reserved(checkout):
+    setup_pool(checkout,names=['student01']);second=setup_second_project(checkout)
+    start(checkout,'same@example.edu',secret='class-secret')
+    assigned=start(checkout,'same@example.edu',secret='forensics-secret').json
+    with patch('account_checkout.set_login_enabled') as disable:
+        result=checkout.post(POOL,headers=BASIC,json={'action':'release','usernames':['student01']})
+    assert result.json['results'][0]['released'] is True
+    disable.assert_called_once();assert disable.call_args.args[1:] == ('student01@pve',False)
+    state=checkout.get(second,headers=BASIC).json['accounts']['forensics01@pve']
+    assert state['email']=='same@example.edu' and state['login_disabled'] is False
+    assert start(checkout,'same@example.edu',secret='forensics-secret').json['password']==assigned['password']
+
+
+def test_projects_require_distinct_lab_secrets_to_route_student_checkout(checkout):
+    setup_pool(checkout);second=setup_second_project(checkout)
+    result=checkout.patch(second,headers=BASIC,json={'secret':'class-secret'})
+    assert result.status_code==409 and 'another project' in result.json['error']
+    assert start(checkout,secret='forensics-secret').json['project']=='Digital Forensics'
