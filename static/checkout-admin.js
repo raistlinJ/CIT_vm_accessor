@@ -27,11 +27,11 @@
     if(!pool)return;
     document.getElementById('admin-enabled').checked=pool.enabled;
     document.getElementById('admin-verify').checked=pool.verify_email;
-    document.getElementById('admin-manager-password').value='';
     document.getElementById('admin-secret-label').textContent=`Lab secret for ${pool.name}`;
     const secret=document.getElementById('admin-secret');secret.value='';secret.placeholder=pool.secret_set?'A secret is set for this project; enter a new one to replace it':'Set this project’s lab secret (8+ characters)';
+    document.getElementById('admin-token-state').textContent=pool.login_management_ready?'Proxmox API token configured for account login changes.':'Set CHECKOUT_PROXMOX_API_TOKEN on the AccessForge server to enable account relinquishment.';
+    document.getElementById('admin-token-state').className=pool.login_management_ready?'muted':'error';
     document.getElementById('admin-policy-note').textContent=!pool.verify_email?'Verification is off: anyone with the lab secret and an email can retrieve that email’s credentials.':pool.smtp_configured?'Students must verify their email before receiving credentials.':'Configure SMTP on this AccessForge server before verified checkout can be used.';
-    document.getElementById('admin-manager-state').textContent=pool.login_management_ready?'Automatic login disabling is configured. Update this password only if the Proxmox administrator password changes.':'Configure your AccessForge connection in SCE-web or save the Proxmox administrator password here before students relinquish accounts.';
     rows();
   }
   async function refresh(){
@@ -52,12 +52,6 @@
     if(!pool)return;
     await api('/pools/'+encodeURIComponent(pool.id),'PATCH',{enabled:document.getElementById('admin-enabled').checked,verify_email:document.getElementById('admin-verify').checked,secret:document.getElementById('admin-secret').value});
     await refresh();message('Checkout settings saved.');
-  }));
-  document.getElementById('admin-save-manager').addEventListener('click',()=>run(async()=>{
-    if(!pool)return;
-    await api('/pools/'+encodeURIComponent(pool.id),'POST',{action:'save_login_manager',password:document.getElementById('admin-manager-password').value});
-    document.getElementById('admin-manager-password').value='';
-    await refresh();message('Proxmox administrator password saved.');
   }));
   function updateSelection(){
     const boxes=Array.from(root.querySelectorAll('[data-account]'));

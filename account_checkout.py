@@ -146,25 +146,10 @@ def set_login_enabled(principal,username,enabled):
 
 
 def login_management_principal(pool_id):
-    token=os.environ.get('CHECKOUT_PROXMOX_API_TOKEN','').strip()
-    if token:
-        return {'token':token.removeprefix('PVEAPIToken=')}
-    username,password=CheckoutStore().manager(pool_id)
-    return authenticate_manager_password(username,password)
-
-
-def authenticate_manager_password(username,password):
-    try:
-        response=requests.post(backend_url()+'/access/ticket',data={'username':username,'password':password},timeout=(5,15),
-                               verify=current_app.config['CHECKOUT_PROXMOX_VERIFY'],allow_redirects=False)
-        if response.status_code!=200:
-            raise CheckoutError('Login-management administrator authentication failed. Update it from SCE-web or AccessForge.',502)
-        data=response.json()['data']
-        if data.get('NeedTFA') or not data.get('ticket') or not data.get('CSRFPreventionToken') or data.get('username',username)!=username:
-            raise CheckoutError('Use a login-management credential supported by non-interactive authentication.',502)
-        return {'username':username,'ticket':data['ticket'],'csrf':data['CSRFPreventionToken']}
-    except (requests.RequestException,ValueError,KeyError,TypeError):
-        raise CheckoutError('Could not authenticate the login-management connection.',502) from None
+    token=os.environ.get('CHECKOUT_PROXMOX_API_TOKEN','').strip().removeprefix('PVEAPIToken=').strip()
+    if not token:
+        raise CheckoutError('Configure CHECKOUT_PROXMOX_API_TOKEN on AccessForge with User.Modify permission for the managed Proxmox users.',503)
+    return {'token':token}
 
 
 def register_account_checkout(app, *, host=None, port=None, realm=None, verify=None, revoke_sessions=None):
@@ -269,39 +254,33 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
             if isinstance(entries,list) and any(isinstance(entry,dict) and user_id(entry.get('username'))==principal['username'] for entry in entries):
                 raise CheckoutError('Do not publish the administrator account used for login management.',409)
             store.publish(pool_id,data,principal['username'])
-            if principal.get('password') and not os.environ.get('CHECKOUT_PROXMOX_API_TOKEN'):
-                store.save_manager(pool_id,principal['username'],principal['password'])
             return jsonify(store.summary(pool_id))
         if request.method=='PATCH':
             return jsonify(store.configure(pool_id,data,principal['username']))
         action=data.get('action')
         if action=='save_login_manager':
-            password=data.get('password')
-            if not isinstance(password,str) or not 1<=len(password)<=1024:
-                raise CheckoutError('Enter your Proxmox administrator password. The lab secret is configured separately.')
-            authenticate_manager_password(principal['username'],password)
-            store.save_manager(pool_id,principal['username'],password)
-            return jsonify(checkout=store.summary(pool_id))
+            raise CheckoutError('Administrator passwords are no longer saved for checkout login management. Configure CHECKOUT_PROXMOX_API_TOKEN on AccessForge instead.')
         if action=='release':
             usernames=data.get('usernames')
             if not isinstance(usernames,list) or not 1<=len(usernames)<=2000:
                 raise CheckoutError('Select at least one account.')
-            results=[store.release(pool_id,username,principal['username'],lambda user:set_login_enabled(principal,user,False)) for username in dict.fromkeys(usernames)]
+            manager=login_management_principal(pool_id)
+            results=[store.release(pool_id,username,principal['username'],lambda user:set_login_enabled(manager,user,False)) for username in dict.fromkeys(usernames)]
             return jsonify(checkout=store.summary(pool_id),results=results)
         if action=='disable_logins':
-            results=store.disable_logins(pool_id,data.get('usernames'),principal['username'],lambda user:set_login_enabled(principal,user,False))
+            manager=login_management_principal(pool_id)
+            results=store.disable_logins(pool_id,data.get('usernames'),principal['username'],lambda user:set_login_enabled(manager,user,False))
             return jsonify(checkout=store.summary(pool_id),results=results)
         if action in ('reset_passwords','reenable_logins'):
+            manager=login_management_principal(pool_id)
             if action=='reset_passwords':
                 def apply(user,password):
-                    set_login_enabled(principal,user,False)
+                    set_login_enabled(manager,user,False)
                     set_account_password(principal,user,password)
             else:
                 def apply(user,password):
-                    set_login_enabled(principal,user,True)
+                    set_login_enabled(manager,user,True)
             results=store.prepare_accounts(pool_id,data,principal['username'],apply)
-            if principal.get('password') and not os.environ.get('CHECKOUT_PROXMOX_API_TOKEN'):
-                store.save_manager(pool_id,principal['username'],principal['password'])
             return jsonify(checkout=store.summary(pool_id),results=results)
         return jsonify(checkout=store.account_action(pool_id,data,principal['username']))
 
@@ -347,7 +326,10 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
         except (requests.RequestException,ValueError,KeyError,TypeError):
             raise CheckoutError('Could not validate your session. Try again later.',502) from None
         # Read management credentials before release holds a write transaction.
-        manager=login_management_principal(row['pool_id'])
+        try:
+            manager=login_management_principal(row['pool_id'])
+        except CheckoutError as exc:
+            raise CheckoutError('Account relinquishment is not configured. Contact your instructor.',exc.status) from None
         result=store.release(row['pool_id'],row['username'],row['username'],lambda user:set_login_enabled(manager,user,False),
                              self_service=True,expected_lease=lease)
         if not result['released']:

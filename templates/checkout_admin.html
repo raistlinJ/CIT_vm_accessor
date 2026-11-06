@@ -44,9 +44,10 @@
       </select>
       <span id="admin-selection-count" class="muted" role="status" aria-live="polite" aria-atomic="true">0 selected</span>
     </div>
+    <p id="admin-token-state" class="muted" role="status" aria-live="polite"></p>
     <div style="display:flex; flex-wrap:wrap; gap:1rem; margin-bottom:.5rem">
       <div style="flex:1; min-width:12rem"><label for="admin-filter">Filter accounts</label><input id="admin-filter" type="search" placeholder="Username or email"></div>
-      <div style="flex:1; min-width:12rem"><label for="admin-manager-password">Proxmox administrator password</label><input id="admin-manager-password" type="password" autocomplete="current-password" placeholder="Password for {{ session.get('pve_user') }}" aria-describedby="admin-manager-help admin-manager-state"><p id="admin-manager-help" class="muted" style="font-size:.8rem; margin:.3rem 0 .6rem">The Proxmox password for {{ session.get('pve_user') }}, <strong>not the lab secret</strong>. AccessForge uses it to disable logins when accounts are relinquished. SCE-web normally saves this automatically when accounts are marked On-Demand.</p><button type="button" id="admin-save-manager">Save administrator password</button><p id="admin-manager-state" class="muted" style="font-size:.75rem"></p></div>
+
     </div>
     <div style="overflow:auto; max-height:28rem; border:1px solid var(--muted)">
       <table style="width:100%; border-spacing:0; font-size:.85rem" id="admin-accounts">
@@ -54,10 +55,11 @@
         <tbody></tbody>
       </table>
     </div>
-    <p class="muted" style="font-size:.8rem">Releasing an account disables its Proxmox login and keeps it unavailable until an instructor resets the password if needed and re-enables it through SCE-web. Existing tickets and open consoles may remain active until expiration or disconnection. Failed disables stay reserved until a successful retry. Automatic disabling uses the encrypted administrator credential saved when publishing from SCE-web, or the configured management API token.</p>
+    <p class="muted" style="font-size:.8rem">Releasing an account disables its Proxmox login and keeps it unavailable until an instructor resets the password if needed and re-enables it through SCE-web. Existing tickets and open consoles may remain active until expiration or disconnection. Failed disables stay reserved until a successful retry. Login changes use AccessForge’s configured Proxmox API token; no administrator password is stored or requested for these actions.</p>
   </section>
   <p id="admin-feedback" role="status" aria-live="polite"></p>
 </div>
-<script src="/static/checkout-admin.js?v=20261106-project-secrets" defer></script>
+
+<script src="/static/checkout-admin.js?v=20261106-api-token" defer></script>
 {% endif %}
 {% endblock %}

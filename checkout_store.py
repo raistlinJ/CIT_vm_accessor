@@ -230,7 +230,7 @@ class CheckoutStore:
                         for r in db.execute('SELECT * FROM accounts WHERE pool_id=? ORDER BY username', (pool_id,))}
         return {'id': pool_id, 'name': pool['name'], 'enabled': bool(pool['enabled']), 'verify_email': bool(pool['verify_email']),
                 'secret_set': bool(pool['secret_hash']), 'smtp_configured': smtp_ready(), 'accounts': accounts,
-                'login_management_ready':bool(pool['manager_password_enc'] or os.environ.get('CHECKOUT_PROXMOX_API_TOKEN'))}
+                'login_management_ready':bool(os.environ.get('CHECKOUT_PROXMOX_API_TOKEN','').strip().removeprefix('PVEAPIToken=').strip())}
 
     def summaries(self):
         with self.transaction() as db:
@@ -504,4 +504,4 @@ class CheckoutStore:
                 current_app.logger.warning('Could not close all connections for a released checkout lease')
             return {'username':username,'released':True}
         except Exception:
-            return {'username':username,'released':False,'error':'Could not disable the login. The account remains reserved; check login-management credentials and retry release.'}
+            return {'username':username,'released':False,'error':'Could not disable the login. The account remains reserved; check the configured Proxmox API token and retry relinquishing.'}
