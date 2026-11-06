@@ -29,8 +29,6 @@
     document.getElementById('admin-verify').checked=pool.verify_email;
     document.getElementById('admin-secret-label').textContent=`Lab secret for ${pool.name}`;
     const secret=document.getElementById('admin-secret');secret.value='';secret.placeholder=pool.secret_set?'A secret is set for this project; enter a new one to replace it':'Set this project’s lab secret (8+ characters)';
-    document.getElementById('admin-token-state').textContent=pool.login_management_ready?'Student self-service relinquishment is configured. Administrator actions use your current Proxmox session.':'Administrator actions use your current Proxmox session. Set CHECKOUT_PROXMOX_API_TOKEN on the AccessForge server to also allow students to relinquish their own accounts.';
-    document.getElementById('admin-token-state').className='muted';
     document.getElementById('admin-policy-note').textContent=!pool.verify_email?'Verification is off: anyone with the lab secret and an email can retrieve that email’s credentials.':pool.smtp_configured?'Students must verify their email before receiving credentials.':'Configure SMTP on this AccessForge server before verified checkout can be used.';
     rows();
   }

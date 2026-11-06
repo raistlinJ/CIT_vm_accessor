@@ -76,7 +76,6 @@ test('administrator relinquishment reuses the session without a password field, 
   const h=await harness();await h.select(0);await h.action('admin-account-actions','release');
   const request=h.calls.find(call=>call.body?.action==='release');
   assert.deepEqual(request.body,{action:'release',usernames:['student01@pve']});
-  assert.match(h.el('admin-token-state').textContent,/Administrator actions use your current Proxmox session/);
   const page=fs.readFileSync('templates/checkout_admin.html','utf8');
   assert.doesNotMatch(page,/admin-manager-password|credentials-dialog|Save credentials|Save administrator password/);
   h.el('admin-secret').value='updated-lab-secret';await h.el('admin-save').fire();
@@ -85,8 +84,6 @@ test('administrator relinquishment reuses the session without a password field, 
 
 test('a missing student token does not block administrator relinquishment',async()=>{
   const h=await harness();h.pool.login_management_ready=false;await h.el('admin-refresh').fire();await h.select(0);
-  assert.match(h.el('admin-token-state').textContent,/to also allow students to relinquish/);
-  assert.equal(h.el('admin-token-state').className,'muted');
   await h.action('admin-account-actions','release');
   assert.match(h.el('admin-feedback').textContent,/Selected accounts relinquished/);
 });
