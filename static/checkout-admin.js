@@ -60,7 +60,7 @@
     if(!usernames.length)throw new Error('Select at least one account.');
     const action=button.dataset.action;let email;
     if(action==='assign'){if(usernames.length!==1)throw new Error('Select one account to assign.');email=prompt('Student email address:');if(!email)return;}
-    if((action==='release'||action==='remove')&&!confirm(action==='release'?`Release ${usernames.length} account(s) and disable their Proxmox logins?`:`Remove ${usernames.length} unassigned account(s) from this checkout pool?`))return;
+    if((action==='release'||action==='remove')&&!confirm(action==='release'?`Relinquish ${usernames.length} selected account(s)? Students will lose access and their Proxmox logins will be disabled until re-enabled.`:`Remove ${usernames.length} unassigned account(s) from this checkout pool?`))return;
     const data=await api('/pools/'+encodeURIComponent(pool.id),'POST',{action,usernames,email});
     await refresh();const errors=(data.results||[]).filter(r=>!r.released);
     message(errors.length?errors.map(r=>`${r.username}: ${r.error}`).join(' '):'Accounts updated.',!!errors.length);
