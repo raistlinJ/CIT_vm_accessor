@@ -827,3 +827,16 @@ def test_student_relinquish_uses_service_token_instead_of_student_ticket(checkou
     assert result.status_code==200 and result.json['relinquished']
     assert put.call_args.kwargs['headers']=={'Authorization':'PVEAPIToken=service@pve!checkout=test-management-token'}
     assert put.call_args.kwargs['cookies']=={} and put.call_args.kwargs['data']=={'enable':0}
+
+
+def test_enabling_an_unassigned_active_login_is_idempotent_but_password_reset_still_requires_disabling(checkout):
+    setup_pool(checkout)
+    with patch('account_checkout.set_login_enabled') as enable,patch('account_checkout.set_account_password') as reset:
+        for _ in range(2):
+            result=checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1'}]})
+            assert result.json['results'][0]['success']
+        assert enable.call_count==2 and enable.call_args.args[1:]==('student01@pve',True)
+        result=checkout.post(POOL,headers=BASIC,json={'action':'reset_passwords','accounts':[{'username':'student01','password':'new-password'}]})
+        assert not result.json['results'][0]['success']
+        assert 'Disable this login' in result.json['results'][0]['error']
+        reset.assert_not_called()
