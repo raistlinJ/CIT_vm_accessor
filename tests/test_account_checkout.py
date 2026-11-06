@@ -112,6 +112,44 @@ def test_admin_is_checked_on_configured_cluster_and_permissions_presence(checkou
     assert 'password' not in result.get_data(as_text=True)
 
 
+@pytest.mark.parametrize('phase',['ticket','permissions'])
+@pytest.mark.parametrize('failure,expected',[
+    (requests.exceptions.SSLError('private-password'),'Proxmox API\'s TLS certificate'),
+    (requests.Timeout('private-password'),'timed out contacting'),
+    (requests.ConnectionError('private-password'),'container DNS/network access'),
+    (requests.RequestException('private-password'),'could not request'),
+    (requests.exceptions.JSONDecodeError('private-password','private-document',0),'invalid Proxmox API response'),
+    (ValueError('private-password'),'invalid Proxmox API response'),
+])
+def test_admin_backend_failures_identify_the_proxmox_connection_without_leaking_details(checkout,monkeypatch,caplog,phase,failure,expected):
+    monkeypatch.setattr(account_checkout,'authenticate_admin',REAL_ADMIN_AUTH)
+    monkeypatch.setitem(main.app.config,'CHECKOUT_PROXMOX_VERIFY',True)
+    ticket=reply({'username':'root@pam','ticket':'ticket','CSRFPreventionToken':'csrf'})
+    with patch('account_checkout.requests.post',side_effect=failure if phase=='ticket' else None,return_value=ticket),patch('account_checkout.requests.get',side_effect=failure if phase=='permissions' else None,return_value=reply({'/':{'Sys.Modify':1}})):
+        result=checkout.get('/api/admin/checkouts/status',headers=BASIC)
+    assert result.status_code==502 and expected in result.json['error']
+    assert 'private-password' not in result.get_data(as_text=True) and 'private-password' not in caplog.text
+    assert 'configured Proxmox' in caplog.text
+
+
+def test_backend_tls_negotiation_failure_does_not_claim_certificate_verification_when_disabled(checkout,monkeypatch):
+    monkeypatch.setattr(account_checkout,'authenticate_admin',REAL_ADMIN_AUTH)
+    monkeypatch.setitem(main.app.config,'CHECKOUT_PROXMOX_VERIFY',False)
+    with patch('account_checkout.requests.post',side_effect=requests.exceptions.SSLError('private-details')):
+        result=checkout.get('/api/admin/checkouts/status',headers=BASIC)
+    assert result.status_code==502 and 'could not establish TLS' in result.json['error']
+    assert 'could not verify' not in result.json['error']
+
+
+@pytest.mark.parametrize('phase',['ticket','permissions'])
+def test_proxmox_server_errors_are_not_reported_as_bad_admin_credentials(checkout,monkeypatch,phase):
+    monkeypatch.setattr(account_checkout,'authenticate_admin',REAL_ADMIN_AUTH)
+    ticket=reply({'username':'root@pam','ticket':'ticket','CSRFPreventionToken':'csrf'})
+    with patch('account_checkout.requests.post',return_value=reply(None,502) if phase=='ticket' else ticket),patch('account_checkout.requests.get',return_value=reply(None,503)):
+        result=checkout.get('/api/admin/checkouts/status',headers=BASIC)
+    assert result.status_code==502 and 'Proxmox API returned a server error' in result.json['error']
+
+
 @pytest.mark.parametrize('entered,expected',[
     ('jcacosta','jcacosta@pam'),(' jcacosta ','jcacosta@pam'),
     ('jcacosta@pve','jcacosta@pve'),('jcacosta@ldap','jcacosta@ldap'),
@@ -448,7 +486,7 @@ def test_explicit_password_reset_keeps_login_disabled_and_reenable_uses_new_cred
 
 def test_reset_and_reenable_reject_assigned_accounts(checkout):
     setup_pool(checkout);start(checkout)
-    for action in ('reset_passwords','reenable_logins'):
+    for action in ('reset_passwords','reenable_logins','enable_accounts'):
         with patch('account_checkout.set_login_enabled') as change,patch('account_checkout.set_account_password') as reset:
             result=checkout.post(POOL,headers=BASIC,json={'action':action,'accounts':[{'username':'student01','password':'new-password'}]})
         assert not result.get_json()['results'][0]['success'];change.assert_not_called();reset.assert_not_called()
@@ -827,3 +865,58 @@ def test_student_relinquish_uses_service_token_instead_of_student_ticket(checkou
     assert result.status_code==200 and result.json['relinquished']
     assert put.call_args.kwargs['headers']=={'Authorization':'PVEAPIToken=service@pve!checkout=test-management-token'}
     assert put.call_args.kwargs['cookies']=={} and put.call_args.kwargs['data']=={'enable':0}
+
+
+@pytest.mark.parametrize('initially_disabled',[False,True])
+@pytest.mark.parametrize('enable_checkout',[False,True])
+@pytest.mark.parametrize('action',['reenable_logins','enable_accounts'])
+def test_enable_is_idempotent_and_enables_checkout_only_when_requested(checkout,initially_disabled,enable_checkout,action):
+    assert publish(checkout).status_code==200
+    with main.app.app_context():
+        with CheckoutStore().transaction() as db:
+            db.execute('UPDATE accounts SET login_disabled=? WHERE username=?',(int(initially_disabled),'student01@pve'))
+    with patch('account_checkout.set_login_enabled') as enable,patch('account_checkout.set_account_password') as reset:
+        for _ in range(2):
+            result=checkout.post(POOL,headers=BASIC,json={'action':action,'accounts':[{'username':'student01','password':'original-password1','enable_checkout':enable_checkout}]})
+            assert result.status_code==200 and result.json['results'][0]['success']
+            state=result.json['checkout']['accounts']['student01@pve']
+            assert not state['login_disabled'] and state['eligible']==enable_checkout
+        assert enable.call_count==2 and enable.call_args.args[1:]==('student01@pve',True)
+        reset.assert_not_called()
+
+
+def test_account_setup_capability_and_default_setup_enable_a_new_active_account(checkout):
+    assert checkout.get('/api/admin/checkouts/status',headers=BASIC).json['capabilities']['account_setup'] is True
+    publish(checkout)
+    with patch('account_checkout.set_login_enabled') as enable:
+        result=checkout.post(POOL,headers=BASIC,json={'action':'enable_accounts','accounts':[{'username':'student01','password':'original-password1'}]})
+    assert result.status_code==200 and result.json['results'][0]['success']
+    state=result.json['checkout']['accounts']['student01@pve']
+    assert state['eligible'] and not state['login_disabled']
+    enable.assert_called_once()
+
+
+@pytest.mark.parametrize('initially_disabled',[False,True])
+def test_failed_login_enable_does_not_enable_checkout_or_change_login_state(checkout,initially_disabled):
+    publish(checkout)
+    with main.app.app_context():
+        with CheckoutStore().transaction() as db:
+            db.execute('UPDATE accounts SET login_disabled=? WHERE username=?',(int(initially_disabled),'student01@pve'))
+    with patch('account_checkout.set_login_enabled',side_effect=RuntimeError('private-failure')):
+        result=checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1','enable_checkout':True}]})
+    assert result.status_code==200 and not result.json['results'][0]['success']
+    state=result.json['checkout']['accounts']['student01@pve']
+    assert not state['eligible'] and state['login_disabled']==initially_disabled
+    assert 'private-failure' not in result.get_data(as_text=True)
+
+
+def test_password_reset_still_requires_disabling_and_invalid_checkout_flag_is_rejected(checkout):
+    publish(checkout)
+    with patch('account_checkout.set_login_enabled') as enable,patch('account_checkout.set_account_password') as reset:
+        result=checkout.post(POOL,headers=BASIC,json={'action':'reset_passwords','accounts':[{'username':'student01','password':'updated-password'}]})
+        assert result.status_code==200 and not result.json['results'][0]['success']
+        assert 'Disable this login' in result.json['results'][0]['error']
+        for flag in ('true',1,None):
+            result=checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1','enable_checkout':flag}]})
+            assert result.status_code==400
+        enable.assert_not_called();reset.assert_not_called()

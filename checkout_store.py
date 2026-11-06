@@ -506,18 +506,21 @@ class CheckoutStore:
     def prepare_accounts(self,pool_id,data,actor,apply):
         action=data.get('action')
         entries=data.get('accounts')
-        if action not in ('reset_passwords','reenable_logins') or not isinstance(entries,list) or not 1<=len(entries)<=2000:
+        if action not in ('reset_passwords','reenable_logins','enable_accounts') or not isinstance(entries,list) or not 1<=len(entries)<=2000:
             raise CheckoutError('Select saved accounts for this operation.')
         prepared=[];seen=set()
         for entry in entries:
             if not isinstance(entry,dict):
                 raise CheckoutError('Invalid account entry.')
             username=user_id(entry.get('username'));password=entry.get('password')
+            enable_checkout=entry.get('enable_checkout',action=='enable_accounts')
+            if type(enable_checkout) is not bool or (enable_checkout and action not in ('reenable_logins','enable_accounts')):
+                raise CheckoutError('enable_checkout must be a boolean and is only supported when enabling logins.')
             if username in seen or not isinstance(password,str) or not 8<=len(password)<=64:
                 raise CheckoutError('Use unique accounts with passwords between 8 and 64 characters.')
-            seen.add(username);prepared.append((username,password))
+            seen.add(username);prepared.append((username,password,enable_checkout))
         results=[]
-        for username,password in prepared:
+        for username,password,enable_checkout in prepared:
             try:
                 with self.transaction() as db:
                     self.pool(db,pool_id)
@@ -526,15 +529,15 @@ class CheckoutStore:
                         raise CheckoutError('Publish this account before managing its login.',409)
                     if row['email'] or row['release_pending']:
                         raise CheckoutError('Release the assigned account before resetting or re-enabling it.',409)
-                    if not row['login_disabled']:
+                    if not row['login_disabled'] and action=='reset_passwords':
                         raise CheckoutError('Disable this login before preparing it for checkout.',409)
-                    if action=='reenable_logins' and not hmac.compare_digest(password.encode(),decrypt_str(row['password_enc']).encode()):
+                    if action in ('reenable_logins','enable_accounts') and not hmac.compare_digest(password.encode(),decrypt_str(row['password_enc']).encode()):
                         raise CheckoutError('Reset the saved password or publish the updated credentials before re-enabling.',409)
                     apply(username,password)
                     if action=='reset_passwords':
                         db.execute('UPDATE accounts SET password_enc=?,source_hash=? WHERE pool_id=? AND username=?',(encrypt_str(password),self.digest(password),pool_id,username))
                     else:
-                        db.execute('UPDATE accounts SET login_disabled=0 WHERE pool_id=? AND username=?',(pool_id,username))
+                        db.execute('UPDATE accounts SET login_disabled=0,eligible=MAX(eligible,?) WHERE pool_id=? AND username=?',(int(enable_checkout),pool_id,username))
                     self.event(db,pool_id,username,None,'password_reset' if action=='reset_passwords' else 'login_enabled',actor)
                 results.append({'username':username,'success':True})
             except Exception as exc:

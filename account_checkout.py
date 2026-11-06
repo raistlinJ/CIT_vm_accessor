@@ -87,6 +87,11 @@ def authenticate_admin():
     principal={'ticket':session.get('pve_ticket'),'csrf':session.get('pve_csrf'),'username':session.get('pve_user')}
     verify=current_app.config['CHECKOUT_PROXMOX_VERIFY']
     admin_limit=None
+    phase='administrator authentication'
+    def unavailable(message,exc):
+        current_app.logger.warning('Checkout %s failed on configured Proxmox %s:%s (%s)',phase,
+                                   current_app.config['CHECKOUT_PROXMOX_HOST'],current_app.config['CHECKOUT_PROXMOX_PORT'],type(exc).__name__)
+        raise CheckoutError(message,502) from None
     try:
         if authorization and authorization.type.lower()=='basic':
             username,password=(authorization.username or '').strip(),authorization.password
@@ -97,6 +102,9 @@ def authenticate_admin():
             admin_limit='admin:'+str(request.remote_addr)+':'+username
             CheckoutStore().limit(admin_limit,20,300)
             response=requests.post(backend_url()+'/access/ticket',data={'username':username,'password':password},timeout=(5,15),verify=verify,allow_redirects=False)
+            if response.status_code>=500:
+                current_app.logger.warning('Checkout administrator authentication upstream failure (HTTP %s)',response.status_code)
+                raise CheckoutError('The configured Proxmox API returned a server error during administrator authentication.',502)
             if response.status_code != 200:
                 current_app.logger.warning('Checkout administrator login rejected for %s on %s (HTTP %s)',username,current_app.config['CHECKOUT_PROXMOX_HOST'],response.status_code)
                 raise CheckoutError('Administrator authentication failed.',401)
@@ -107,7 +115,11 @@ def authenticate_admin():
             principal={'username':data.get('username') or username,'ticket':data['ticket'],'csrf':data['CSRFPreventionToken'],'password':password}
         if not principal['ticket'] or not principal['username']:
             raise CheckoutError('Sign in with an administrator account.',401)
+        phase='administrator permission lookup'
         response=requests.get(backend_url()+'/access/permissions',params={'path':'/'},cookies={'PVEAuthCookie':principal['ticket']},timeout=(5,15),verify=verify,allow_redirects=False)
+        if response.status_code>=500:
+            current_app.logger.warning('Checkout administrator permissions upstream failure (HTTP %s)',response.status_code)
+            raise CheckoutError('The configured Proxmox API returned a server error while checking administrator permissions.',502)
         if response.status_code!=200:
             current_app.logger.warning('Checkout administrator permission lookup failed for %s (HTTP %s)',principal['username'],response.status_code)
             raise CheckoutError('Administrator session expired. Sign in again.',401)
@@ -119,8 +131,19 @@ def authenticate_admin():
             with CheckoutStore().transaction() as db:
                 db.execute('DELETE FROM rate_limits WHERE key=?',(admin_limit,))
         return principal
-    except (requests.RequestException,ValueError,KeyError,TypeError,AttributeError):
-        raise CheckoutError('Could not validate the administrator with Proxmox.',502) from None
+    except requests.exceptions.SSLError as exc:
+        unavailable("AccessForge could not verify the configured Proxmox API's TLS certificate. Check VERIFY_SSL and the Proxmox certificate trust on AccessForge." if verify else
+                    'AccessForge could not establish TLS with the configured Proxmox API. Check PROXMOX_HOST, PROXMOX_PORT, and its TLS configuration.',exc)
+    except requests.Timeout as exc:
+        unavailable('AccessForge timed out contacting its configured Proxmox API. Check PROXMOX_HOST, PROXMOX_PORT, and network access from the AccessForge container.',exc)
+    except requests.ConnectionError as exc:
+        unavailable('AccessForge could not connect to its configured Proxmox API. Check PROXMOX_HOST, PROXMOX_PORT, and container DNS/network access.',exc)
+    except requests.exceptions.JSONDecodeError as exc:
+        unavailable('AccessForge received an invalid Proxmox API response while validating the administrator. Check PROXMOX_HOST, PROXMOX_PORT, and reverse-proxy routing.',exc)
+    except requests.RequestException as exc:
+        unavailable('AccessForge could not request its configured Proxmox API. Check PROXMOX_HOST and PROXMOX_PORT.',exc)
+    except (ValueError,KeyError,TypeError,AttributeError) as exc:
+        unavailable('AccessForge received an invalid Proxmox API response while validating the administrator. Check PROXMOX_HOST, PROXMOX_PORT, and reverse-proxy routing.',exc)
 
 
 def set_account_password(principal,username,password,confirmation=''):
@@ -234,6 +257,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
     @admin
     def admin_status(principal):
         return jsonify(service='AccessForge',checkout_api=1,administrator=principal['username'],
+                       capabilities={'account_setup':True},
                        cluster={'host':app.config['CHECKOUT_PROXMOX_HOST'],'port':app.config['CHECKOUT_PROXMOX_PORT']},
                        smtp_configured=bool(os.environ.get('CHECKOUT_SMTP_HOST') and os.environ.get('CHECKOUT_SMTP_FROM')))
 
@@ -270,7 +294,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
         if action=='disable_logins':
             results=store.disable_logins(pool_id,data.get('usernames'),principal['username'],lambda user:set_login_enabled(principal,user,False))
             return jsonify(checkout=store.summary(pool_id),results=results)
-        if action in ('reset_passwords','reenable_logins'):
+        if action in ('reset_passwords','reenable_logins','enable_accounts'):
             if action=='reset_passwords':
                 def apply(user,password):
                     set_login_enabled(principal,user,False)
