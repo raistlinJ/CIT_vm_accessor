@@ -112,3 +112,12 @@ test('checkout restrictions load, save all policy controls, and reset for a proj
   assert.equal(h.el('admin-policy-subnet_checkout_limit').value,0);
   assert.equal(h.el('admin-policy-ipv4_prefix').value,24);
 });
+
+test('available accounts awaiting checkout show that their login remains disabled',async()=>{
+  const h=await harness();
+  h.pool.accounts['student01@pve']={eligible:true,login_disabled:true,awaiting_checkout:true};
+  h.pool.accounts['student02@pve']={eligible:true,login_disabled:true,awaiting_checkout:false};
+  await h.el('admin-refresh').fire();
+  assert.match(h.el('tbody').innerHTML,/Available \(login disabled until assigned\)/);
+  assert.match(h.el('tbody').innerHTML,/>Disabled<\/td>/);
+});

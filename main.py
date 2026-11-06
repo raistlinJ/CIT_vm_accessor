@@ -118,10 +118,9 @@ def spice_cookie_owner(cookie_header):
     ticket = data.get("pve_ticket")
     if not ticket:
       return None
-    if data.get('checkout_lease'):
-      with app.app_context():
-        if not checkout_session_current(data):
-          return None
+    with app.app_context():
+      if not checkout_session_current(data):
+        return None
     return session_owner(ticket)
   except (BadSignature, TypeError, ValueError):
     return None
@@ -1138,9 +1137,9 @@ def login():
     csrf = data.get("CSRFPreventionToken")
     if not ticket or not csrf:
       raise ValueError("Missing ticket or CSRF token in response.")
-    if not checkout_session_current({"pve_user":user_with_realm,"pve_host":host_override,"pve_port":port_override},strict=True):
+    if not checkout_session_current({"pve_user":user_with_realm,"pve_host":host_override,"pve_port":port_override},strict=True,authenticating=True):
       return render_template_string(TPL_LOGIN,host=host_override,port=port_override,realm=realm_override,verify_ssl=verify_override,
-                                    username=username,error="This account is disabled. Ask your instructor to re-enable it through SCE-web."),403
+                                    username=username,error="This account is disabled or awaiting checkout. Use Get lab access to claim an On-Demand account, or ask your instructor to enable it."),403
     # Persist minimal session state
     session.pop("checkout_admin", None)
     session["pve_user"] = user_with_realm

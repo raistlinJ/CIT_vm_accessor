@@ -57,17 +57,17 @@ def bind_checkout_admin(permissions=None):
         current_app.logger.warning('Could not check checkout management navigation permissions')
 
 
-def checkout_session_current(data,*,strict=False):
+def checkout_session_current(data,*,strict=False,authenticating=False):
     if not checkout_enabled():
         return True
     if not configured_checkout_cluster(data):
         return not data.get('checkout_lease')
     try:
         row=CheckoutStore().account(data.get('pve_user')) if data.get('pve_user') else None
-        if row and row['login_disabled']:
+        if row and (row['login_disabled'] or (row['eligible'] and not row['email'])):
             return False
         if not data.get('checkout_lease'):
-            return True
+            return authenticating or not (row and row['eligible'] and row['email'])
         return bool(row and row['email'] and row['lease_id']==data['checkout_lease'])
     except CheckoutError as exc:
         if strict and exc.status!=400:
@@ -162,14 +162,17 @@ def set_account_password(principal,username,password,confirmation=''):
 def set_login_enabled(principal,username,enabled):
     headers={'Authorization':'PVEAPIToken='+principal['token']} if principal.get('token') else {'CSRFPreventionToken':principal['csrf']}
     cookies={} if principal.get('token') else {'PVEAuthCookie':principal['ticket']}
-    response=requests.put(backend_url()+'/access/users/'+quote(username,safe=''),data={'enable':int(enabled)},cookies=cookies,headers=headers,
-                          timeout=(5,25),verify=current_app.config['CHECKOUT_PROXMOX_VERIFY'],allow_redirects=False)
+    try:
+        response=requests.put(backend_url()+'/access/users/'+quote(username,safe=''),data={'enable':int(enabled)},cookies=cookies,headers=headers,
+                              timeout=(5,25),verify=current_app.config['CHECKOUT_PROXMOX_VERIFY'],allow_redirects=False)
+    except requests.RequestException:
+        raise CheckoutError('Could not change the Proxmox login state. Check the Proxmox connection and retry.',502) from None
     if response.status_code!=200:
         raise CheckoutError('Could not change the Proxmox login state. Check User.Modify permission.',502)
 
 
 def login_management_principal(pool_id):
-    """Service identity for student relinquishment; admin actions use their own ticket."""
+    """Service identity for student activation/relinquishment; admins use their ticket."""
     token=os.environ.get('CHECKOUT_PROXMOX_API_TOKEN','').strip().removeprefix('PVEAPIToken=').strip()
     if not token:
         raise CheckoutError('Configure CHECKOUT_PROXMOX_API_TOKEN on AccessForge with User.Modify permission for the managed Proxmox users.',503)
@@ -257,20 +260,25 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
     @admin
     def admin_status(principal):
         return jsonify(service='AccessForge',checkout_api=1,administrator=principal['username'],
-                       capabilities={'account_setup':True},
+                       capabilities={'account_setup':True,'assignment_login_control':True},
                        cluster={'host':app.config['CHECKOUT_PROXMOX_HOST'],'port':app.config['CHECKOUT_PROXMOX_PORT']},
                        smtp_configured=bool(os.environ.get('CHECKOUT_SMTP_HOST') and os.environ.get('CHECKOUT_SMTP_FROM')))
 
     @bp.get('/api/admin/checkouts/pools')
     @admin
     def pools(principal):
-        return jsonify(pools=CheckoutStore().summaries())
+        store=CheckoutStore()
+        pools=store.summaries()
+        for pool in pools:
+            store.hold_unassigned_logins(pool['id'],lambda user:set_login_enabled(principal,user,False))
+        return jsonify(pools=store.summaries())
 
     @bp.route('/api/admin/checkouts/pools/<pool_id>',methods=['GET','PUT','PATCH','POST'])
     @admin
     def pool_action(principal,pool_id):
         store=CheckoutStore()
         if request.method=='GET':
+            store.hold_unassigned_logins(pool_id,lambda user:set_login_enabled(principal,user,False))
             return jsonify(store.summary(pool_id))
         data=body()
         if request.method=='PUT':
@@ -296,15 +304,15 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
             return jsonify(checkout=store.summary(pool_id),results=results)
         if action in ('reset_passwords','reenable_logins','enable_accounts'):
             if action=='reset_passwords':
-                def apply(user,password):
+                def apply(user,password,enabled):
                     set_login_enabled(principal,user,False)
                     set_account_password(principal,user,password)
             else:
-                def apply(user,password):
-                    set_login_enabled(principal,user,True)
+                def apply(user,password,enabled):
+                    set_login_enabled(principal,user,enabled)
             results=store.prepare_accounts(pool_id,data,principal['username'],apply)
             return jsonify(checkout=store.summary(pool_id),results=results)
-        return jsonify(checkout=store.account_action(pool_id,data,principal['username']))
+        return jsonify(checkout=store.account_action(pool_id,data,principal['username'],lambda user,enabled:set_login_enabled(principal,user,enabled)))
 
     @bp.get('/api/account-checkout/session')
     def current_checkout():
@@ -377,6 +385,8 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
         csrf('checkout_csrf')
         data=body(8192)
         store=CheckoutStore()
+        def manage_login(user,enabled):
+            set_login_enabled(login_management_principal(None),user,enabled)
         identity=store.digest(str(checkout_client_ip())+':'+str(session.get('checkout_client','')))
         store.limit('student:'+identity,30,300)
         if action=='start':
@@ -393,7 +403,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
                 existing=db.execute('SELECT 1 FROM accounts WHERE pool_id=? AND email=?',(pool['id'],email)).fetchone()
                 store.check_policy(db,pool,email,new_checkout=not existing)
                 if not pool['verify_email']:
-                    return jsonify(store.allocate(db,pool['id'],email,name=name))
+                    return jsonify(store.allocate(db,pool['id'],email,name=name,set_login=manage_login))
                 pool_id,version=pool['id'],pool['secret_hash']
             store.limit('email:'+store.digest(pool_id+':'+email),1,60)
             challenge=secrets.token_urlsafe(32)
@@ -428,7 +438,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
                 elif not store.pool(db,row['pool_id'])['enabled']:
                     failure=CheckoutError('Checkout is closed.',403)
                 else:
-                    result=store.allocate(db,row['pool_id'],row['email'],name=row['name'])
+                    result=store.allocate(db,row['pool_id'],row['email'],name=row['name'],set_login=manage_login)
                     db.execute('DELETE FROM challenges WHERE id=?',(challenge,))
             if failure:
                 raise failure

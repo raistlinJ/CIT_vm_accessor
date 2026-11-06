@@ -23,6 +23,7 @@ def checkout(tmp_path,monkeypatch):
     monkeypatch.delenv('CHECKOUT_SMTP_FROM',raising=False)
     monkeypatch.setitem(main.app.config,'CHECKOUT_DATA_DIR',str(tmp_path))
     monkeypatch.setattr(account_checkout,'authenticate_admin',lambda:dict(ADMIN))
+    monkeypatch.setattr(account_checkout.requests,'put',lambda *args,**kwargs:reply(None))
     with main.app.test_client() as client:
         yield client
 
@@ -67,7 +68,7 @@ def test_disabled_feature_hides_links_and_admin_api(checkout,monkeypatch):
     assert b'id="login-checkout-link"' not in checkout.get('/login').data
 
 
-def test_student_checkout_works_locally_without_sce_or_proxmox(checkout):
+def test_student_checkout_uses_only_proxmox_login_activation_without_sce(checkout):
     setup_pool(checkout,names=['student02'])
     with patch('account_checkout.requests.post',side_effect=AssertionError('No upstream calls')),patch('account_checkout.requests.get',side_effect=AssertionError('No upstream calls')):
         result=start(checkout,'One@Example.EDU')
@@ -458,7 +459,7 @@ def test_disabled_account_stays_unavailable_until_explicit_reenable(checkout):
     with patch('account_checkout.set_login_enabled') as enable,patch('account_checkout.set_account_password') as reset:
         result=checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1'}]})
     assert result.get_json()['results'][0]['success']
-    assert enable.call_args.args[1:]==('student01@pve',True)
+    assert enable.call_args.args[1:]==('student01@pve',False)
     reset.assert_not_called()
     assert start(checkout,'new@example.edu').get_json()['password']=='original-password1'
 
@@ -832,7 +833,7 @@ def test_login_enable_and_disable_use_admin_ticket_without_resetting_passwords(c
         assert disabled.json['results'][0]['success']
         enabled=checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1'}]})
         assert enabled.json['results'][0]['success']
-    assert [call.kwargs['data'] for call in put.call_args_list]==[{'enable':0},{'enable':1}]
+    assert [call.kwargs['data'] for call in put.call_args_list]==[{'enable':0},{'enable':0}]
     assert all(call.kwargs['headers']=={'CSRFPreventionToken':'admin-csrf'} for call in put.call_args_list)
     assert all(call.kwargs['cookies']=={'PVEAuthCookie':'admin-ticket'} for call in put.call_args_list)
     reset.assert_not_called()
@@ -880,8 +881,8 @@ def test_enable_is_idempotent_and_enables_checkout_only_when_requested(checkout,
             result=checkout.post(POOL,headers=BASIC,json={'action':action,'accounts':[{'username':'student01','password':'original-password1','enable_checkout':enable_checkout}]})
             assert result.status_code==200 and result.json['results'][0]['success']
             state=result.json['checkout']['accounts']['student01@pve']
-            assert not state['login_disabled'] and state['eligible']==enable_checkout
-        assert enable.call_count==2 and enable.call_args.args[1:]==('student01@pve',True)
+            assert state['login_disabled']==enable_checkout and state['awaiting_checkout']==enable_checkout and state['eligible']==enable_checkout
+        assert enable.call_count==2 and enable.call_args.args[1:]==('student01@pve',not enable_checkout)
         reset.assert_not_called()
 
 
@@ -892,7 +893,7 @@ def test_account_setup_capability_and_default_setup_enable_a_new_active_account(
         result=checkout.post(POOL,headers=BASIC,json={'action':'enable_accounts','accounts':[{'username':'student01','password':'original-password1'}]})
     assert result.status_code==200 and result.json['results'][0]['success']
     state=result.json['checkout']['accounts']['student01@pve']
-    assert state['eligible'] and not state['login_disabled']
+    assert state['eligible'] and state['login_disabled'] and state['awaiting_checkout']
     enable.assert_called_once()
 
 
@@ -920,3 +921,170 @@ def test_password_reset_still_requires_disabling_and_invalid_checkout_flag_is_re
             result=checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1','enable_checkout':flag}]})
             assert result.status_code==400
         enable.assert_not_called();reset.assert_not_called()
+
+
+def test_on_demand_lifecycle_keeps_proxmox_login_off_until_assignment(checkout):
+    with patch('account_checkout.requests.put',return_value=reply(None)) as put:
+        setup_pool(checkout,names=['student01'])
+        assert put.call_args.kwargs['data']=={'enable':0}
+        assert put.call_args.kwargs['cookies']=={'PVEAuthCookie':'admin-ticket'}
+        state=checkout.get(POOL,headers=BASIC).json['accounts']['student01@pve']
+        assert state['login_disabled'] and state['awaiting_checkout'] and state['email'] is None
+        result=start(checkout)
+        assert result.status_code==200
+        assert put.call_args.kwargs['data']=={'enable':1}
+        assert put.call_args.kwargs['headers']=={'Authorization':'PVEAPIToken=service@pve!checkout=test-management-token'}
+        state=checkout.get(POOL,headers=BASIC).json['accounts']['student01@pve']
+        assert state['email']=='one@example.edu' and not state['login_disabled'] and not state['awaiting_checkout']
+        before=put.call_count
+        assert start(checkout).status_code==200
+        assert put.call_count==before  # Recovery does not toggle the login.
+        result=checkout.post(POOL,headers=BASIC,json={'action':'release','usernames':['student01']})
+        assert result.json['results'][0]['released']
+        state=result.json['checkout']['accounts']['student01@pve']
+        assert state['login_disabled'] and not state['awaiting_checkout']
+        assert start(checkout,'two@example.edu').status_code==409
+        result=checkout.post(POOL,headers=BASIC,json={'action':'enable_accounts','accounts':[{'username':'student01','password':'original-password1'}]})
+        assert result.json['results'][0]['success']
+        assert put.call_args.kwargs['data']=={'enable':0}
+        assert start(checkout,'two@example.edu').status_code==200
+        assert put.call_args.kwargs['data']=={'enable':1}
+
+
+@pytest.mark.parametrize('missing_token',[False,True])
+def test_failed_student_activation_does_not_assign_or_disclose_credentials(checkout,monkeypatch,missing_token):
+    setup_pool(checkout,names=['student01'])
+    if missing_token:
+        monkeypatch.delenv('CHECKOUT_PROXMOX_API_TOKEN')
+    with patch('account_checkout.requests.put',return_value=reply(None,403)):
+        result=start(checkout)
+    assert result.status_code==(503 if missing_token else 502)
+    assert 'original-password' not in result.get_data(as_text=True)
+    state=checkout.get(POOL,headers=BASIC).json['accounts']['student01@pve']
+    assert state['email'] is None and state['checked_out_at'] is None
+    assert state['awaiting_checkout'] and state['login_disabled']
+    with main.app.app_context():
+        with CheckoutStore().transaction() as db:
+            assert db.execute("SELECT count(*) FROM events WHERE action='assigned'").fetchone()[0]==0
+
+
+def test_failed_assignment_after_login_activation_disables_login_again(checkout,monkeypatch):
+    from checkout_store import CheckoutError
+    setup_pool(checkout,names=['student01'])
+    real_event=CheckoutStore.event
+    def fail_assignment(self,db,pool_id,username,email,action,actor,**extra):
+        if action=='assigned':
+            raise CheckoutError('Could not save assignment.',503)
+        return real_event(self,db,pool_id,username,email,action,actor,**extra)
+    monkeypatch.setattr(CheckoutStore,'event',fail_assignment)
+    with patch('account_checkout.requests.put',return_value=reply(None)) as put:
+        result=start(checkout)
+    assert result.status_code==503
+    assert [call.kwargs['data'] for call in put.call_args_list]==[{'enable':1},{'enable':0}]
+    state=checkout.get(POOL,headers=BASIC).json['accounts']['student01@pve']
+    assert state['email'] is None and state['login_disabled'] and state['awaiting_checkout']
+
+
+def test_verification_must_succeed_before_login_is_activated(checkout):
+    setup_pool(checkout,verify=True,names=['student01'])
+    with patch('account_checkout.send_verification') as send,patch('account_checkout.requests.put',return_value=reply(None)) as put:
+        result=start(checkout)
+        challenge=result.json['challenge'];code=send.call_args.args[1]
+        assert verify(checkout,challenge,'bad-code').status_code==403
+        put.assert_not_called()
+        assert verify(checkout,challenge,code).status_code==200
+        assert [call.kwargs['data'] for call in put.call_args_list]==[{'enable':1}]
+
+
+def test_admin_assignment_activates_login_with_admin_ticket_without_service_token(checkout,monkeypatch):
+    setup_pool(checkout,names=['student01'])
+    monkeypatch.delenv('CHECKOUT_PROXMOX_API_TOKEN')
+    with patch('account_checkout.requests.put',return_value=reply(None)) as put:
+        result=checkout.post(POOL,headers=BASIC,json={'action':'assign','usernames':['student01'],'email':'manual@example.edu'})
+    assert result.status_code==200
+    state=result.json['checkout']['accounts']['student01@pve']
+    assert state['email']=='manual@example.edu' and not state['login_disabled']
+    assert put.call_args.kwargs['data']=={'enable':1}
+    assert put.call_args.kwargs['cookies']=={'PVEAuthCookie':'admin-ticket'}
+
+
+def test_marking_permanent_restores_only_logins_held_for_checkout(checkout):
+    setup_pool(checkout)
+    with patch('account_checkout.requests.put',return_value=reply(None)) as put:
+        checkout.post(POOL,headers=BASIC,json={'action':'disable_logins','usernames':['student02']})
+        put.reset_mock()
+        result=checkout.post(POOL,headers=BASIC,json={'action':'disable','usernames':['student01','student02']})
+    assert result.status_code==200
+    assert put.call_count==1 and put.call_args.kwargs['data']=={'enable':1}
+    accounts=result.json['checkout']['accounts']
+    assert not accounts['student01@pve']['login_disabled'] and not accounts['student01@pve']['eligible']
+    assert accounts['student02@pve']['login_disabled'] and not accounts['student02@pve']['eligible']
+
+
+@pytest.mark.parametrize('all_pools',[False,True])
+def test_refresh_applies_assignment_login_rule_to_preexisting_accounts(checkout,all_pools):
+    setup_pool(checkout)
+    with main.app.app_context():
+        with CheckoutStore().transaction() as db:
+            db.execute("UPDATE accounts SET login_disabled=0,awaiting_checkout=0 WHERE username='student01@pve'")
+    with patch('account_checkout.requests.put',return_value=reply(None)) as put:
+        result=checkout.get('/api/admin/checkouts/pools' if all_pools else POOL,headers=BASIC)
+        assert result.status_code==200
+        state=(result.json['pools'][0] if all_pools else result.json)['accounts']['student01@pve']
+        assert state['awaiting_checkout'] and state['login_disabled']
+        assert put.call_count==1 and put.call_args.kwargs['data']=={'enable':0}
+        assert checkout.get(POOL,headers=BASIC).status_code==200
+        assert put.call_count==1
+
+
+def test_unassigned_on_demand_account_blocks_login_and_old_unbound_console_session(checkout):
+    assert publish(checkout).status_code==200
+    student_login(checkout)
+    cookie=checkout.get_cookie(main.app.config['SESSION_COOKIE_NAME']).value
+    assert main.spice_cookie_owner(main.app.config['SESSION_COOKIE_NAME']+'='+cookie)
+    checkout.post(POOL,headers=BASIC,json={'action':'enable','usernames':['student01']})
+    assert main.spice_cookie_owner(main.app.config['SESSION_COOKIE_NAME']+'='+cookie) is None
+    with patch.object(main,'proxmox_get') as get:
+        assert checkout.get('/api/vms').status_code==401
+        get.assert_not_called()
+    with patch.object(main,'proxmox_post',return_value=reply({'ticket':'ticket','CSRFPreventionToken':'csrf'})):
+        result=checkout.post('/login',data={'username':'student01','password':'original-password1','realm':'pve',
+            'host':main.app.config['CHECKOUT_PROXMOX_HOST'],'port':str(main.app.config['CHECKOUT_PROXMOX_PORT'])})
+    assert result.status_code==403 and b'awaiting checkout' in result.data
+
+
+def test_old_unassigned_session_does_not_become_valid_when_someone_checks_out(checkout):
+    publish(checkout);student_login(checkout)
+    cookie=checkout.get_cookie(main.app.config['SESSION_COOKIE_NAME']).value
+    checkout.patch(POOL,headers=BASIC,json={'secret':'class-secret','enabled':True,'verify_email':False})
+    checkout.post(POOL,headers=BASIC,json={'action':'enable','usernames':['student01']})
+    other=main.app.test_client()
+    assert start(other).status_code==200
+    assert main.spice_cookie_owner(main.app.config['SESSION_COOKIE_NAME']+'='+cookie) is None
+    assert checkout.get('/api/vms').status_code==401
+    student_login(checkout)  # A fresh login binds the newly assigned lease.
+
+
+def test_failed_existing_account_login_reconciliation_does_not_report_success(checkout):
+    setup_pool(checkout,names=['student01'])
+    with main.app.app_context():
+        with CheckoutStore().transaction() as db:
+            db.execute("UPDATE accounts SET login_disabled=0,awaiting_checkout=0 WHERE username='student01@pve'")
+    with patch('account_checkout.requests.put',return_value=reply(None,403)):
+        result=checkout.get(POOL,headers=BASIC)
+    assert result.status_code==502 and 'User.Modify' in result.json['error']
+    with main.app.app_context():
+        row=CheckoutStore().account('student01@pve')
+        assert not row['awaiting_checkout'] and not row['login_disabled']
+        assert not account_checkout.checkout_session_current({'pve_user':'student01@pve',
+            'pve_host':main.app.config['CHECKOUT_PROXMOX_HOST'],'pve_port':main.app.config['CHECKOUT_PROXMOX_PORT']},authenticating=True)
+
+
+def test_removing_account_restores_only_login_held_for_checkout(checkout):
+    setup_pool(checkout)
+    checkout.post(POOL,headers=BASIC,json={'action':'disable_logins','usernames':['student02']})
+    with patch('account_checkout.requests.put',return_value=reply(None)) as put:
+        result=checkout.post(POOL,headers=BASIC,json={'action':'remove','usernames':['student01','student02']})
+    assert result.status_code==200 and result.json['checkout']['accounts']=={}
+    assert put.call_count==1 and put.call_args.kwargs['data']=={'enable':1}
+    assert put.call_args.args[0].endswith('/student01%40pve')
