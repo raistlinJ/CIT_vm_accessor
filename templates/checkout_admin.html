@@ -5,6 +5,7 @@
   .topbar > div:last-child { flex-wrap:wrap; justify-content:flex-end; }
   #admin-accounts { min-width:68rem; }
   #admin-accounts th { position:sticky; top:0; z-index:1; padding:.6rem; background:var(--item-bg); text-align:left; }
+  #checkout-admin textarea { box-sizing:border-box; padding:.55rem .65rem; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font:inherit; resize:vertical; }
 </style>
 <h2>Credential checkouts</h2>
 {% if error %}
@@ -27,6 +28,23 @@
       </div>
       <label id="admin-secret-label" for="admin-secret">Project lab secret</label>
       <input id="admin-secret" type="password" autocomplete="new-password" minlength="8" maxlength="256" placeholder="Set a lab secret (8+ characters)">
+      <fieldset style="margin:1rem 0; padding:1rem; border:1px solid var(--muted)">
+        <legend>Checkout restrictions</legend>
+        <label for="admin-policy-allowed_email_patterns">Allowed email formats</label>
+        <textarea id="admin-policy-allowed_email_patterns" rows="2" style="width:100%" placeholder="*@utep.edu&#10;student*@example.org"></textarea>
+        <p class="muted" style="font-size:.8rem">One pattern per line. * matches any text; ? matches one character. Leave blank to allow any valid email.</p>
+        <label for="admin-policy-allowed_subnets">Allowed checkout IP networks</label>
+        <textarea id="admin-policy-allowed_subnets" rows="2" style="width:100%" placeholder="192.0.2.0/24&#10;2001:db8::/48"></textarea>
+        <p class="muted" style="font-size:.8rem">One IPv4 or IPv6 CIDR per line. Leave blank to allow any network.</p>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(13rem,1fr)); gap:.8rem">
+          <div><label for="admin-policy-subnet_checkout_limit">Active checkouts per subnet</label><input id="admin-policy-subnet_checkout_limit" type="number" min="0" max="2000" step="1" value="0"></div>
+          <div><label for="admin-policy-ipv4_prefix">IPv4 subnet prefix length</label><input id="admin-policy-ipv4_prefix" type="number" min="0" max="32" step="1" value="24"></div>
+          <div><label for="admin-policy-ipv6_prefix">IPv6 subnet prefix length</label><input id="admin-policy-ipv6_prefix" type="number" min="0" max="128" step="1" value="64"></div>
+          <div><label for="admin-policy-global_delay_seconds">Global delay (seconds)</label><input id="admin-policy-global_delay_seconds" type="number" min="0" max="604800" step="1" value="0"></div>
+          <div><label for="admin-policy-subnet_delay_seconds">Subnet delay (seconds)</label><input id="admin-policy-subnet_delay_seconds" type="number" min="0" max="604800" step="1" value="0"></div>
+        </div>
+        <p class="muted" style="font-size:.8rem; margin-bottom:0">Limits and delays apply to new student checkouts in this project. 0 means no limit or delay. Global delay covers all networks in this project. Recovering an assignment does not use another slot or restart delays, but must meet the email and allowed-network rules. Administrator assignments bypass these restrictions.</p>
+      </fieldset>
       <button type="button" id="admin-save">Save checkout settings</button>
       <p id="admin-policy-note" class="muted" style="margin-bottom:0"></p>
     </div>
@@ -59,6 +77,6 @@
   <p id="admin-feedback" role="status" aria-live="polite"></p>
 </div>
 
-<script src="/static/checkout-admin.js?v=20261106-admin-session-2" defer></script>
+<script src="/static/checkout-admin.js?v=20261106-checkout-policy" defer></script>
 {% endif %}
 {% endblock %}

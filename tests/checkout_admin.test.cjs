@@ -95,3 +95,20 @@ test('expired administrator session errors stay inline without asking for a pass
   assert.match(h.el('admin-feedback').textContent,/Administrator session expired/);
   assert.doesNotMatch(source,/askCredentials|showModal|save_credentials/);
 });
+
+test('checkout restrictions load, save all policy controls, and reset for a project with defaults',async()=>{
+  const h=await harness();
+  const policy={allowed_email_patterns:['*@utep.edu','student?@example.org'],allowed_subnets:['192.0.2.0/24'],
+    subnet_checkout_limit:3,ipv4_prefix:28,ipv6_prefix:56,global_delay_seconds:10,subnet_delay_seconds:30};
+  h.pool.policy=policy;await h.el('admin-refresh').fire();
+  assert.equal(h.el('admin-policy-allowed_email_patterns').value,'*@utep.edu\nstudent?@example.org');
+  assert.equal(h.el('admin-policy-ipv4_prefix').value,28);
+  h.el('admin-policy-allowed_subnets').value='192.0.2.0/24, 2001:db8::/48';
+  h.el('admin-policy-subnet_checkout_limit').value='5';await h.el('admin-save').fire();
+  const sent=h.calls.find(call=>call.options.method==='PATCH').body.policy;
+  assert.deepEqual(sent,{...policy,allowed_subnets:['192.0.2.0/24','2001:db8::/48'],subnet_checkout_limit:5});
+  delete h.pool.policy;await h.el('admin-refresh').fire();
+  assert.equal(h.el('admin-policy-allowed_email_patterns').value,'');
+  assert.equal(h.el('admin-policy-subnet_checkout_limit').value,0);
+  assert.equal(h.el('admin-policy-ipv4_prefix').value,24);
+});

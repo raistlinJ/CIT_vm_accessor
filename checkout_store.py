@@ -12,6 +12,7 @@ import time
 from contextlib import contextmanager
 from email.message import EmailMessage
 from functools import wraps
+from fnmatch import fnmatchcase
 from urllib.parse import urlsplit
 
 from flask import current_app, has_request_context, request
@@ -44,6 +45,49 @@ def email_address(value):
     return value
 
 
+CHECKOUT_POLICY_DEFAULTS = {
+    'allowed_email_patterns': [], 'allowed_subnets': [], 'subnet_checkout_limit': 0,
+    'ipv4_prefix': 24, 'ipv6_prefix': 64, 'global_delay_seconds': 0, 'subnet_delay_seconds': 0,
+}
+
+
+def validate_checkout_policy(value, base=None):
+    if not isinstance(value, dict) or set(value)-CHECKOUT_POLICY_DEFAULTS.keys():
+        raise CheckoutError('Provide valid checkout policy settings.')
+    result = {**CHECKOUT_POLICY_DEFAULTS, **(base or {}), **value}
+    for key, maximum in [('subnet_checkout_limit', 2000), ('ipv4_prefix', 32), ('ipv6_prefix', 128),
+                         ('global_delay_seconds', 604800), ('subnet_delay_seconds', 604800)]:
+        if type(result[key]) is not int or not 0 <= result[key] <= maximum:
+            raise CheckoutError(f'{key} must be a whole number between 0 and {maximum}.')
+    for key in ('allowed_email_patterns', 'allowed_subnets'):
+        entries = result[key]
+        if not isinstance(entries, list) or len(entries) > 50 or any(not isinstance(v, str) for v in entries):
+            raise CheckoutError(f'{key} must contain at most 50 entries.')
+        normalized = []
+        for entry in entries:
+            entry = entry.strip().casefold()
+            if key == 'allowed_email_patterns':
+                if not 3 <= len(entry) <= 254 or entry.count('@') != 1 or not all(entry.split('@')) or any(c.isspace() or ord(c)<32 or c in '<>[],;\\' for c in entry):
+                    raise CheckoutError('Use email patterns such as *@example.edu; * matches any text and ? matches one character.')
+            else:
+                try:
+                    entry = str(ipaddress.ip_network(entry, strict=False))
+                except ValueError:
+                    raise CheckoutError('Allowed checkout networks must be valid IPv4 or IPv6 CIDRs.') from None
+            if entry not in normalized:
+                normalized.append(entry)
+        result[key] = normalized
+    return result
+
+
+def client_address(value):
+    try:
+        address = ipaddress.ip_address(value or '')
+        return address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped else address
+    except ValueError:
+        return None
+
+
 def checkout_client_ip():
     """Use the peer address unless an explicitly trusted proxy overwrote X-Real-IP."""
     if not has_request_context():
@@ -59,7 +103,10 @@ def checkout_client_ip():
         try:
             if peer in ipaddress.ip_network(entry.strip()):
                 try:
-                    return str(ipaddress.ip_address(request.headers.get('X-Real-IP','')))
+                    forwarded=client_address(request.headers.get('X-Real-IP',''))
+                    if forwarded is not None:
+                        return str(forwarded)
+                    break
                 except ValueError:
                     break
         except ValueError:
@@ -160,6 +207,9 @@ class CheckoutStore:
             for name in ('manager_username','manager_password_enc'):
                 if name not in pool_columns:
                     db.execute(f'ALTER TABLE pools ADD COLUMN {name} TEXT')
+            if 'checkout_policy' not in pool_columns:
+                db.execute("ALTER TABLE pools ADD COLUMN checkout_policy TEXT NOT NULL DEFAULT '{}'")
+            db.execute('CREATE INDEX IF NOT EXISTS checkout_event_policy ON events(pool_id,action,timestamp)')
             db.execute('UPDATE accounts SET release_pending=1,pending_password=NULL WHERE pending_password IS NOT NULL')
             if 'ip_address' not in {row['name'] for row in db.execute('PRAGMA table_info(events)')}:
                 db.execute('ALTER TABLE events ADD COLUMN ip_address TEXT')
@@ -229,6 +279,7 @@ class CheckoutStore:
                          'login_disabled': bool(r['login_disabled']), 'releasing': bool(r['release_pending']), 'password_rotated': r['source_hash'] != self.digest(decrypt_str(r['password_enc']))}
                         for r in db.execute('SELECT * FROM accounts WHERE pool_id=? ORDER BY username', (pool_id,))}
         return {'id': pool_id, 'name': pool['name'], 'enabled': bool(pool['enabled']), 'verify_email': bool(pool['verify_email']),
+                'policy': validate_checkout_policy(json.loads(pool['checkout_policy'])),
                 'secret_set': bool(pool['secret_hash']), 'smtp_configured': smtp_ready(), 'accounts': accounts,
                 'login_management_ready':bool(os.environ.get('CHECKOUT_PROXMOX_API_TOKEN','').strip().removeprefix('PVEAPIToken=').strip())}
 
@@ -287,6 +338,7 @@ class CheckoutStore:
     def configure(self, pool_id, data, actor):
         with self.transaction() as db:
             pool = dict(self.pool(db, pool_id))
+            policy=validate_checkout_policy(data.get('policy',{}),json.loads(pool['checkout_policy']))
             for key in ('enabled', 'verify_email'):
                 if key in data:
                     if type(data[key]) is not bool:
@@ -303,14 +355,49 @@ class CheckoutStore:
             other = db.execute('SELECT id FROM pools WHERE secret_lookup=? AND id<>?', (pool.get('secret_lookup'), pool_id)).fetchone()
             if other:
                 raise CheckoutError('That lab secret is already used by another project. Use a different secret for each project.', 409)
-            db.execute('UPDATE pools SET enabled=?,verify_email=?,secret_hash=?,secret_lookup=? WHERE id=?', (pool['enabled'],pool['verify_email'],pool['secret_hash'],pool.get('secret_lookup'),pool_id))
+            db.execute('UPDATE pools SET enabled=?,verify_email=?,secret_hash=?,secret_lookup=?,checkout_policy=? WHERE id=?', (pool['enabled'],pool['verify_email'],pool['secret_hash'],pool.get('secret_lookup'),json.dumps(policy),pool_id))
             db.execute('DELETE FROM challenges WHERE pool_id=?', (pool_id,))
             self.event(db, pool_id, None, None, 'configured', actor)
         return self.summary(pool_id)
 
+    def check_policy(self, db, pool, email, *, new_checkout):
+        policy=validate_checkout_policy(json.loads(pool['checkout_policy']))
+        patterns=policy['allowed_email_patterns']
+        if patterns and not any(fnmatchcase(email,pattern) for pattern in patterns):
+            raise CheckoutError('This email address is not allowed for this project. Contact your instructor.',403)
+        address=client_address(checkout_client_ip())
+        networks=policy['allowed_subnets']
+        if networks and (address is None or not any(address in ipaddress.ip_network(network) for network in networks)):
+            raise CheckoutError('Checkout is not allowed from this IP network. Contact your instructor.',403)
+        if not new_checkout:
+            return
+        limit=policy['subnet_checkout_limit']
+        subnet_delay=policy['subnet_delay_seconds']
+        if (limit or subnet_delay) and address is None:
+            raise CheckoutError('Could not determine your checkout IP address. Contact your instructor.',403)
+        subnet=ipaddress.ip_network((address,policy['ipv4_prefix'] if address.version==4 else policy['ipv6_prefix']),strict=False) if address else None
+        if limit:
+            assigned=db.execute('SELECT checkout_ip FROM accounts WHERE pool_id=? AND email IS NOT NULL',(pool['id'],))
+            if sum(client_address(row['checkout_ip']) in subnet for row in assigned if client_address(row['checkout_ip']) is not None)>=limit:
+                raise CheckoutError('The active checkout limit for your IP subnet has been reached. Contact your instructor.',429)
+        now=time.time()
+        delay=policy['global_delay_seconds']
+        if delay:
+            latest=db.execute("SELECT MAX(timestamp) FROM events WHERE pool_id=? AND action='assigned' AND actor='student'",(pool['id'],)).fetchone()[0]
+            if latest is not None and latest+delay>now:
+                raise CheckoutError(f'Please wait {max(1,math.ceil(latest+delay-now))} seconds before another checkout for this project.',429)
+        if subnet_delay:
+            recent=db.execute("SELECT timestamp,ip_address FROM events WHERE pool_id=? AND action='assigned' AND actor='student' AND timestamp>? ORDER BY timestamp DESC",(pool['id'],now-subnet_delay))
+            for row in recent:
+                previous=client_address(row['ip_address'])
+                if previous is not None and previous in subnet:
+                    raise CheckoutError(f'Please wait {max(1,math.ceil(row["timestamp"]+subnet_delay-now))} seconds before another checkout from your IP subnet.',429)
+
     def allocate(self, db, pool_id, email, actor='student', username=None,*,name=None):
         pool = self.pool(db, pool_id)
         row = db.execute('SELECT * FROM accounts WHERE pool_id=? AND email=?', (pool_id,email)).fetchone()
+        if username is None:
+            self.check_policy(db,pool,email,new_checkout=row is None)
         if row and (row['release_pending'] or row['login_disabled'] or (username and row['username'] != username)):
             raise CheckoutError('This email already has another account or its release is pending.', 409)
         if not row:

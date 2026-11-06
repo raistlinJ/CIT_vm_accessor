@@ -366,6 +366,8 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
                 from werkzeug.security import check_password_hash
                 if not pool or not check_password_hash(pool['secret_hash'],secret):
                     raise CheckoutError('Invalid lab secret or checkout is closed.',403)
+                existing=db.execute('SELECT 1 FROM accounts WHERE pool_id=? AND email=?',(pool['id'],email)).fetchone()
+                store.check_policy(db,pool,email,new_checkout=not existing)
                 if not pool['verify_email']:
                     return jsonify(store.allocate(db,pool['id'],email,name=name))
                 pool_id,version=pool['id'],pool['secret_hash']
@@ -376,6 +378,8 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
                 latest=store.pool(db,pool_id)
                 if not latest['enabled'] or latest['secret_hash']!=version:
                     raise CheckoutError('Checkout settings changed. Start again.',409)
+                existing=db.execute('SELECT 1 FROM accounts WHERE pool_id=? AND email=?',(pool_id,email)).fetchone()
+                store.check_policy(db,latest,email,new_checkout=not existing)
                 db.execute('DELETE FROM challenges WHERE expires<? OR (pool_id=? AND email=?)',(time.time(),pool_id,email))
                 db.execute('INSERT INTO challenges(id,pool_id,email,name,code_hash,expires) VALUES(?,?,?,?,?,?)',(challenge,pool_id,email,name,store.digest(challenge+':'+code),time.time()+600))
             try:

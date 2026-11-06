@@ -612,7 +612,7 @@ TPL_BASE = """
       </script>
       {% if session.get('pve_user') %}
         <span class="muted">{{ session.get('pve_user') }}</span> |
-        {% if checkout_enabled and session.get('checkout_admin') %}<a href="{{ url_for('account_checkout') }}">Get lab access</a> |{% endif %}
+        {% if checkout_enabled and session.get('checkout_admin') %}<a href="{{ url_for('home') }}">Connections</a> |{% endif %}
         {% if checkout_enabled and session.get('checkout_admin') %}<a href="/admin/checkouts">Management</a> |{% endif %}
         {% if checkout_enabled %}<button type="button" id="relinquish-account" class="btn-danger" hidden style="padding:.25rem .5rem; font-size:.7rem">Relinquish account</button>{% endif %}
         <a href="{{ url_for('logout') }}">Logout</a>

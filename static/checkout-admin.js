@@ -3,6 +3,9 @@
   const poolSelect=document.getElementById('admin-pool');
   const feedback=document.getElementById('admin-feedback');
   let pools=[],pool=null,busy=false;
+  const policyDefaults={allowed_email_patterns:[],allowed_subnets:[],subnet_checkout_limit:0,ipv4_prefix:24,ipv6_prefix:64,global_delay_seconds:0,subnet_delay_seconds:0};
+  function renderPolicy(policy={}){for(const [key,fallback] of Object.entries(policyDefaults)){const value=policy[key]??fallback;document.getElementById('admin-policy-'+key).value=Array.isArray(fallback)?value.join('\n'):value;}}
+  function readPolicy(){return Object.fromEntries(Object.entries(policyDefaults).map(([key,fallback])=>{const value=document.getElementById('admin-policy-'+key).value;return [key,Array.isArray(fallback)?value.split(/[\s,;]+/).filter(Boolean):Number(value===''?fallback:value)];}));}
   const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   async function api(path,method='GET',data) {
     const response=await fetch('/api/admin/checkouts'+path,{method,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Checkout-CSRF':root.dataset.csrf},body:data===undefined?undefined:JSON.stringify(data)});
@@ -27,6 +30,7 @@
     if(!pool)return;
     document.getElementById('admin-enabled').checked=pool.enabled;
     document.getElementById('admin-verify').checked=pool.verify_email;
+    renderPolicy(pool.policy);
     document.getElementById('admin-secret-label').textContent=`Lab secret for ${pool.name}`;
     const secret=document.getElementById('admin-secret');secret.value='';secret.placeholder=pool.secret_set?'A secret is set for this project; enter a new one to replace it':'Set this project’s lab secret (8+ characters)';
     document.getElementById('admin-policy-note').textContent=!pool.verify_email?'Verification is off: anyone with the lab secret and an email can retrieve that email’s credentials.':pool.smtp_configured?'Students must verify their email before receiving credentials.':'Configure SMTP on this AccessForge server before verified checkout can be used.';
@@ -48,7 +52,7 @@
   document.getElementById('admin-refresh').addEventListener('click',()=>run(async()=>{await refresh();message('Status refreshed.');}));
   document.getElementById('admin-save').addEventListener('click',()=>run(async()=>{
     if(!pool)return;
-    await api('/pools/'+encodeURIComponent(pool.id),'PATCH',{enabled:document.getElementById('admin-enabled').checked,verify_email:document.getElementById('admin-verify').checked,secret:document.getElementById('admin-secret').value});
+    await api('/pools/'+encodeURIComponent(pool.id),'PATCH',{enabled:document.getElementById('admin-enabled').checked,verify_email:document.getElementById('admin-verify').checked,secret:document.getElementById('admin-secret').value,policy:readPolicy()});
     await refresh();message('Checkout settings saved.');
   }));
   function updateSelection(){
