@@ -612,7 +612,7 @@ TPL_BASE = """
       </script>
       {% if session.get('pve_user') %}
         <span class="muted">{{ session.get('pve_user') }}</span> |
-        {% if checkout_enabled %}<a href="{{ url_for('account_checkout') }}">Get lab access</a> |{% endif %}
+        {% if checkout_enabled and session.get('checkout_admin') %}<a href="{{ url_for('account_checkout') }}">Get lab access</a> |{% endif %}
         {% if checkout_enabled and session.get('checkout_admin') %}<a href="/admin/checkouts">Management</a> |{% endif %}
         {% if checkout_enabled %}<button type="button" id="relinquish-account" class="btn-danger" hidden style="padding:.25rem .5rem; font-size:.7rem">Relinquish account</button>{% endif %}
         <a href="{{ url_for('logout') }}">Logout</a>
@@ -702,7 +702,25 @@ TPL_LOGIN = """
   </details>
   <button type="submit">Sign in</button>
 </form>
-{% if checkout_enabled %}<p><a href="{{ url_for('account_checkout') }}">Get lab access</a> — check out or recover your student account.</p>{% endif %}
+{% if checkout_enabled %}
+<style>
+  .login-checkout-card { display:flex; align-items:center; gap:1rem; margin-top:1.4rem; padding:1.1rem 1.25rem; border:1px solid var(--border); border-radius:10px; background:var(--notice-bg); color:var(--text); text-decoration:none; transition:background .15s, border-color .15s; }
+  .login-checkout-card:hover { background:var(--btn-hover); border-color:var(--accent); text-decoration:none; }
+  .login-checkout-card:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+  .login-checkout-icon { display:grid; place-items:center; flex:0 0 auto; width:2.75rem; height:2.75rem; border:1px solid var(--border); border-radius:8px; background:var(--input-bg); color:var(--accent); }
+  .login-checkout-icon svg { width:1.5rem; height:1.5rem; }
+  .login-checkout-copy { display:grid; gap:.3rem; min-width:0; }
+  .login-checkout-copy strong { color:var(--accent); font-size:1.05rem; }
+  .login-checkout-description { color:var(--text); font-size:.82rem; line-height:1.5; }
+  .login-checkout-arrow { flex:0 0 auto; margin-left:auto; color:var(--accent); font-size:1.5rem; }
+  @media (max-width:480px) { .login-checkout-card { gap:.7rem; padding:.9rem .85rem; } .login-checkout-icon { width:2.25rem; height:2.25rem; } }
+</style>
+<a id="login-checkout-link" class="login-checkout-card" href="{{ url_for('account_checkout') }}" aria-label="Get lab access" aria-describedby="login-checkout-description">
+  <span class="login-checkout-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4"/><path d="m11 11 9 9m-3-3 3-3m-6 0 3-3"/></svg></span>
+  <span class="login-checkout-copy"><strong>Get lab access</strong><span id="login-checkout-description" class="login-checkout-description">Check out or recover your student account.</span></span>
+  <span class="login-checkout-arrow" aria-hidden="true">→</span>
+</a>
+{% endif %}
 <script>
  (function(){
    const u=document.getElementById('usernameInput');

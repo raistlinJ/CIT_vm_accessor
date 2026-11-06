@@ -63,7 +63,7 @@ def test_disabled_feature_hides_links_and_admin_api(checkout,monkeypatch):
     monkeypatch.setenv('ENABLE_ACCOUNT_CHECKOUT','false')
     assert checkout.get('/checkout').status_code==503
     assert checkout.get('/api/admin/checkouts/status',headers=BASIC).status_code==404
-    assert b'Get lab access</a>' not in checkout.get('/login').data
+    assert b'id="login-checkout-link"' not in checkout.get('/login').data
 
 
 def test_student_checkout_works_locally_without_sce_or_proxmox(checkout):
@@ -614,6 +614,7 @@ def test_management_link_is_available_immediately_after_verified_admin_login(che
         assert bool(session.get('checkout_admin')) is visible
     page=checkout.get('/checkout')
     assert (b'<a href="/admin/checkouts">Management</a>' in page.data) is visible
+    assert (b'<a href="/checkout">Get lab access</a>' in page.data) is visible
     assert b'Manage account checkouts' not in page.data
 
 
