@@ -454,7 +454,7 @@ def test_reset_and_reenable_reject_assigned_accounts(checkout):
         assert not result.get_json()['results'][0]['success'];change.assert_not_called();reset.assert_not_called()
 
 
-def test_publishing_uses_token_management_without_storing_an_administrator_password(checkout):
+def test_publishing_reports_student_token_readiness_without_storing_an_administrator_password(checkout):
     assert publish(checkout).status_code==200
     status=checkout.get(POOL,headers=BASIC)
     assert status.json['login_management_ready'] is True
@@ -713,56 +713,86 @@ def test_projects_require_distinct_lab_secrets_to_route_student_checkout(checkou
 
 
 @pytest.mark.parametrize('use_basic',[False,True])
-def test_admin_relinquish_uses_configured_api_token_for_both_browser_and_sce(checkout,use_basic):
+@pytest.mark.parametrize('has_token',[False,True])
+def test_admin_relinquish_reuses_authenticated_ticket_for_browser_and_sce(checkout,monkeypatch,use_basic,has_token):
     setup_pool(checkout);start(checkout)
+    if not has_token:
+        monkeypatch.delenv('CHECKOUT_PROXMOX_API_TOKEN',raising=False)
+    monkeypatch.setattr(account_checkout,'authenticate_admin',REAL_ADMIN_AUTH)
     if use_basic:
         request_headers=BASIC
     else:
         with checkout.session_transaction() as session:
             session.update(pve_user='root@pam',pve_ticket='admin-ticket',pve_csrf='admin-csrf',checkout_admin_csrf='action-csrf')
         request_headers={'Origin':'http://localhost','X-Checkout-CSRF':'action-csrf'}
-    with patch('account_checkout.requests.put',return_value=reply(None)) as put,patch('account_checkout.requests.post',side_effect=AssertionError('No administrator password reauthentication')):
+    with patch('account_checkout.requests.put',return_value=reply(None)) as put,patch('account_checkout.requests.post',return_value=reply({'username':'root@pam','ticket':'admin-ticket','CSRFPreventionToken':'admin-csrf'})) as post,patch('account_checkout.requests.get',return_value=reply({'/':{'Sys.Modify':1}})):
         result=checkout.post(POOL,headers=request_headers,json={'action':'release','usernames':['student01']})
     assert result.status_code==200 and result.json['results'][0]['released']
-    assert put.call_args.kwargs['headers']=={'Authorization':'PVEAPIToken=service@pve!checkout=test-management-token'}
-    assert put.call_args.kwargs['cookies']=={} and put.call_args.kwargs['data']=={'enable':0}
+    assert put.call_args.kwargs['headers']=={'CSRFPreventionToken':'admin-csrf'}
+    assert put.call_args.kwargs['cookies']=={'PVEAuthCookie':'admin-ticket'}
+    assert put.call_args.kwargs['data']=={'enable':0}
+    assert post.call_count==int(use_basic)
+    if use_basic:
+        assert post.call_args.kwargs['data']=={'username':'root@pam','password':'admin-password'}
     assert 'test-management-token' not in result.get_data(as_text=True)
 
 
-def test_missing_api_token_does_not_fall_back_to_a_legacy_administrator_password(checkout,monkeypatch):
+def test_admin_without_api_token_uses_current_session_and_ignores_legacy_password(checkout,monkeypatch):
     setup_pool(checkout);start(checkout)
     with main.app.app_context():
         CheckoutStore().save_manager('lab','root@pam','old-manager-password')
     monkeypatch.delenv('CHECKOUT_PROXMOX_API_TOKEN',raising=False)
-    with patch('account_checkout.requests.put') as put,patch('account_checkout.requests.post') as post:
+    with patch('account_checkout.requests.put',return_value=reply(None)) as put,patch('account_checkout.requests.post') as post:
         result=checkout.post(POOL,headers=BASIC,json={'action':'release','usernames':['student01']})
-    assert result.status_code==503 and 'CHECKOUT_PROXMOX_API_TOKEN' in result.json['error']
-    put.assert_not_called();post.assert_not_called()
+    assert result.status_code==200 and result.json['results'][0]['released']
+    assert put.call_args.kwargs['cookies']=={'PVEAuthCookie':'admin-ticket'}
+    post.assert_not_called()
     summary=checkout.get(POOL,headers=BASIC).json
     assert summary['login_management_ready'] is False
-    assert summary['accounts']['student01@pve']['email']=='one@example.edu'
+    assert summary['accounts']['student01@pve']['email'] is None
     assert summary['accounts']['student01@pve']['releasing'] is False
     assert 'old-manager-password' not in result.get_data(as_text=True)
 
 
-def test_rejected_api_token_keeps_the_account_reserved_and_reports_a_token_error(checkout):
+@pytest.mark.parametrize('status',[401,403])
+def test_rejected_admin_login_change_keeps_account_reserved_without_token_fallback(checkout,status):
     setup_pool(checkout);start(checkout)
-    with patch('account_checkout.requests.put',return_value=reply(None,401)):
+    with patch('account_checkout.requests.put',return_value=reply(None,status)) as put:
         result=checkout.post(POOL,headers=BASIC,json={'action':'release','usernames':['student01']})
     assert result.status_code==200 and result.json['results'][0]['released'] is False
-    assert 'API token' in result.json['results'][0]['error']
+    assert 'User.Modify' in result.json['results'][0]['error']
+    assert put.call_count==1 and 'Authorization' not in put.call_args.kwargs['headers']
     assert checkout.get(POOL,headers=BASIC).json['accounts']['student01@pve']['email']=='one@example.edu'
 
 
-def test_login_enable_and_disable_actions_use_token_without_resetting_passwords(checkout):
+@pytest.mark.parametrize('expired',[False,True])
+def test_admin_authentication_failure_cannot_use_service_token_to_relinquish(checkout,monkeypatch,expired):
+    setup_pool(checkout);start(checkout)
+    with checkout.session_transaction() as session:
+        session.update(pve_user='root@pam',pve_ticket='admin-ticket',pve_csrf='admin-csrf',checkout_admin_csrf='action-csrf')
+    monkeypatch.setattr(account_checkout,'authenticate_admin',REAL_ADMIN_AUTH)
+    with patch('account_checkout.requests.get',return_value=reply({'/':{'VM.Console':1}},401 if expired else 200)),patch('account_checkout.requests.put') as put:
+        result=checkout.post(POOL,headers={'Origin':'http://localhost','X-Checkout-CSRF':'action-csrf'},json={'action':'release','usernames':['student01']})
+    assert result.status_code==(401 if expired else 403)
+    put.assert_not_called()
+    with main.app.app_context():
+        account=CheckoutStore().account('student01@pve')
+    assert account['email']=='one@example.edu' and not account['release_pending']
+
+
+@pytest.mark.parametrize('has_token',[False,True])
+def test_login_enable_and_disable_use_admin_ticket_without_resetting_passwords(checkout,monkeypatch,has_token):
     setup_pool(checkout)
+    if not has_token:
+        monkeypatch.delenv('CHECKOUT_PROXMOX_API_TOKEN',raising=False)
     with patch('account_checkout.requests.put',return_value=reply(None)) as put,patch('account_checkout.set_account_password') as reset:
         disabled=checkout.post(POOL,headers=BASIC,json={'action':'disable_logins','usernames':['student01']})
         assert disabled.json['results'][0]['success']
         enabled=checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1'}]})
         assert enabled.json['results'][0]['success']
     assert [call.kwargs['data'] for call in put.call_args_list]==[{'enable':0},{'enable':1}]
-    assert all(call.kwargs['headers']=={'Authorization':'PVEAPIToken=service@pve!checkout=test-management-token'} for call in put.call_args_list)
+    assert all(call.kwargs['headers']=={'CSRFPreventionToken':'admin-csrf'} for call in put.call_args_list)
+    assert all(call.kwargs['cookies']=={'PVEAuthCookie':'admin-ticket'} for call in put.call_args_list)
     reset.assert_not_called()
 
 
@@ -784,3 +814,12 @@ def test_student_without_a_management_token_keeps_the_account_and_gets_instructo
     assert 'CHECKOUT_PROXMOX_API_TOKEN' not in result.json['error']
     put.assert_not_called()
     assert checkout.get(POOL,headers=BASIC).json['accounts']['student01@pve']['email']=='one@example.edu'
+
+
+def test_student_relinquish_uses_service_token_instead_of_student_ticket(checkout):
+    setup_pool(checkout);start(checkout);h=student_login(checkout)
+    with patch('account_checkout.requests.post',return_value=reply({'username':'student01@pve','ticket':'renewed','CSRFPreventionToken':'csrf'})),patch('account_checkout.requests.put',return_value=reply(None)) as put:
+        result=checkout.post('/api/account-checkout/relinquish',headers=h,json={'confirmed':True})
+    assert result.status_code==200 and result.json['relinquished']
+    assert put.call_args.kwargs['headers']=={'Authorization':'PVEAPIToken=service@pve!checkout=test-management-token'}
+    assert put.call_args.kwargs['cookies']=={} and put.call_args.kwargs['data']=={'enable':0}

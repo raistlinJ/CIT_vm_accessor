@@ -504,4 +504,4 @@ class CheckoutStore:
                 current_app.logger.warning('Could not close all connections for a released checkout lease')
             return {'username':username,'released':True}
         except Exception:
-            return {'username':username,'released':False,'error':'Could not disable the login. The account remains reserved; check the configured Proxmox API token and retry relinquishing.'}
+            return {'username':username,'released':False,'error':'Could not disable the login. The account remains reserved; check Proxmox authentication and User.Modify permission, then retry relinquishing.'}

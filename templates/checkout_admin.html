@@ -55,11 +55,11 @@
         <tbody></tbody>
       </table>
     </div>
-    <p class="muted" style="font-size:.8rem">Releasing an account disables its Proxmox login and keeps it unavailable until an instructor resets the password if needed and re-enables it through SCE-web. Existing tickets and open consoles may remain active until expiration or disconnection. Failed disables stay reserved until a successful retry. Login changes use AccessForge’s configured Proxmox API token; no administrator password is stored or requested for these actions.</p>
+    <p class="muted" style="font-size:.8rem">Releasing an account disables its Proxmox login and keeps it unavailable until an instructor resets the password if needed and re-enables it through SCE-web. Existing tickets and open consoles may remain active until expiration or disconnection. Failed disables stay reserved until a successful retry. Administrator login changes use your current Proxmox session with User.Modify permission; no additional password is requested.</p>
   </section>
   <p id="admin-feedback" role="status" aria-live="polite"></p>
 </div>
 
-<script src="/static/checkout-admin.js?v=20261106-api-token" defer></script>
+<script src="/static/checkout-admin.js?v=20261106-admin-session" defer></script>
 {% endif %}
 {% endblock %}

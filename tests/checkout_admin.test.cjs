@@ -72,21 +72,29 @@ test('Assign requires exactly one selected account',async()=>{
   assert.deepEqual(h.calls.find(call=>call.body?.action==='assign').body,{action:'assign',usernames:['student01@pve'],email:'student@example.edu'});
 });
 
-test('relinquishment uses server-side token management without a password field, modal or credential payload',async()=>{
+test('administrator relinquishment reuses the session without a password field, modal or credential payload',async()=>{
   const h=await harness();await h.select(0);await h.action('admin-account-actions','release');
   const request=h.calls.find(call=>call.body?.action==='release');
   assert.deepEqual(request.body,{action:'release',usernames:['student01@pve']});
-  assert.match(h.el('admin-token-state').textContent,/API token configured/);
+  assert.match(h.el('admin-token-state').textContent,/Administrator actions use your current Proxmox session/);
   const page=fs.readFileSync('templates/checkout_admin.html','utf8');
   assert.doesNotMatch(page,/admin-manager-password|credentials-dialog|Save credentials|Save administrator password/);
   h.el('admin-secret').value='updated-lab-secret';await h.el('admin-save').fire();
   const settings=h.calls.find(call=>call.options.method==='PATCH');assert.equal(settings.body.secret,'updated-lab-secret');assert.ok(!('password' in settings.body));
 });
 
-test('missing-token errors stay inline and never ask for an administrator password',async()=>{
-  const h=await harness();h.pool.login_management_ready=false;await h.select(0);
-  h.override((url,options)=>options.method==='POST'?{ok:false,json:async()=>({error:'Configure CHECKOUT_PROXMOX_API_TOKEN on AccessForge.'})}:null);
+test('a missing student token does not block administrator relinquishment',async()=>{
+  const h=await harness();h.pool.login_management_ready=false;await h.el('admin-refresh').fire();await h.select(0);
+  assert.match(h.el('admin-token-state').textContent,/to also allow students to relinquish/);
+  assert.equal(h.el('admin-token-state').className,'muted');
   await h.action('admin-account-actions','release');
-  assert.match(h.el('admin-feedback').textContent,/CHECKOUT_PROXMOX_API_TOKEN/);
+  assert.match(h.el('admin-feedback').textContent,/Selected accounts relinquished/);
+});
+
+test('expired administrator session errors stay inline without asking for a password',async()=>{
+  const h=await harness();await h.select(0);
+  h.override((url,options)=>options.method==='POST'?{ok:false,json:async()=>({error:'Administrator session expired. Sign in again.'})}:null);
+  await h.action('admin-account-actions','release');
+  assert.match(h.el('admin-feedback').textContent,/Administrator session expired/);
   assert.doesNotMatch(source,/askCredentials|showModal|save_credentials/);
 });

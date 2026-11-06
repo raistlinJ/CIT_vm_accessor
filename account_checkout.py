@@ -146,6 +146,7 @@ def set_login_enabled(principal,username,enabled):
 
 
 def login_management_principal(pool_id):
+    """Service identity for student relinquishment; admin actions use their own ticket."""
     token=os.environ.get('CHECKOUT_PROXMOX_API_TOKEN','').strip().removeprefix('PVEAPIToken=').strip()
     if not token:
         raise CheckoutError('Configure CHECKOUT_PROXMOX_API_TOKEN on AccessForge with User.Modify permission for the managed Proxmox users.',503)
@@ -259,27 +260,24 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
             return jsonify(store.configure(pool_id,data,principal['username']))
         action=data.get('action')
         if action=='save_login_manager':
-            raise CheckoutError('Administrator passwords are no longer saved for checkout login management. Configure CHECKOUT_PROXMOX_API_TOKEN on AccessForge instead.')
+            raise CheckoutError('Administrator passwords are no longer saved for checkout login management. Administrator actions use your current Proxmox session; student relinquishment uses CHECKOUT_PROXMOX_API_TOKEN.')
         if action=='release':
             usernames=data.get('usernames')
             if not isinstance(usernames,list) or not 1<=len(usernames)<=2000:
                 raise CheckoutError('Select at least one account.')
-            manager=login_management_principal(pool_id)
-            results=[store.release(pool_id,username,principal['username'],lambda user:set_login_enabled(manager,user,False)) for username in dict.fromkeys(usernames)]
+            results=[store.release(pool_id,username,principal['username'],lambda user:set_login_enabled(principal,user,False)) for username in dict.fromkeys(usernames)]
             return jsonify(checkout=store.summary(pool_id),results=results)
         if action=='disable_logins':
-            manager=login_management_principal(pool_id)
-            results=store.disable_logins(pool_id,data.get('usernames'),principal['username'],lambda user:set_login_enabled(manager,user,False))
+            results=store.disable_logins(pool_id,data.get('usernames'),principal['username'],lambda user:set_login_enabled(principal,user,False))
             return jsonify(checkout=store.summary(pool_id),results=results)
         if action in ('reset_passwords','reenable_logins'):
-            manager=login_management_principal(pool_id)
             if action=='reset_passwords':
                 def apply(user,password):
-                    set_login_enabled(manager,user,False)
+                    set_login_enabled(principal,user,False)
                     set_account_password(principal,user,password)
             else:
                 def apply(user,password):
-                    set_login_enabled(manager,user,True)
+                    set_login_enabled(principal,user,True)
             results=store.prepare_accounts(pool_id,data,principal['username'],apply)
             return jsonify(checkout=store.summary(pool_id),results=results)
         return jsonify(checkout=store.account_action(pool_id,data,principal['username']))
