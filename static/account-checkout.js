@@ -28,7 +28,7 @@
       } else if (data.status === 'assigned') {
         start.hidden = true; verify.hidden = true; result.hidden = false;
         document.getElementById('checkout-project').textContent = data.project;
-        document.getElementById('checkout-assignment').textContent = `Assigned to ${data.email}. Return here with the same email and lab secret to recover this account.`;
+        document.getElementById('checkout-assignment').textContent = `Assigned to ${data.name?data.name+' ('+data.email+')':data.email}. Return here with the same email and lab secret to recover this account.`;
         document.getElementById('checkout-username').value = data.username;
         document.getElementById('checkout-password').value = data.password;
         const login = document.getElementById('checkout-login');
@@ -51,7 +51,7 @@
   }
   start.addEventListener('submit', event => {
     event.preventDefault();
-    request('start', {email: document.getElementById('checkout-email').value.trim(), secret: document.getElementById('checkout-secret').value});
+    request('start', {name: document.getElementById('checkout-name').value.trim(), email: document.getElementById('checkout-email').value.trim(), secret: document.getElementById('checkout-secret').value});
   });
   verify.addEventListener('submit', event => {
     event.preventDefault();

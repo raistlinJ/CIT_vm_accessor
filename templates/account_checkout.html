@@ -5,8 +5,10 @@
   {% if not enabled %}
   <p>Account checkout is not configured. Contact your instructor.</p>
   {% else %}
-  <p class="muted">Enter your email and the lab secret from your instructor. Your account stays assigned to you until your instructor releases it.</p>
+  <p class="muted">Enter your name, email, and the lab secret from your instructor. Your account stays assigned to you until your instructor releases it.</p>
   <form id="checkout-start" data-csrf="{{ csrf }}">
+    <label for="checkout-name">Name</label>
+    <input id="checkout-name" type="text" autocomplete="name" maxlength="120" required>
     <label for="checkout-email">Email</label>
     <input id="checkout-email" type="email" autocomplete="email" maxlength="254" required>
     <label for="checkout-secret">Lab secret</label>
@@ -42,7 +44,7 @@
     </form>
   </section>
   <p id="checkout-feedback" role="status" aria-live="polite" style="overflow-wrap:anywhere"></p>
-  <script src="{{ url_for('static', filename='account-checkout.js') }}?v=20261105" defer></script>
+  <script src="{{ url_for('static', filename='account-checkout.js') }}?v=20261105-checkout-name" defer></script>
   {% endif %}
   <p style="margin-top:1.5rem"><a href="{{ url_for('login') }}">Back to sign in</a></p>
 </div>

@@ -45,8 +45,8 @@ def headers(client):
     return {'Origin':'http://localhost','X-Checkout-CSRF':token}
 
 
-def start(client,email='one@example.edu',secret='class-secret'):
-    return client.post('/api/account-checkout/start',headers=headers(client),json={'email':email,'secret':secret})
+def start(client,email='one@example.edu',secret='class-secret',name='Test Student'):
+    return client.post('/api/account-checkout/start',headers=headers(client),json={'name':name,'email':email,'secret':secret})
 
 
 def verify(client,challenge,code):
@@ -296,11 +296,11 @@ def student_login(client,username='student01',ticket='student-ticket'):
 
 def test_checkout_ip_and_time_only_change_on_new_allocation(checkout):
     setup_pool(checkout)
-    response=checkout.post('/api/account-checkout/start',headers=headers(checkout),json={'email':'one@example.edu','secret':'class-secret'},environ_overrides={'REMOTE_ADDR':'203.0.113.10'})
+    response=checkout.post('/api/account-checkout/start',headers=headers(checkout),json={'name':'Test Student','email':'one@example.edu','secret':'class-secret'},environ_overrides={'REMOTE_ADDR':'203.0.113.10'})
     assert response.status_code==200
     state=checkout.get(POOL,headers=BASIC).get_json()['accounts']['student01@pve']
     assert state['checkout_ip']=='203.0.113.10' and state['checked_out_at']==state['assigned_at']
-    recovered=checkout.post('/api/account-checkout/start',headers=headers(checkout),json={'email':'one@example.edu','secret':'class-secret'},environ_overrides={'REMOTE_ADDR':'203.0.113.20'})
+    recovered=checkout.post('/api/account-checkout/start',headers=headers(checkout),json={'name':'Test Student','email':'one@example.edu','secret':'class-secret'},environ_overrides={'REMOTE_ADDR':'203.0.113.20'})
     assert recovered.status_code==200
     current=checkout.get(POOL,headers=BASIC).get_json()['accounts']['student01@pve']
     assert current['checkout_ip']==state['checkout_ip'] and current['checked_out_at']==state['checked_out_at']
@@ -536,3 +536,58 @@ def test_database_open_failure_is_reported_as_storage_error(checkout):
     assert response.status_code==503
     assert 'CHECKOUT_DATA_DIR permissions' in response.get_json()['error']
     assert 'private details' not in response.get_data(as_text=True)
+
+
+def test_checkout_saves_normalized_name_and_recovery_keeps_original_identity(checkout):
+    setup_pool(checkout)
+    response=start(checkout,name='  Zoë   García  ')
+    assert response.status_code==200 and response.get_json()['name']=='Zoë García'
+    assert start(checkout,name='Changed Name').get_json()['name']=='Zoë García'
+    assert checkout.get(POOL,headers=BASIC).get_json()['accounts']['student01@pve']['name']=='Zoë García'
+    with main.app.app_context():
+        with CheckoutStore().transaction() as db:
+            assert db.execute("SELECT name FROM events WHERE action='assigned'").fetchone()['name']=='Zoë García'
+    with checkout.session_transaction() as session:
+        assert 'Zoë' not in str(dict(session))
+
+
+@pytest.mark.parametrize('name',[None,'','   ',123,'x'*121,'Name\nInjected'])
+def test_checkout_requires_a_bounded_name_before_assignment(checkout,name):
+    setup_pool(checkout)
+    assert start(checkout,name=name).status_code==400
+    assert not any(account['email'] for account in checkout.get(POOL,headers=BASIC).get_json()['accounts'].values())
+
+
+def test_email_verification_uses_the_name_from_the_original_challenge(checkout):
+    setup_pool(checkout,verify=True)
+    with patch('account_checkout.send_verification') as send:
+        response=start(checkout,name='Jordan Lee')
+    challenge=response.get_json()['challenge'];code=send.call_args.args[1]
+    result=checkout.post('/api/account-checkout/verify',headers=headers(checkout),json={'challenge':challenge,'code':code,'name':'Untrusted replacement'})
+    assert result.status_code==200 and result.get_json()['name']=='Jordan Lee'
+    assert checkout.get(POOL,headers=BASIC).get_json()['accounts']['student01@pve']['name']=='Jordan Lee'
+
+
+def test_legacy_assignment_can_gain_a_name_without_reallocating(checkout):
+    setup_pool(checkout)
+    checkout.post(POOL,headers=BASIC,json={'action':'assign','usernames':['student01'],'email':'legacy@example.edu'})
+    before=checkout.get(POOL,headers=BASIC).get_json()['accounts']['student01@pve']
+    assert before['name'] is None
+    result=start(checkout,'legacy@example.edu',name='Legacy Student')
+    after=checkout.get(POOL,headers=BASIC).get_json()['accounts']['student01@pve']
+    assert result.get_json()['name']=='Legacy Student'
+    assert after['assigned_at']==before['assigned_at'] and after['checked_out_at']==before['checked_out_at']
+
+
+def test_release_clears_current_name_and_keeps_it_in_the_audit_history(checkout):
+    setup_pool(checkout);start(checkout,name='First Student')
+    with patch('account_checkout.set_login_enabled'):
+        assert checkout.post(POOL,headers=BASIC,json={'action':'release','usernames':['student01']}).get_json()['results'][0]['released']
+    account=checkout.get(POOL,headers=BASIC).get_json()['accounts']['student01@pve']
+    assert account['name'] is None and account['email'] is None
+    with main.app.app_context():
+        with CheckoutStore().transaction() as db:
+            assert db.execute("SELECT name FROM events WHERE action='released_login_disabled'").fetchone()['name']=='First Student'
+    with patch('account_checkout.set_login_enabled'):
+        checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1'}]})
+    assert start(checkout,'new@example.edu',name='Next Student').get_json()['name']=='Next Student'

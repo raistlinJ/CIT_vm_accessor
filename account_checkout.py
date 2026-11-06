@@ -9,7 +9,7 @@ from urllib.parse import quote
 import requests
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session, url_for
 
-from checkout_store import CheckoutError, CheckoutStore, checkout_client_ip, decrypt_str, email_address, send_verification
+from checkout_store import CheckoutError, CheckoutStore, checkout_client_ip, decrypt_str, email_address, person_name, send_verification
 from spice_bridge import session_owner
 
 
@@ -356,6 +356,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
         store.limit('student:'+identity,30,300)
         if action=='start':
             email=email_address(data.get('email'))
+            name=person_name(data.get('name'))
             secret=data.get('secret')
             if not isinstance(secret,str) or not 8<=len(secret)<=256:
                 raise CheckoutError('Invalid lab secret.',403)
@@ -365,7 +366,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
                 if not pool or not check_password_hash(pool['secret_hash'],secret):
                     raise CheckoutError('Invalid lab secret or checkout is closed.',403)
                 if not pool['verify_email']:
-                    return jsonify(store.allocate(db,pool['id'],email))
+                    return jsonify(store.allocate(db,pool['id'],email,name=name))
                 pool_id,version=pool['id'],pool['secret_hash']
             store.limit('email:'+store.digest(pool_id+':'+email),1,60)
             challenge=secrets.token_urlsafe(32)
@@ -375,7 +376,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
                 if not latest['enabled'] or latest['secret_hash']!=version:
                     raise CheckoutError('Checkout settings changed. Start again.',409)
                 db.execute('DELETE FROM challenges WHERE expires<? OR (pool_id=? AND email=?)',(time.time(),pool_id,email))
-                db.execute('INSERT INTO challenges(id,pool_id,email,code_hash,expires) VALUES(?,?,?,?,?)',(challenge,pool_id,email,store.digest(challenge+':'+code),time.time()+600))
+                db.execute('INSERT INTO challenges(id,pool_id,email,name,code_hash,expires) VALUES(?,?,?,?,?,?)',(challenge,pool_id,email,name,store.digest(challenge+':'+code),time.time()+600))
             try:
                 send_verification(email,code,pool['name'])
             except CheckoutError:
@@ -398,7 +399,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
                 elif not store.pool(db,row['pool_id'])['enabled']:
                     failure=CheckoutError('Checkout is closed.',403)
                 else:
-                    result=store.allocate(db,row['pool_id'],row['email'])
+                    result=store.allocate(db,row['pool_id'],row['email'],name=row['name'])
                     db.execute('DELETE FROM challenges WHERE id=?',(challenge,))
             if failure:
                 raise failure

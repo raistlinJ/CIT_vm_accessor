@@ -43,7 +43,7 @@
     </div>
     <div style="overflow:auto; max-height:28rem; border:1px solid var(--muted)">
       <table style="width:100%; border-spacing:0; font-size:.85rem" id="admin-accounts">
-        <thead><tr><th style="text-align:left; padding:.6rem"><input id="admin-select-all" type="checkbox" aria-label="Select visible accounts" style="width:auto; margin:0"></th><th style="text-align:left">Account</th><th style="text-align:left">Availability</th><th style="text-align:left">Checked out to</th><th style="text-align:left">Checked out</th><th style="text-align:left">Checkout IP</th><th style="text-align:left">Relinquished</th><th style="text-align:left">Relinquish IP</th></tr></thead>
+        <thead><tr><th style="text-align:left; padding:.6rem"><input id="admin-select-all" type="checkbox" aria-label="Select visible accounts" style="width:auto; margin:0"></th><th style="text-align:left">Account</th><th style="text-align:left">Availability</th><th style="text-align:left">Name</th><th style="text-align:left">Checked out to</th><th style="text-align:left">Checked out</th><th style="text-align:left">Checkout IP</th><th style="text-align:left">Relinquished</th><th style="text-align:left">Relinquish IP</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -51,6 +51,6 @@
   </section>
   <p id="admin-feedback" role="status" aria-live="polite"></p>
 </div>
-<script src="/static/checkout-admin.js?v=20261105-disabled-logins" defer></script>
+<script src="/static/checkout-admin.js?v=20261105-checkout-name" defer></script>
 {% endif %}
 {% endblock %}

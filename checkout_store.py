@@ -24,6 +24,19 @@ class CheckoutError(Exception):
         self.message, self.status = message, status
 
 
+def person_name(value,*,required=True):
+    if value is None and not required:
+        return None
+    if not isinstance(value,str) or len(value)>120 or any(ord(c)<32 or ord(c)==127 for c in value):
+        raise CheckoutError('Enter a name of 1 to 120 characters.')
+    value=' '.join(value.split())
+    if not value:
+        if required:
+            raise CheckoutError('Enter your name.')
+        return None
+    return value
+
+
 def email_address(value):
     value = str(value or '').strip().casefold()
     if len(value) > 254 or not re.fullmatch(r'[^\s@<>\x00-\x1f]+@[^\s@<>\x00-\x1f]+\.[^\s@<>\x00-\x1f]+', value):
@@ -140,7 +153,7 @@ class CheckoutStore:
                 db.execute('ALTER TABLE accounts ADD COLUMN legacy_imported INTEGER NOT NULL DEFAULT 0')
             db.execute('CREATE TABLE IF NOT EXISTS lease_sessions (lease_id TEXT NOT NULL,owner TEXT PRIMARY KEY)')
             columns={row['name'] for row in db.execute('PRAGMA table_info(accounts)')}
-            for name,kind in [('checked_out_at','REAL'),('checkout_ip','TEXT'),('relinquished_at','REAL'),('relinquished_ip','TEXT'),('lease_id','TEXT'),('login_disabled','INTEGER NOT NULL DEFAULT 0'),('release_pending','INTEGER NOT NULL DEFAULT 0')]:
+            for name,kind in [('checked_out_at','REAL'),('checkout_ip','TEXT'),('relinquished_at','REAL'),('relinquished_ip','TEXT'),('lease_id','TEXT'),('login_disabled','INTEGER NOT NULL DEFAULT 0'),('release_pending','INTEGER NOT NULL DEFAULT 0'),('name','TEXT')]:
                 if name not in columns:
                     db.execute(f'ALTER TABLE accounts ADD COLUMN {name} {kind}')
             pool_columns={row['name'] for row in db.execute('PRAGMA table_info(pools)')}
@@ -150,6 +163,9 @@ class CheckoutStore:
             db.execute('UPDATE accounts SET release_pending=1,pending_password=NULL WHERE pending_password IS NOT NULL')
             if 'ip_address' not in {row['name'] for row in db.execute('PRAGMA table_info(events)')}:
                 db.execute('ALTER TABLE events ADD COLUMN ip_address TEXT')
+            for table in ('events','challenges'):
+                if 'name' not in {row['name'] for row in db.execute(f'PRAGMA table_info({table})')}:
+                    db.execute(f'ALTER TABLE {table} ADD COLUMN name TEXT')
             db.execute('UPDATE accounts SET checked_out_at=assigned_at WHERE checked_out_at IS NULL AND assigned_at IS NOT NULL')
             db.execute('UPDATE accounts SET lease_id=lower(hex(randomblob(24))) WHERE email IS NOT NULL AND lease_id IS NULL')
 
@@ -191,9 +207,12 @@ class CheckoutStore:
             else:
                 db.execute('UPDATE rate_limits SET count=count+1 WHERE key=?', (key,))
 
-    def event(self, db, pool_id, username, email, action, actor):
-        db.execute('INSERT INTO events(pool_id,username,email,action,actor,timestamp,ip_address) VALUES(?,?,?,?,?,?,?)',
-                   (pool_id, username, email, action, actor, time.time(), checkout_client_ip()))
+    def event(self, db, pool_id, username, email, action, actor,*,name=None):
+        if name is None and username:
+            row=db.execute('SELECT name FROM accounts WHERE pool_id=? AND username=?',(pool_id,username)).fetchone()
+            name=row['name'] if row else None
+        db.execute('INSERT INTO events(pool_id,username,email,action,actor,timestamp,ip_address,name) VALUES(?,?,?,?,?,?,?,?)',
+                   (pool_id, username, email, action, actor, time.time(), checkout_client_ip(),name))
 
     def pool(self, db, pool_id):
         row = db.execute('SELECT * FROM pools WHERE id=?', (pool_id,)).fetchone()
@@ -204,7 +223,7 @@ class CheckoutStore:
     def summary(self, pool_id):
         with self.transaction() as db:
             pool = self.pool(db, pool_id)
-            accounts = {r['username']: {'eligible': bool(r['eligible']), 'email': r['email'], 'assigned_at': r['assigned_at'],
+            accounts = {r['username']: {'eligible': bool(r['eligible']), 'email': r['email'], 'name':r['name'], 'assigned_at': r['assigned_at'],
                          'checked_out_at': r['checked_out_at'], 'checkout_ip': r['checkout_ip'],
                          'relinquished_at': r['relinquished_at'], 'relinquished_ip': r['relinquished_ip'],
                          'login_disabled': bool(r['login_disabled']), 'releasing': bool(r['release_pending']), 'password_rotated': r['source_hash'] != self.digest(decrypt_str(r['password_enc']))}
@@ -289,7 +308,7 @@ class CheckoutStore:
             self.event(db, pool_id, None, None, 'configured', actor)
         return self.summary(pool_id)
 
-    def allocate(self, db, pool_id, email, actor='student', username=None):
+    def allocate(self, db, pool_id, email, actor='student', username=None,*,name=None):
         pool = self.pool(db, pool_id)
         row = db.execute('SELECT * FROM accounts WHERE pool_id=? AND email=?', (pool_id,email)).fetchone()
         if row and (row['release_pending'] or row['login_disabled'] or (username and row['username'] != username)):
@@ -307,9 +326,14 @@ class CheckoutStore:
             if not row:
                 raise CheckoutError('No accounts are available. Contact your instructor.', 409)
             assigned=time.time()
-            db.execute('UPDATE accounts SET email=?,assigned_at=?,checked_out_at=?,checkout_ip=?,lease_id=? WHERE pool_id=? AND username=?', (email,assigned,assigned,checkout_client_ip(),secrets.token_urlsafe(24),pool_id,row['username']))
+            db.execute('UPDATE accounts SET email=?,name=?,assigned_at=?,checked_out_at=?,checkout_ip=?,lease_id=? WHERE pool_id=? AND username=?', (email,name,assigned,assigned,checkout_client_ip(),secrets.token_urlsafe(24),pool_id,row['username']))
             self.event(db,pool_id,row['username'],email,'assigned',actor)
-        return {'status':'assigned','project':pool['name'],'email':email,'username':row['username'],'password':decrypt_str(row['password_enc']),
+            row=dict(row);row['name']=name
+        elif not row['name'] and name:
+            db.execute('UPDATE accounts SET name=? WHERE pool_id=? AND username=?',(name,pool_id,row['username']))
+            row=dict(row);row['name']=name
+            self.event(db,pool_id,row['username'],email,'name_recorded',actor)
+        return {'status':'assigned','project':pool['name'],'email':email,'name':row['name'],'username':row['username'],'password':decrypt_str(row['password_enc']),
                 'connection': {'host':current_app.config['CHECKOUT_PROXMOX_HOST'],'port':current_app.config['CHECKOUT_PROXMOX_PORT'],
                                'realm':row['username'].rsplit('@',1)[1],'verify_ssl':current_app.config['CHECKOUT_PROXMOX_VERIFY']}}
 
@@ -333,7 +357,7 @@ class CheckoutStore:
                 row=db.execute('SELECT email FROM accounts WHERE pool_id=? AND username=?',(pool_id,usernames[0])).fetchone()
                 if row['email'] and row['email']!=email:
                     raise CheckoutError('Release this account before reassigning it.',409)
-                self.allocate(db,pool_id,email,actor,usernames[0])
+                self.allocate(db,pool_id,email,actor,usernames[0],name=person_name(data.get('name'),required=False))
             elif action=='remove':
                 for username in usernames:
                     row=db.execute('SELECT email,release_pending,login_disabled FROM accounts WHERE pool_id=? AND username=?',(pool_id,username)).fetchone()
@@ -471,9 +495,9 @@ class CheckoutStore:
                     raise CheckoutError('Assignment changed; refresh status.',409)
                 disable(username)
                 relinquished=time.time()
-                db.execute('UPDATE accounts SET email=NULL,assigned_at=NULL,release_pending=0,login_disabled=1,lease_id=NULL,relinquished_at=?,relinquished_ip=? WHERE pool_id=? AND username=?',(relinquished,checkout_client_ip(),pool_id,username))
+                db.execute('UPDATE accounts SET email=NULL,name=NULL,assigned_at=NULL,release_pending=0,login_disabled=1,lease_id=NULL,relinquished_at=?,relinquished_ip=? WHERE pool_id=? AND username=?',(relinquished,checkout_client_ip(),pool_id,username))
                 db.execute('DELETE FROM challenges WHERE pool_id=? AND email=?',(pool_id,row['email']))
-                self.event(db,pool_id,username,row['email'],'relinquished' if self_service else 'released_login_disabled',actor)
+                self.event(db,pool_id,username,row['email'],'relinquished' if self_service else 'released_login_disabled',actor,name=row['name'])
             try:
                 self.revoke_lease(row['lease_id'])
             except Exception:
