@@ -104,7 +104,7 @@ test('checkout restrictions load, save all policy controls, and reset for a proj
   assert.equal(h.el('admin-policy-allowed_email_patterns').value,'*@utep.edu\nstudent?@example.org');
   assert.equal(h.el('admin-policy-ipv4_prefix').value,28);
   h.el('admin-policy-allowed_subnets').value='192.0.2.0/24, 2001:db8::/48';
-  h.el('admin-policy-subnet_checkout_limit').value='5';await h.el('admin-save').fire();
+  h.el('admin-policy-subnet_checkout_limit').value='5';await h.el('admin-save-advanced').fire();
   const sent=h.calls.find(call=>call.options.method==='PATCH').body.policy;
   assert.deepEqual(sent,{...policy,allowed_subnets:['192.0.2.0/24','2001:db8::/48'],subnet_checkout_limit:5});
   delete h.pool.policy;await h.el('admin-refresh').fire();

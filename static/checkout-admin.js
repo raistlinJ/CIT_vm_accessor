@@ -50,7 +50,7 @@
   poolSelect.addEventListener('change',()=>{render();message('');});
   document.getElementById('admin-filter').addEventListener('input',rows);
   document.getElementById('admin-refresh').addEventListener('click',()=>run(async()=>{await refresh();message('Status refreshed.');}));
-  document.getElementById('admin-save').addEventListener('click',()=>run(async()=>{
+  for(const id of ['admin-save','admin-save-advanced'])document.getElementById(id).addEventListener('click',()=>run(async()=>{
     if(!pool)return;
     await api('/pools/'+encodeURIComponent(pool.id),'PATCH',{enabled:document.getElementById('admin-enabled').checked,verify_email:document.getElementById('admin-verify').checked,secret:document.getElementById('admin-secret').value,policy:readPolicy()});
     await refresh();message('Checkout settings saved.');
