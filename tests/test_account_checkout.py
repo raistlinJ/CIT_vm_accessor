@@ -493,3 +493,31 @@ def test_failed_preparation_keeps_login_disabled_and_password_unchanged(checkout
         from checkout_store import decrypt_str
         assert decrypt_str(CheckoutStore().account('student01@pve')['password_enc'])=='original-password1'
     assert start(checkout,'new@example.edu').status_code==409
+
+
+def test_storage_permission_error_reports_service_unavailable_in_admin_api(checkout):
+    with patch('checkout_store.os.makedirs',side_effect=PermissionError('private path')):
+        response=checkout.get(POOL,headers=BASIC)
+    assert response.status_code==503
+    assert 'CHECKOUT_DATA_DIR permissions' in response.get_json()['error']
+    assert 'private path' not in response.get_data(as_text=True)
+
+
+def test_storage_permission_error_is_not_reported_as_invalid_login_or_disabled_account(checkout):
+    with patch.object(main,'proxmox_post',return_value=reply({'ticket':'ticket','CSRFPreventionToken':'csrf'})),patch('checkout_store.os.makedirs',side_effect=PermissionError('private path')):
+        response=checkout.post('/login',data={'username':'root','password':'private-password','realm':'pam',
+                                             'host':main.app.config['CHECKOUT_PROXMOX_HOST'],'port':str(main.app.config['CHECKOUT_PROXMOX_PORT'])})
+    assert response.status_code==503
+    assert b'Checkout storage is not writable' in response.data
+    assert b'This account is disabled' not in response.data and b'private-password' not in response.data
+    with checkout.session_transaction() as session:
+        assert not session.get('pve_ticket')
+
+
+def test_database_open_failure_is_reported_as_storage_error(checkout):
+    import sqlite3
+    with patch('checkout_store.sqlite3.connect',side_effect=sqlite3.OperationalError('private details')):
+        response=checkout.get(POOL,headers=BASIC)
+    assert response.status_code==503
+    assert 'CHECKOUT_DATA_DIR permissions' in response.get_json()['error']
+    assert 'private details' not in response.get_data(as_text=True)

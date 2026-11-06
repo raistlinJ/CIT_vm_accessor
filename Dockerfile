@@ -17,6 +17,9 @@ RUN apt-get update \
 # Create non-root user
 RUN useradd -m -u 1000 appuser
 WORKDIR /app
+# Direct image launches also need writable checkout storage. Compose initializes
+# its separate data bind mount before starting the app.
+RUN install -d -m 0700 -o appuser -g appuser /app/data
 
 # Copy requirements separately for better layer caching
 COPY requirements.txt ./

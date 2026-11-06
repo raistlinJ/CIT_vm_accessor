@@ -1,3 +1,8 @@
 
 # Local checkout database and encrypted credentials belong on the persistent host mount.
 data/
+
+# Local deployment secrets do not belong in the image build context.
+.env
+.env.*
+!.env.example

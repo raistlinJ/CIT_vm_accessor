@@ -37,7 +37,7 @@ def bind_checkout_session():
         current_app.logger.warning('Checkout assignment unavailable during sign-in')
 
 
-def checkout_session_current(data):
+def checkout_session_current(data,*,strict=False):
     if not checkout_enabled():
         return True
     if not configured_checkout_cluster(data):
@@ -50,6 +50,8 @@ def checkout_session_current(data):
             return True
         return bool(row and row['email'] and row['lease_id']==data['checkout_lease'])
     except CheckoutError as exc:
+        if strict and exc.status!=400:
+            raise
         return exc.status==400 and not data.get('checkout_lease')
 
 

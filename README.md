@@ -28,7 +28,9 @@ No Proxmox packages or patches are required. AccessForge does not change VM disp
 
 ## Docker Compose deployment
 
-Set deployment values in your shell or an untracked `.env` file:
+Copy [`.env.example`](.env.example) to `.env` for documented connection settings, optional account checkout, email verification delivery, file transfers, and other deployment options. Replace its host and secret placeholders, then start Compose. Existing shell environment variables take precedence over `.env`.
+
+Alternatively, set deployment values in your shell:
 
 ```bash
 export PROXMOX_HOST="pve.example.com"
@@ -183,7 +185,7 @@ Checkout and relinquishment timestamps and client IP addresses remain available 
 
 Client IPs normally use the socket peer. Set `CHECKOUT_TRUSTED_PROXIES` to comma-separated proxy IPs/CIDRs to accept `X-Real-IP` from those peers only. Other forwarded headers are ignored. The supplied Nginx ingress overwrites `X-Real-IP`, and Compose trusts loopback plus its Docker bridge range while exposing the app port only on host loopback. For custom networking, set the actual proxy CIDRs and keep the application port private.
 
-Assignments and encrypted published credentials persist in `CHECKOUT_DATA_DIR/account_checkout.sqlite3`, defaulting to `data/` beside the application. The supplied Compose bind mount preserves `/app/data`. Back up this directory and `FLASK_SECRET_KEY` together. SQLite transactions prevent simultaneous students receiving the same account. A published Proxmox username belongs to one pool per AccessForge server. Admin status APIs omit passwords and lab-secret hashes.
+Assignments and encrypted published credentials persist in `CHECKOUT_DATA_DIR/account_checkout.sqlite3`, defaulting to `data/` beside the application. Compose mounts `./data` at `/app/data`; the `checkout-data` initialization service prepares its ownership for the non-root application user (UID/GID 1000) before the app starts. Existing data stays in the same host directory. Back up this directory and `FLASK_SECRET_KEY` together. SQLite transactions prevent simultaneous students receiving the same account. A published Proxmox username belongs to one pool per AccessForge server. Admin status APIs omit passwords and lab-secret hashes.
 
 **Release selected** also disables the Proxmox login before freeing the assignment. Failed releases remain reserved for retry. Both admin tables show **Disabled**, and the account cannot be checked out or signed into AccessForge until explicitly re-enabled through SCE-web. The separate **Allow selected** checkout setting does not re-enable a disabled login. Registered AccessForge sessions for a released assignment are invalidated and their SPICE connections are closed. Previously issued upstream Proxmox tickets or external/noVNC consoles can remain active until expiration/disconnection. VM contents and credentials in other integrations are not reset.
 
@@ -271,6 +273,8 @@ The upload switch hides the upload control. The download switch hides the downlo
   ```
 
   The Dockerfile now fails on installation errors and verifies application imports during the build. If the build fails, resolve that error before recreating the container.
+- **Permission denied for `/app/data`:** this is a container filesystem permission problem, independent of Proxmox/PAM privileges. Update Compose and run `docker compose up -d --build proxclient` so `checkout-data` prepares the dedicated bind mount before startup. For an older Compose file, repair only the checkout directory from the AccessForge project root with `sudo mkdir -p data`, `sudo chown -Rh 1000:1000 data`, and `sudo chmod 700 data`, then recreate the app. Do not change ownership of the entire project or run the application as root. For custom mounts or user mappings, grant the actual app UID access to `CHECKOUT_DATA_DIR`.
+- **SCE-web cannot connect to AccessForge:** enter the AccessForge HTTPS base URL in SCE-web's **Connection** dialog. If AccessForge uses a self-signed certificate, uncheck **Verify SSL certificates** there or install a certificate trusted by the SCE-web server. Accepting the certificate in your browser does not trust it in SCE-web's container. AccessForge's `VERIFY_SSL` instead controls its connection to Proxmox. Other connection failures require checking DNS, the HTTPS port, and reachability from the SCE-web container. Linux sudo access does not grant Proxmox API privileges; checkout administration requires `Sys.Modify` on `/` on AccessForge's configured cluster.
 - **Bridge unavailable:** use `python main.py` and confirm the 8081 listener starts. Rebuild the Docker image after dependency changes.
 - **Invalid request origin:** for the supplied HTTPS ingress, confirm `PUBLIC_SCHEME=https` in the app container and reload the current Nginx config, which preserves the public host/port. Waitress strips untrusted forwarding headers by default; this deployment sets its URL scheme explicitly. The browser origin must match the application's public scheme, host, and port, not the Proxmox API hostname entered at login. After updating Compose, recreate the app to apply environment changes.
 

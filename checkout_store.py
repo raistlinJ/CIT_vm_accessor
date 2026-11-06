@@ -109,7 +109,10 @@ def user_id(value):
 class CheckoutStore:
     def __init__(self):
         directory = current_app.config.get('CHECKOUT_DATA_DIR') or os.environ.get('CHECKOUT_DATA_DIR') or os.path.join(current_app.root_path, 'data')
-        os.makedirs(directory, mode=0o700, exist_ok=True)
+        try:
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+        except OSError:
+            raise CheckoutError('Checkout storage is not writable. Fix CHECKOUT_DATA_DIR permissions for the AccessForge container user (UID 1000 in the supplied image).',503) from None
         self.path = os.path.join(directory, 'account_checkout.sqlite3')
         self.key = str(current_app.secret_key)
         with self.transaction() as db:
@@ -152,7 +155,10 @@ class CheckoutStore:
 
     @contextmanager
     def transaction(self):
-        db = sqlite3.connect(self.path, timeout=35)
+        try:
+            db = sqlite3.connect(self.path, timeout=35)
+        except sqlite3.OperationalError:
+            raise CheckoutError('Could not open checkout storage. Check CHECKOUT_DATA_DIR permissions and disk space.',503) from None
         db.row_factory = sqlite3.Row
         try:
             db.execute('BEGIN IMMEDIATE')

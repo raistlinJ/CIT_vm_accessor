@@ -16,15 +16,28 @@ services:
       - ./certs:/out
     restart: "no"
 
+  checkout-data:
+    image: alpine:3
+    user: "0:0"
+    # Only the persistent data directory is mounted here; the app stays non-root.
+    command: ["sh", "-ec", "chown -Rh 1000:1000 /data; chmod 700 /data"]
+    volumes:
+      - ./data:/data
+    restart: "no"
+
   proxclient:
     build:
       context: .
       dockerfile: Dockerfile
     image: proxclient:local
     container_name: proxclient
+    depends_on:
+      checkout-data:
+        condition: service_completed_successfully
     volumes:
       - ./static:/app/static:ro
       - ./:/app
+      - ./data:/app/data
     environment:
       # App listens on plain HTTP 8080 inside container
       - PORT=8080

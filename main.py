@@ -1046,6 +1046,7 @@ def require_session(api: bool = False):
   return deco
 
 from account_checkout import bind_checkout_session, checkout_session_current, register_account_checkout
+from checkout_store import CheckoutError
 register_account_checkout(app, host=PROXMOX_HOST, port=PROXMOX_PORT, realm=PROXMOX_REALM, verify=VERIFY_SSL, revoke_sessions=spice_bridge.revoke)
 
 @app.route("/login", methods=["GET", "POST"])
@@ -1119,7 +1120,7 @@ def login():
     csrf = data.get("CSRFPreventionToken")
     if not ticket or not csrf:
       raise ValueError("Missing ticket or CSRF token in response.")
-    if not checkout_session_current({"pve_user":user_with_realm,"pve_host":host_override,"pve_port":port_override}):
+    if not checkout_session_current({"pve_user":user_with_realm,"pve_host":host_override,"pve_port":port_override},strict=True):
       return render_template_string(TPL_LOGIN,host=host_override,port=port_override,realm=realm_override,verify_ssl=verify_override,
                                     username=username,error="This account is disabled. Ask your instructor to re-enable it through SCE-web."),403
     # Persist minimal session state
@@ -1216,6 +1217,10 @@ def login():
       )
     bind_checkout_session()
     return resp
+  except CheckoutError as e:
+    logger.warning("Checkout unavailable during login: %s",e.message)
+    return render_template_string(TPL_LOGIN,host=host_override,port=port_override,realm=realm_override,verify_ssl=verify_override,
+                                  username=username,error=e.message),e.status
   except Exception as e:
     logger.exception(f"[{req_id()}] Login failed for {user_with_realm}")
     return render_template_string(
