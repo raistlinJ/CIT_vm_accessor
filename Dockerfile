@@ -23,12 +23,10 @@ COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir -r requirements.txt \
     && python -m pip check
 
-# Copy application (single-file app plus static assets)
-COPY main.py spice_bridge.py spice_policy.py transfer_policy.py project_metadata.py ./
+# Copy application modules and static assets.
+COPY main.py spice_bridge.py spice_policy.py transfer_policy.py project_metadata.py account_checkout.py checkout_store.py ./
 COPY static ./static
 COPY templates ./templates
-
-# (Optional) Copy templates/static if later split out; currently all inline.
 
 # Expose both common ports (8080 default; 8443 used when PORT overridden)
 EXPOSE 8080 8081 8443
