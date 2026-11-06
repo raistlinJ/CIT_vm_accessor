@@ -154,6 +154,43 @@ Extend the existing `AccessForge` object rather than adding a second one, and re
 
 Materials appear in a compact table to the left of each project's VMs, stacking above them on narrow screens. Long lists scroll within the panel, with column headings kept visible; keyboard users can focus the panel to scroll it. Links are collected only from visible VMs in that Scenario and deduplicated by URL within each category, using the title from the lowest-ID VM when duplicated. Only absolute HTTP/HTTPS links are accepted. `title` is optional and defaults to the URL. Links open in a new tab; PDFs and other hosted files follow the destination server's viewing/download behavior. AccessForge does not host or fetch these files, and VM file-transfer switches do not affect these links. Empty or invalid metadata shows no Materials section. Reload the page after editing Notes; **Refresh Status** updates only VM and backend status.
 
+## Student account checkout
+
+Set `ENABLE_ACCOUNT_CHECKOUT=true` in AccessForge's environment (Compose forwards it from `.env`) and use a strong, stable `FLASK_SECRET_KEY`. Recreate the app container after changing these values. The student login page then links to `/checkout`; `/admin/checkouts` provides administration. AccessForge owns the published credential pools, secret validation, email verification, assignments, and release. Student checkout works without SCE-web being online, and AccessForge never calls SCE-web.
+
+Enable `ACCESSFORGE_PLUGIN_ENABLE=1` in SCE-web, then configure an AccessForge administrator connection in its **Credential Checkouts** tab. Select and publish saved project accounts to this server. SCE-web authenticates with an administrator account using HTTPS; AccessForge validates it against its configured Proxmox cluster and requires `Sys.Modify` on `/`. Publish only credentials provisioned on that cluster. The integration supports password authentication; accounts requiring an interactive MFA exchange cannot be used as saved SCE-web connections. Ordinary student accounts cannot access administration.
+
+Visit `/admin/checkouts` and sign in using the existing Proxmox login. The administrator chooses a published pool, sets a lab secret of at least eight characters, chooses whether email verification is required, enables checkout, and selects accounts to make available. Publishing alone does not enable checkout. The same page supports manual email assignment, release, and removal of unassigned accounts. SCE-web can request password-free status snapshots but does not configure policy or release accounts.
+
+Students enter their email and lab secret at `/checkout`. Required verification uses an eight-digit email code that expires in ten minutes and allows six incorrect attempts. A matching email recovers its existing account rather than consuming another. With verification disabled, the shared lab secret and the email alone are sufficient to claim or recover credentials. Logging out does not release assignments. The result page offers copy controls and **Open lab** using this AccessForge server's configured Proxmox connection. Signed-in students with a current assignment also see **Relinquish account**. Its confirmation warns that they will lose all their work and access; accepting disables the Proxmox login, releases the assignment, closes registered AccessForge SPICE connections, and signs them out. The password and VM contents are unchanged. Credentials and lab secrets are not saved in browser storage or Flask session cookies; responses disable caching.
+
+Email delivery belongs to this AccessForge server:
+
+```dotenv
+ENABLE_ACCOUNT_CHECKOUT=true
+FLASK_SECRET_KEY=<strong-stable-secret>
+CHECKOUT_SMTP_HOST=smtp.example.edu
+CHECKOUT_SMTP_PORT=587
+CHECKOUT_SMTP_FROM=labs@example.edu
+CHECKOUT_SMTP_USER=labs@example.edu
+CHECKOUT_SMTP_PASSWORD=<smtp-password>
+CHECKOUT_SMTP_SSL=0
+```
+
+SMTP uses verified TLS: port 587 with STARTTLS by default, or `CHECKOUT_SMTP_SSL=1` and port 465 for implicit TLS. Required verification fails closed when SMTP is unavailable. SMTP is not needed for pools with verification disabled.
+
+Checkout and relinquishment timestamps and client IP addresses remain available after an assignment is released. The admin table and SCE-web status API expose the latest values; the persistent events table retains the full history. Recovery of an existing assignment does not overwrite its original checkout time or IP. Administrator releases also record their completion time and IP. Existing records keep their original assignment time; unknown historical IPs display as unavailable.
+
+Client IPs normally use the socket peer. Set `CHECKOUT_TRUSTED_PROXIES` to comma-separated proxy IPs/CIDRs to accept `X-Real-IP` from those peers only. Other forwarded headers are ignored. The supplied Nginx ingress overwrites `X-Real-IP`, and Compose trusts loopback plus its Docker bridge range while exposing the app port only on host loopback. For custom networking, set the actual proxy CIDRs and keep the application port private.
+
+Assignments and encrypted published credentials persist in `CHECKOUT_DATA_DIR/account_checkout.sqlite3`, defaulting to `data/` beside the application. The supplied Compose bind mount preserves `/app/data`. Back up this directory and `FLASK_SECRET_KEY` together. SQLite transactions prevent simultaneous students receiving the same account. A published Proxmox username belongs to one pool per AccessForge server. Admin status APIs omit passwords and lab-secret hashes.
+
+**Release selected** also disables the Proxmox login before freeing the assignment. Failed releases remain reserved for retry. Both admin tables show **Disabled**, and the account cannot be checked out or signed into AccessForge until explicitly re-enabled through SCE-web. The separate **Allow selected** checkout setting does not re-enable a disabled login. Registered AccessForge sessions for a released assignment are invalidated and their SPICE connections are closed. Previously issued upstream Proxmox tickets or external/noVNC consoles can remain active until expiration/disconnection. VM contents and credentials in other integrations are not reset.
+
+Automatic disabling requires `User.Modify` privileges. Publishing from SCE-web saves its administrator credential encrypted in the AccessForge pool, allowing local relinquishment when SCE-web is offline. Existing pools must be published again, or an administrator can save a login-management password on `/admin/checkouts`. Alternatively, set `CHECKOUT_PROXMOX_API_TOKEN=user@realm!token-id=secret` to a dedicated Proxmox token with `User.Modify` on the managed users; publishing then does not save an administrator password here. Tokens support disabling only; SCE-web uses its administrator password connection for explicit password resets. Keep login-management credentials current after changing the administrator password.
+
+To prepare released accounts in SCE-web, save their desired passwords in Configuration, select them in **Credential Checkouts**, and use **Reset selected passwords**. This updates Proxmox and AccessForge's encrypted credentials while leaving logins disabled. When ready, select **Re-enable selected logins**. Accounts then become available according to their existing AccessForge checkout policy. **Disable selected logins** also supports unassigned published accounts. Reset and re-enable operations reject assigned accounts; release them first. Publishing alone never re-enables a disabled account. A changed source password cannot replace an assigned account. The former `SCE_CHECKOUT_URL` / `SCE_CHECKOUT_TOKEN` service connection is removed; all integration requests go from SCE-web into AccessForge.
+
 ## VM file transfer
 
 Set `ENABLE_VM_FILE_UPLOAD=true` to send files from the user's browser computer to the VM, `ENABLE_VM_FILE_DOWNLOAD=true` to retrieve files from the VM, or both. Set them in Compose or the Compose `.env` file and recreate the app container. Both default to `false`; when both directions are disabled, the drawer shows a nonexpandable **File Transfer — Disabled** row. Otherwise, open the collapsible **File Transfer** section to see the allowed controls. The app container does not read files from the Proxmox host filesystem. The former `ENABLE_VM_FILE_TRANSFER` setting remains a fallback for either direction that does not have its own setting, so existing deployments keep their behavior.

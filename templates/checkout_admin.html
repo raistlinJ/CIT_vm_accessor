@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .topbar { flex-wrap:wrap; gap:.5rem; }
+  .topbar > div:last-child { flex-wrap:wrap; justify-content:flex-end; }
+  #admin-accounts { min-width:68rem; }
+  #admin-accounts th { position:sticky; top:0; z-index:1; padding:.6rem; background:var(--item-bg); text-align:left; }
+</style>
+<h2>Credential checkouts</h2>
+{% if error %}
+<p class="error">{{ error }}</p>
+<p><a href="{{ url_for('login', next='/admin/checkouts') }}">Sign in as an administrator</a></p>
+{% else %}
+<p class="muted">Configure published account pools here. Students check out accounts at <a href="/checkout">Get lab access</a>. Checkout continues independently of SCE-web.</p>
+<div id="checkout-admin" data-csrf="{{ csrf }}">
+  <div style="display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; margin-bottom:1rem">
+    <label for="admin-pool">Account pool</label>
+    <select id="admin-pool" style="width:auto; max-width:100%; margin:0; flex:1"><option value="">Loading pools…</option></select>
+    <button type="button" id="admin-refresh">Refresh status</button>
+  </div>
+  <p id="admin-empty" class="notice" hidden>No accounts have been published. Enable the AccessForge plugin in SCE-web, connect with an administrator account, and publish selected credentials.</p>
+  <section id="admin-pool-panel" hidden>
+    <div class="notice">
+      <div style="display:flex; flex-wrap:wrap; gap:1.5rem; margin-bottom:.8rem">
+        <label><input id="admin-enabled" type="checkbox" style="width:auto; margin:0"> Enable student checkout</label>
+        <label><input id="admin-verify" type="checkbox" style="width:auto; margin:0"> Require email verification</label>
+      </div>
+      <label for="admin-secret">Lab secret</label>
+      <input id="admin-secret" type="password" autocomplete="new-password" minlength="8" maxlength="256" placeholder="Set a lab secret (8+ characters)">
+      <button type="button" id="admin-save">Save checkout settings</button>
+      <p id="admin-policy-note" class="muted" style="margin-bottom:0"></p>
+    </div>
+    <div class="bulk-actions" style="margin:1rem 0">
+      <button type="button" data-action="enable">Allow selected</button>
+      <button type="button" data-action="disable">Stop selected checkouts</button>
+      <button type="button" data-action="assign">Assign to email</button>
+      <button type="button" data-action="release" class="btn-danger">Release selected</button>
+      <button type="button" data-action="remove" class="btn-danger">Remove selected</button>
+    </div>
+    <div style="display:flex; flex-wrap:wrap; gap:1rem; margin-bottom:.5rem">
+      <div style="flex:1; min-width:12rem"><label for="admin-filter">Filter accounts</label><input id="admin-filter" type="search" placeholder="Username or email"></div>
+      <div style="flex:1; min-width:12rem"><label for="admin-manager-password">Administrator password for automatic login disabling</label><input id="admin-manager-password" type="password" autocomplete="current-password" placeholder="Save or update the login-management credential"><button type="button" id="admin-save-manager">Save login management</button><p id="admin-manager-state" class="muted" style="font-size:.75rem"></p></div>
+    </div>
+    <div style="overflow:auto; max-height:28rem; border:1px solid var(--muted)">
+      <table style="width:100%; border-spacing:0; font-size:.85rem" id="admin-accounts">
+        <thead><tr><th style="text-align:left; padding:.6rem"><input id="admin-select-all" type="checkbox" aria-label="Select visible accounts" style="width:auto; margin:0"></th><th style="text-align:left">Account</th><th style="text-align:left">Availability</th><th style="text-align:left">Checked out to</th><th style="text-align:left">Checked out</th><th style="text-align:left">Checkout IP</th><th style="text-align:left">Relinquished</th><th style="text-align:left">Relinquish IP</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="muted" style="font-size:.8rem">Releasing an account disables its Proxmox login and keeps it unavailable until an instructor resets the password if needed and re-enables it through SCE-web. Existing tickets and open consoles may remain active until expiration or disconnection. Failed disables stay reserved until a successful retry. Automatic disabling uses the encrypted administrator credential saved when publishing from SCE-web, or the configured management API token.</p>
+  </section>
+  <p id="admin-feedback" role="status" aria-live="polite"></p>
+</div>
+<script src="/static/checkout-admin.js?v=20261105-disabled-logins" defer></script>
+{% endif %}
+{% endblock %}

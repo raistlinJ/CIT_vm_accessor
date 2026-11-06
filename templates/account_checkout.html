@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="checkout-card" style="width:100%; max-width:32rem; margin:0 auto">
+  <h2>Get lab access</h2>
+  {% if not enabled %}
+  <p>Account checkout is not configured. Contact your instructor.</p>
+  {% else %}
+  <p class="muted">Enter your email and the lab secret from your instructor. Your account stays assigned to you until your instructor releases it.</p>
+  <form id="checkout-start" data-csrf="{{ csrf }}">
+    <label for="checkout-email">Email</label>
+    <input id="checkout-email" type="email" autocomplete="email" maxlength="254" required>
+    <label for="checkout-secret">Lab secret</label>
+    <input id="checkout-secret" type="password" autocomplete="off" minlength="8" maxlength="256" required>
+    <button type="submit">Get my account</button>
+  </form>
+  <form id="checkout-verify" hidden>
+    <p>Check your email for an eight-digit verification code. It expires in 10 minutes.</p>
+    <label for="checkout-code">Verification code</label>
+    <input id="checkout-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" maxlength="8" required>
+    <button type="submit">Verify email</button>
+    <button type="button" id="checkout-restart">Start again</button>
+  </form>
+  <section id="checkout-result" aria-label="Your assigned account" hidden>
+    <h3 id="checkout-project"></h3>
+    <p id="checkout-assignment" class="muted"></p>
+    <label for="checkout-username">Username</label>
+    <input id="checkout-username" readonly autocomplete="off">
+    <button type="button" data-copy="checkout-username">Copy username</button>
+    <div style="margin-top:1rem">
+      <label for="checkout-password">Password</label>
+      <input id="checkout-password" type="password" readonly autocomplete="off">
+      <div class="bulk-actions">
+        <button type="button" id="checkout-show" aria-pressed="false">Show password</button>
+        <button type="button" data-copy="checkout-password">Copy password</button>
+      </div>
+    </div>
+    <form id="checkout-login" method="post" action="{{ url_for('login') }}" style="margin-top:1.5rem">
+      <input type="hidden" name="username"><input type="hidden" name="password">
+      <input type="hidden" name="host"><input type="hidden" name="port">
+      <input type="hidden" name="realm"><input type="hidden" name="verify_ssl">
+      <button type="submit">Open lab</button>
+    </form>
+  </section>
+  <p id="checkout-feedback" role="status" aria-live="polite" style="overflow-wrap:anywhere"></p>
+  <script src="{{ url_for('static', filename='account-checkout.js') }}?v=20261105" defer></script>
+  {% endif %}
+  <p style="margin-top:1.5rem"><a href="{{ url_for('login') }}">Back to sign in</a></p>
+</div>
+{% endblock %}

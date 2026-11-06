@@ -126,3 +126,6 @@ dmypy.json
 certs/
 
 .DS_Store
+
+# Persistent local account checkout data
+data/

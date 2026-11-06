@@ -1,0 +1,3 @@
+
+# Local checkout database and encrypted credentials belong on the persistent host mount.
+data/

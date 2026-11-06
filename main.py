@@ -118,6 +118,10 @@ def spice_cookie_owner(cookie_header):
     ticket = data.get("pve_ticket")
     if not ticket:
       return None
+    if data.get('checkout_lease'):
+      with app.app_context():
+        if not checkout_session_current(data):
+          return None
     return session_owner(ticket)
   except (BadSignature, TypeError, ValueError):
     return None
@@ -396,7 +400,9 @@ TPL_BASE = """
   html, body { height:100%; }
   body { font-family: var(--mono); margin:0; padding:0 1.25rem 0; background: var(--bg); color: var(--text); min-height:100vh; display:flex; flex-direction:column; text-shadow: none; }
   [data-theme="hacker"] body { text-shadow: 0 0 2px var(--muted); }
-  .topbar { position:sticky; top:0; backdrop-filter: blur(6px); background:var(--topbar-bg); border-bottom: 1px solid var(--border); padding:0.9rem 1rem; margin:0 -1.25rem 1rem; display:flex; justify-content:space-between; align-items:center; color:var(--text); box-shadow:0 0 8px var(--shadow-base); }
+  .topbar { position:sticky; top:0; backdrop-filter: blur(6px); background:var(--topbar-bg); border-bottom: 1px solid var(--border); padding:0.9rem 1rem; margin:0 -1.25rem 1rem; display:flex; flex-wrap:wrap; gap:.5rem; justify-content:space-between; align-items:center; color:var(--text); box-shadow:0 0 8px var(--shadow-base); }
+  .topbar > div:last-child { flex-wrap:wrap; justify-content:flex-end; }
+  #relinquish-account[hidden] { display:none !important; }
   .topbar strong { letter-spacing:.5px; font-weight:600; text-transform:uppercase; text-shadow: var(--accent-glow); }
   .topbar a { color:var(--accent); text-shadow: var(--accent-glow); }
   [data-theme="original"] .topbar strong, [data-theme="original"] .topbar a, [data-theme="original"] h2, [data-theme="original"] h3 { text-shadow: none; }
@@ -606,10 +612,13 @@ TPL_BASE = """
       </script>
       {% if session.get('pve_user') %}
         <span class="muted">{{ session.get('pve_user') }}</span> |
+        {% if checkout_enabled and session.get('checkout_admin') %}<a href="/admin/checkouts">Checkouts</a> |{% endif %}
+        {% if checkout_enabled %}<button type="button" id="relinquish-account" class="btn-danger" hidden style="padding:.25rem .5rem; font-size:.7rem">Relinquish account</button>{% endif %}
         <a href="{{ url_for('logout') }}">Logout</a>
       {% endif %}
     </div>
   </div>
+  {% if checkout_enabled and session.get('pve_user') %}<script src="/static/relinquish-account.js?v=20261105-disabled-logins" defer></script>{% endif %}
   <div class="card">
     {% block content %}{% endblock %}
   </div>
@@ -692,6 +701,8 @@ TPL_LOGIN = """
   </details>
   <button type="submit">Sign in</button>
 </form>
+{% if checkout_enabled %}<p><a href="{{ url_for('account_checkout') }}">Get lab access</a> — check out or recover your student account.</p>{% endif %}
+{% if checkout_enabled %}<p><a href="/admin/checkouts">Manage account checkouts</a> (administrator sign-in)</p>{% endif %}
 <script>
  (function(){
    const u=document.getElementById('usernameInput');
@@ -1019,6 +1030,12 @@ def require_session(api: bool = False):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
       ticket = session.get("pve_ticket")
+      if ticket and not checkout_session_current(session):
+        spice_bridge.revoke(session_owner(ticket))
+        session.clear()
+        if api:
+          return jsonify(error="Your checked-out account has been released.",redirect=url_for("session_reset",reason="invalid")),401
+        return redirect(url_for("session_reset",reason="invalid"))
       if not ticket:
         if api:
           return jsonify({"error": "unauthorized"}), 401
@@ -1027,6 +1044,9 @@ def require_session(api: bool = False):
       return fn(*args, **kwargs)
     return wrapper
   return deco
+
+from account_checkout import bind_checkout_session, checkout_session_current, register_account_checkout
+register_account_checkout(app, host=PROXMOX_HOST, port=PROXMOX_PORT, realm=PROXMOX_REALM, verify=VERIFY_SSL, revoke_sessions=spice_bridge.revoke)
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -1099,13 +1119,17 @@ def login():
     csrf = data.get("CSRFPreventionToken")
     if not ticket or not csrf:
       raise ValueError("Missing ticket or CSRF token in response.")
+    if not checkout_session_current({"pve_user":user_with_realm,"pve_host":host_override,"pve_port":port_override}):
+      return render_template_string(TPL_LOGIN,host=host_override,port=port_override,realm=realm_override,verify_ssl=verify_override,
+                                    username=username,error="This account is disabled. Ask your instructor to re-enable it through SCE-web."),403
     # Persist minimal session state
+    session.pop("checkout_admin", None)
     session["pve_user"] = user_with_realm
     session["pve_ticket"] = ticket
     session["pve_csrf"] = csrf
     session["pve_host"] = host_override
     session["pve_port"] = port_override
-    resp = make_response(redirect(url_for("home")))
+    resp = make_response(redirect("/admin/checkouts" if request.args.get("next") == "/admin/checkouts" else url_for("home")))
     # Set cookies so the browser will send them back to our proxy paths on the same origin (host-only cookies).
     # Also, optionally set domain cookies for the Proxmox host to support direct access scenarios.
     proxmox_domain = cookie_host()
@@ -1190,6 +1214,7 @@ def login():
         username=username,
         error="Ticket validation exception; please login again.",
       )
+    bind_checkout_session()
     return resp
   except Exception as e:
     logger.exception(f"[{req_id()}] Login failed for {user_with_realm}")

@@ -46,6 +46,20 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEBUG_HTTP=${DEBUG_HTTP:-false}
       - DEFAULT_THEME=${DEFAULT_THEME:-pokemon}
+      # Local student checkout and administration; SCE-web only publishes / requests status.
+      - ENABLE_ACCOUNT_CHECKOUT=${ENABLE_ACCOUNT_CHECKOUT:-false}
+      - CHECKOUT_DATA_DIR=/app/data
+      # Optional scoped token with User.Modify permission for disabling relinquished logins.
+      - CHECKOUT_PROXMOX_API_TOKEN=${CHECKOUT_PROXMOX_API_TOKEN:-}
+      # The app is published only on host loopback, behind the supplied Nginx ingress.
+      # Nginx overwrites X-Real-IP; include a custom proxy CIDR here if needed.
+      - CHECKOUT_TRUSTED_PROXIES=${CHECKOUT_TRUSTED_PROXIES:-127.0.0.1/32,::1/128,172.16.0.0/12}
+      - CHECKOUT_SMTP_HOST=${CHECKOUT_SMTP_HOST:-}
+      - CHECKOUT_SMTP_PORT=${CHECKOUT_SMTP_PORT:-587}
+      - CHECKOUT_SMTP_FROM=${CHECKOUT_SMTP_FROM:-}
+      - CHECKOUT_SMTP_USER=${CHECKOUT_SMTP_USER:-}
+      - CHECKOUT_SMTP_PASSWORD=${CHECKOUT_SMTP_PASSWORD:-}
+      - CHECKOUT_SMTP_SSL=${CHECKOUT_SMTP_SSL:-0}
   # NOTE: Removed extra_hosts override that mapped PROXMOX_HOST to "host-gateway".
   # On Docker Desktop (macOS/Windows) the special token 'host-gateway' may not resolve,
   # producing "Temporary failure in name resolution" when Python tries to resolve the host.
