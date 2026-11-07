@@ -9,7 +9,7 @@
   button.addEventListener('click',async()=>{
     if(busy||!state?.assigned)return;
     if(state.requires_signin){alert('Sign in again before relinquishing your account.');location.assign('/login');return;}
-    if(!confirm('Relinquish this account? You will lose all your work and access to this account. Save any files you need before continuing. Your login will be disabled until your instructor re-enables it. You will be signed out.'))return;
+    if(!confirm('Relinquish this account? You will lose all your work and access to this account. Save any files you need before continuing. Your AccessForge access will be disabled until your instructor re-enables it. You will be signed out.'))return;
     busy=true;button.disabled=true;button.textContent='Relinquishing…';
     try{
       const response=await fetch('/api/account-checkout/relinquish',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Checkout-CSRF':state.csrf},body:JSON.stringify({confirmed:true})});

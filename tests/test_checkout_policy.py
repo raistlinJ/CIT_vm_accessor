@@ -102,7 +102,7 @@ def test_subnet_quota_counts_active_assignments_and_recovers_without_extra_slot(
     assert claim(checkout,'one@example.edu','192.0.2.2').json['username']==first.json['username']
     assert claim(checkout,'two@example.edu','192.0.2.200').status_code==429
     assert claim(checkout,'two@example.edu','192.0.3.1').status_code==200
-    with patch('account_checkout.set_login_enabled'):
+    with patch('account_checkout.requests.put'):
         assert checkout.post(POOL,headers=BASIC,json={'action':'release','usernames':['student01']}).json['results'][0]['released']
         checkout.post(POOL,headers=BASIC,json={'action':'reenable_logins','accounts':[{'username':'student01','password':'original-password1'}]})
     assert claim(checkout,'three@example.edu','192.0.2.30').status_code==200
@@ -139,7 +139,7 @@ def test_cooldown_survives_relinquishment_and_is_project_scoped(checkout):
     setup_pool(checkout);setup_second_project(checkout)
     policy(checkout,subnet_delay_seconds=60)
     assert claim(checkout,'one@example.edu').status_code==200
-    with patch('account_checkout.set_login_enabled'):
+    with patch('account_checkout.requests.put'):
         checkout.post(POOL,headers=BASIC,json={'action':'release','usernames':['student01']})
     assert claim(checkout,'two@example.edu').status_code==429
     assert start(checkout,'two@example.edu',secret='forensics-secret').status_code==200

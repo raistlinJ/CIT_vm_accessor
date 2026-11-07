@@ -55,7 +55,7 @@
         <tbody></tbody>
       </table>
     </div>
-    <p class="muted" style="font-size:.8rem">Releasing an account disables its Proxmox login and keeps it unavailable until an instructor resets the password if needed and re-enables it through SCE-web. Existing tickets and open consoles may remain active until expiration or disconnection. Failed disables stay reserved until a successful retry. Administrator login changes use your current Proxmox session with User.Modify permission; no additional password is requested.</p>
+    <p class="muted" style="font-size:.8rem">Relinquishing an account signs the student out and disables their AccessForge access until an administrator chooses Enable in SCE-web. Proxmox logins and VM contents are unchanged. Keep direct Proxmox access restricted by your firewall.</p>
     <details id="admin-advanced" style="margin-top:1.5rem">
       <summary style="cursor:pointer; font-weight:600">Advanced</summary>
       <fieldset style="margin:1rem 0; padding:1rem; border:1px solid var(--muted)">
@@ -81,6 +81,6 @@
   <p id="admin-feedback" role="status" aria-live="polite"></p>
 </div>
 
-<script src="/static/checkout-admin.js?v=20261106-assignment-login" defer></script>
+<script src="/static/checkout-admin.js?v=20261106-accessforge-only" defer></script>
 {% endif %}
 {% endblock %}

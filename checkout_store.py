@@ -175,7 +175,6 @@ class CheckoutStore:
             raise CheckoutError('Checkout storage is not writable. Fix CHECKOUT_DATA_DIR permissions for the AccessForge container user (UID 1000 in the supplied image).',503) from None
         self.path = os.path.join(directory, 'account_checkout.sqlite3')
         self.key = str(current_app.secret_key)
-        self._rollback_actions={}
         with self.transaction() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS pools (
@@ -227,34 +226,20 @@ class CheckoutStore:
         except sqlite3.OperationalError:
             raise CheckoutError('Could not open checkout storage. Check CHECKOUT_DATA_DIR permissions and disk space.',503) from None
         db.row_factory = sqlite3.Row
-        rollback_actions=[]
-        self._rollback_actions[id(db)]=rollback_actions
-        def rollback():
-            # Keep the write lock until compensation completes, so another
-            # checkout cannot acquire an account before its login is off again.
-            for compensate in reversed(rollback_actions):
-                try:
-                    compensate()
-                except Exception:
-                    current_app.logger.error('Could not restore a disabled checkout login after a failed operation')
-            rollback_actions.clear()
-            db.rollback()
         try:
             db.execute('BEGIN IMMEDIATE')
             yield db
             db.commit()
-            rollback_actions.clear()
         except sqlite3.IntegrityError:
-            rollback()
+            db.rollback()
             raise CheckoutError('This account is already published to a pool, or the email is already assigned. Refresh status and try again.', 409) from None
         except sqlite3.OperationalError:
-            rollback()
+            db.rollback()
             raise CheckoutError('Checkout storage is busy or unavailable. Please try again later.', 503) from None
         except Exception:
-            rollback()
+            db.rollback()
             raise
         finally:
-            self._rollback_actions.pop(id(db),None)
             db.close()
 
     def digest(self, value):
@@ -291,12 +276,13 @@ class CheckoutStore:
             accounts = {r['username']: {'eligible': bool(r['eligible']), 'email': r['email'], 'name':r['name'], 'assigned_at': r['assigned_at'],
                          'checked_out_at': r['checked_out_at'], 'checkout_ip': r['checkout_ip'],
                          'relinquished_at': r['relinquished_at'], 'relinquished_ip': r['relinquished_ip'],
-                         'login_disabled': bool(r['login_disabled']), 'awaiting_checkout': bool(r['awaiting_checkout']), 'releasing': bool(r['release_pending']), 'password_rotated': r['source_hash'] != self.digest(decrypt_str(r['password_enc']))}
+                         'login_disabled': bool(r['login_disabled'] or (r['eligible'] and not r['email'])),
+                         'awaiting_checkout': bool(r['eligible'] and not r['email'] and not r['login_disabled'] and not r['release_pending']), 'releasing': bool(r['release_pending']), 'password_rotated': r['source_hash'] != self.digest(decrypt_str(r['password_enc']))}
                         for r in db.execute('SELECT * FROM accounts WHERE pool_id=? ORDER BY username', (pool_id,))}
         return {'id': pool_id, 'name': pool['name'], 'enabled': bool(pool['enabled']), 'verify_email': bool(pool['verify_email']),
                 'policy': validate_checkout_policy(json.loads(pool['checkout_policy'])),
                 'secret_set': bool(pool['secret_hash']), 'smtp_configured': smtp_ready(), 'accounts': accounts,
-                'login_management_ready':bool(os.environ.get('CHECKOUT_PROXMOX_API_TOKEN','').strip().removeprefix('PVEAPIToken=').strip())}
+                'login_management_ready':True,'login_scope':'accessforge'}
 
     def summaries(self):
         with self.transaction() as db:
@@ -408,7 +394,7 @@ class CheckoutStore:
                 if previous is not None and previous in subnet:
                     raise CheckoutError(f'Please wait {max(1,math.ceil(row["timestamp"]+subnet_delay-now))} seconds before another checkout from your IP subnet.',429)
 
-    def allocate(self, db, pool_id, email, actor='student', username=None,*,name=None,set_login=None):
+    def allocate(self, db, pool_id, email, actor='student', username=None,*,name=None):
         pool = self.pool(db, pool_id)
         row = db.execute('SELECT * FROM accounts WHERE pool_id=? AND email=?', (pool_id,email)).fetchone()
         if username is None:
@@ -416,7 +402,7 @@ class CheckoutStore:
         if row and (row['release_pending'] or row['login_disabled'] or (username and row['username'] != username)):
             raise CheckoutError('This email already has another account or its release is pending.', 409)
         if not row:
-            sql = '''SELECT a.* FROM accounts a WHERE pool_id=? AND email IS NULL AND release_pending=0 AND (login_disabled=0 OR awaiting_checkout=1)
+            sql = '''SELECT a.* FROM accounts a WHERE pool_id=? AND email IS NULL AND release_pending=0 AND login_disabled=0
                      AND NOT EXISTS(SELECT 1 FROM accounts b WHERE b.username=a.username AND b.email IS NOT NULL)'''
             args = [pool_id]
             if username:
@@ -429,11 +415,6 @@ class CheckoutStore:
                 raise CheckoutError('No accounts are available. Contact your instructor.', 409)
             assigned=time.time()
             db.execute('UPDATE accounts SET email=?,name=?,assigned_at=?,checked_out_at=?,checkout_ip=?,lease_id=?,login_disabled=0,awaiting_checkout=0 WHERE pool_id=? AND username=?', (email,name,assigned,assigned,checkout_client_ip(),secrets.token_urlsafe(24),pool_id,row['username']))
-            if row['eligible'] or row['awaiting_checkout']:
-                if set_login is None:
-                    raise CheckoutError('Checkout login activation is not configured. Contact your instructor.',503)
-                self._rollback_actions[id(db)].append(lambda:set_login(row['username'],False))
-                set_login(row['username'],True)
             self.event(db,pool_id,row['username'],email,'assigned',actor)
             row=dict(row);row['name']=name
         elif not row['name'] and name:
@@ -444,7 +425,7 @@ class CheckoutStore:
                 'connection': {'host':current_app.config['CHECKOUT_PROXMOX_HOST'],'port':current_app.config['CHECKOUT_PROXMOX_PORT'],
                                'realm':row['username'].rsplit('@',1)[1],'verify_ssl':current_app.config['CHECKOUT_PROXMOX_VERIFY']}}
 
-    def account_action(self, pool_id, data, actor, set_login):
+    def account_action(self, pool_id, data, actor):
         usernames = data.get('usernames')
         if not isinstance(usernames,list) or not usernames or len(usernames)>2000:
             raise CheckoutError('Select at least one account.')
@@ -457,15 +438,6 @@ class CheckoutStore:
                     raise CheckoutError('Unknown selected account.')
             if action in ('enable','disable'):
                 for username in usernames:
-                    row=db.execute('SELECT * FROM accounts WHERE pool_id=? AND username=?',(pool_id,username)).fetchone()
-                    if not row['email'] and not row['release_pending']:
-                        if action=='enable' and (not row['login_disabled'] or row['awaiting_checkout']):
-                            set_login(username,False)
-                            db.execute('UPDATE accounts SET login_disabled=1,awaiting_checkout=1 WHERE pool_id=? AND username=?',(pool_id,username))
-                        elif action=='disable' and row['awaiting_checkout']:
-                            self._rollback_actions[id(db)].append(lambda user=username:set_login(user,False))
-                            set_login(username,True)
-                            db.execute('UPDATE accounts SET login_disabled=0,awaiting_checkout=0 WHERE pool_id=? AND username=?',(pool_id,username))
                     db.execute('UPDATE accounts SET eligible=? WHERE pool_id=? AND username=?',(int(action=='enable'),pool_id,username))
                     self.event(db,pool_id,username,None,action,actor)
             elif action=='assign' and len(usernames)==1:
@@ -473,33 +445,17 @@ class CheckoutStore:
                 row=db.execute('SELECT email FROM accounts WHERE pool_id=? AND username=?',(pool_id,usernames[0])).fetchone()
                 if row['email'] and row['email']!=email:
                     raise CheckoutError('Release this account before reassigning it.',409)
-                self.allocate(db,pool_id,email,actor,usernames[0],name=person_name(data.get('name'),required=False),set_login=set_login)
+                self.allocate(db,pool_id,email,actor,usernames[0],name=person_name(data.get('name'),required=False))
             elif action=='remove':
                 for username in usernames:
                     row=db.execute('SELECT email,release_pending,login_disabled,awaiting_checkout FROM accounts WHERE pool_id=? AND username=?',(pool_id,username)).fetchone()
                     if row['email'] or row['release_pending']:
                         raise CheckoutError('Release assigned accounts before removing them.',409)
-                    if row['awaiting_checkout']:
-                        self._rollback_actions[id(db)].append(lambda user=username:set_login(user,False))
-                        set_login(username,True)
                     db.execute('DELETE FROM accounts WHERE pool_id=? AND username=?',(pool_id,username))
                     self.event(db,pool_id,username,None,'removed',actor)
             else:
                 raise CheckoutError('Select one account for assignment, or choose a valid action.')
         return self.summary(pool_id)
-
-    def hold_unassigned_logins(self,pool_id,disable):
-        """Bring accounts enabled by older versions under the assignment login rule."""
-        with self.transaction() as db:
-            self.pool(db,pool_id)
-            rows=db.execute('SELECT username FROM accounts WHERE pool_id=? AND eligible=1 AND email IS NULL AND login_disabled=0 AND release_pending=0',(pool_id,)).fetchall()
-        for row in rows:
-            with self.transaction() as db:
-                latest=db.execute('SELECT * FROM accounts WHERE pool_id=? AND username=?',(pool_id,row['username'])).fetchone()
-                if latest and latest['eligible'] and not latest['email'] and not latest['login_disabled'] and not latest['release_pending']:
-                    disable(row['username'])
-                    db.execute('UPDATE accounts SET login_disabled=1,awaiting_checkout=1 WHERE pool_id=? AND username=?',(pool_id,row['username']))
-                    self.event(db,pool_id,row['username'],None,'login_held_for_checkout','system')
 
     def assigned_account(self,username):
         username=user_id(username)
@@ -578,20 +534,19 @@ class CheckoutStore:
                         raise CheckoutError('Disable this login before preparing it for checkout.',409)
                     if action in ('reenable_logins','enable_accounts') and not hmac.compare_digest(password.encode(),decrypt_str(row['password_enc']).encode()):
                         raise CheckoutError('Reset the saved password or publish the updated credentials before re-enabling.',409)
-                    awaiting_checkout=action!='reset_passwords' and bool(row['eligible'] or enable_checkout)
-                    apply(username,password,not awaiting_checkout)
                     if action=='reset_passwords':
+                        apply(username,password)
                         db.execute('UPDATE accounts SET password_enc=?,source_hash=?,awaiting_checkout=0 WHERE pool_id=? AND username=?',(encrypt_str(password),self.digest(password),pool_id,username))
                     else:
-                        db.execute('UPDATE accounts SET login_disabled=?,awaiting_checkout=?,eligible=MAX(eligible,?) WHERE pool_id=? AND username=?',(int(awaiting_checkout),int(awaiting_checkout),int(enable_checkout),pool_id,username))
-                    self.event(db,pool_id,username,None,'password_reset' if action=='reset_passwords' else 'login_held_for_checkout' if awaiting_checkout else 'login_enabled',actor)
+                        db.execute('UPDATE accounts SET login_disabled=0,awaiting_checkout=0,eligible=MAX(eligible,?) WHERE pool_id=? AND username=?',(int(enable_checkout),pool_id,username))
+                    self.event(db,pool_id,username,None,'password_reset' if action=='reset_passwords' else 'accessforge_enabled',actor)
                 results.append({'username':username,'success':True})
             except Exception as exc:
-                message=exc.message if isinstance(exc,CheckoutError) else 'Proxmox operation failed; the account remains unavailable. Check the administrator connection and retry.'
+                message=exc.message if isinstance(exc,CheckoutError) else 'Account operation failed; the saved access state was not changed. Retry or check the AccessForge logs.'
                 results.append({'username':username,'success':False,'error':message})
         return results
 
-    def disable_logins(self,pool_id,usernames,actor,disable):
+    def disable_logins(self,pool_id,usernames,actor):
         if not isinstance(usernames,list) or not 1<=len(usernames)<=2000:
             raise CheckoutError('Select at least one account.')
         results=[]
@@ -604,40 +559,37 @@ class CheckoutStore:
                         raise CheckoutError('Publish this account before disabling its login.',409)
                     if row['email'] or row['release_pending']:
                         raise CheckoutError('Release the assigned account in AccessForge first.',409)
-                    disable(username)
                     db.execute('UPDATE accounts SET login_disabled=1,awaiting_checkout=0 WHERE pool_id=? AND username=?',(pool_id,username))
                     self.event(db,pool_id,username,None,'login_disabled',actor)
                 results.append({'username':username,'success':True})
             except Exception as exc:
-                results.append({'username':username,'success':False,'error':exc.message if isinstance(exc,CheckoutError) else 'Could not disable the Proxmox login.'})
+                results.append({'username':username,'success':False,'error':exc.message if isinstance(exc,CheckoutError) else 'Could not disable AccessForge access.'})
         return results
 
-    def release(self,pool_id,username,actor,disable,*,self_service=False,expected_assignment=None,expected_lease=None):
+    def release(self,pool_id,username,actor,*,self_service=False,expected_assignment=None,expected_lease=None):
         username=user_id(username)
-        with self.transaction() as db:
-            self.pool(db,pool_id)
-            row=db.execute('SELECT * FROM accounts WHERE pool_id=? AND username=?',(pool_id,username)).fetchone()
-            if not row or not row['email']:
-                return {'username':username,'released':False,'error':'Account is not checked out.'}
-            if expected_assignment is not None and (row['email'],row['assigned_at']) != expected_assignment:
-                raise CheckoutError('This account assignment changed. Sign in again before relinquishing.',409)
-            if expected_lease is not None and row['lease_id'] != expected_lease:
-                raise CheckoutError('This account assignment changed. Sign in again before relinquishing.',409)
-            db.execute('UPDATE accounts SET release_pending=1 WHERE pool_id=? AND username=?',(pool_id,username))
         try:
             with self.transaction() as db:
-                latest=db.execute('SELECT * FROM accounts WHERE pool_id=? AND username=?',(pool_id,username)).fetchone()
-                if not latest['release_pending'] or latest['lease_id']!=row['lease_id'] or latest['email']!=row['email']:
-                    raise CheckoutError('Assignment changed; refresh status.',409)
-                disable(username)
+                self.pool(db,pool_id)
+                row=db.execute('SELECT * FROM accounts WHERE pool_id=? AND username=?',(pool_id,username)).fetchone()
+                if not row or not row['email']:
+                    return {'username':username,'released':False,'error':'Account is not checked out.'}
+                if expected_assignment is not None and (row['email'],row['assigned_at']) != expected_assignment:
+                    raise CheckoutError('This account assignment changed. Sign in again before relinquishing.',409)
+                if expected_lease is not None and row['lease_id'] != expected_lease:
+                    raise CheckoutError('This account assignment changed. Sign in again before relinquishing.',409)
                 relinquished=time.time()
                 db.execute('UPDATE accounts SET email=NULL,name=NULL,assigned_at=NULL,release_pending=0,login_disabled=1,awaiting_checkout=0,lease_id=NULL,relinquished_at=?,relinquished_ip=? WHERE pool_id=? AND username=?',(relinquished,checkout_client_ip(),pool_id,username))
                 db.execute('DELETE FROM challenges WHERE pool_id=? AND email=?',(pool_id,row['email']))
-                self.event(db,pool_id,username,row['email'],'relinquished' if self_service else 'released_login_disabled',actor,name=row['name'])
-            try:
-                self.revoke_lease(row['lease_id'])
-            except Exception:
-                current_app.logger.warning('Could not close all connections for a released checkout lease')
-            return {'username':username,'released':True}
+                self.event(db,pool_id,username,row['email'],'relinquished' if self_service else 'released_accessforge_disabled',actor,name=row['name'])
+        except CheckoutError as exc:
+            if exc.status==409:
+                raise
+            return {'username':username,'released':False,'error':'Could not save the release. The account remains reserved; retry relinquishing.'}
         except Exception:
-            return {'username':username,'released':False,'error':'Could not disable the login. The account remains reserved; check Proxmox authentication and User.Modify permission, then retry relinquishing.'}
+            return {'username':username,'released':False,'error':'Could not save the release. The account remains reserved; retry relinquishing.'}
+        try:
+            self.revoke_lease(row['lease_id'])
+        except Exception:
+            current_app.logger.warning('Could not close all connections for a released checkout lease')
+        return {'username':username,'released':True}

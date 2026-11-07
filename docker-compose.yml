@@ -62,8 +62,6 @@ services:
       # Local checkout state; the SCE-web plugin sends administrator actions and status requests.
       - ENABLE_ACCOUNT_CHECKOUT=${ENABLE_ACCOUNT_CHECKOUT:-false}
       - CHECKOUT_DATA_DIR=/app/data
-      # Optional scoped token with User.Modify permission for disabling relinquished logins.
-      - CHECKOUT_PROXMOX_API_TOKEN=${CHECKOUT_PROXMOX_API_TOKEN:-}
       # The app is published only on host loopback, behind the supplied Nginx ingress.
       # Nginx overwrites X-Real-IP; include a custom proxy CIDR here if needed.
       - CHECKOUT_TRUSTED_PROXIES=${CHECKOUT_TRUSTED_PROXIES:-127.0.0.1/32,::1/128,172.16.0.0/12}

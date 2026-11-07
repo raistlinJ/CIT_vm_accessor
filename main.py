@@ -618,7 +618,7 @@ TPL_BASE = """
       {% endif %}
     </div>
   </div>
-  {% if checkout_enabled and session.get('pve_user') %}<script src="/static/relinquish-account.js?v=20261105-disabled-logins" defer></script>{% endif %}
+  {% if checkout_enabled and session.get('pve_user') %}<script src="/static/relinquish-account.js?v=20261106-accessforge-only" defer></script>{% endif %}
   <div class="card">
     {% block content %}{% endblock %}
   </div>
