@@ -120,12 +120,12 @@ def smtp_ready():
 
 def send_verification(email, code, project_name):
     if not smtp_ready():
-        raise CheckoutError('Email verification is not configured. Contact your instructor.', 503)
+        raise CheckoutError('Email verification is not configured. Contact an administrator.', 503)
     message = EmailMessage()
     message['From'] = os.environ['CHECKOUT_SMTP_FROM']
     message['To'] = email
-    message['Subject'] = 'Your lab access verification code'
-    message.set_content(f'Your verification code for {project_name} is {code}.\n\nIt expires in 10 minutes. If you did not request lab access, ignore this message.')
+    message['Subject'] = 'Your account verification code'
+    message.set_content(f'Your verification code for {project_name} is {code}.\n\nIt expires in 10 minutes. If you did not request account access, ignore this message.')
     use_ssl = os.environ.get('CHECKOUT_SMTP_SSL', '0') == '1'
     factory = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
     try:
@@ -348,14 +348,14 @@ class CheckoutStore:
             if data.get('secret'):
                 secret = data['secret']
                 if not isinstance(secret, str) or not 8 <= len(secret) <= 256:
-                    raise CheckoutError('Use a lab secret between 8 and 256 characters.')
+                    raise CheckoutError('Use a project secret between 8 and 256 characters.')
                 pool['secret_hash'] = generate_password_hash(secret, method='pbkdf2:sha256')
                 pool['secret_lookup'] = self.digest('class:' + secret)
             if pool['enabled'] and not pool['secret_hash']:
-                raise CheckoutError('Set a lab secret before enabling checkout.')
+                raise CheckoutError('Set a project secret before enabling checkout.')
             other = db.execute('SELECT id FROM pools WHERE secret_lookup=? AND id<>?', (pool.get('secret_lookup'), pool_id)).fetchone()
             if other:
-                raise CheckoutError('That lab secret is already used by another project. Use a different secret for each project.', 409)
+                raise CheckoutError('That project secret is already used by another project. Use a different secret for each project.', 409)
             db.execute('UPDATE pools SET enabled=?,verify_email=?,secret_hash=?,secret_lookup=?,checkout_policy=? WHERE id=?', (pool['enabled'],pool['verify_email'],pool['secret_hash'],pool.get('secret_lookup'),json.dumps(policy),pool_id))
             db.execute('DELETE FROM challenges WHERE pool_id=?', (pool_id,))
             self.event(db, pool_id, None, None, 'configured', actor)
@@ -365,22 +365,22 @@ class CheckoutStore:
         policy=validate_checkout_policy(json.loads(pool['checkout_policy']))
         patterns=policy['allowed_email_patterns']
         if patterns and not any(fnmatchcase(email,pattern) for pattern in patterns):
-            raise CheckoutError('This email address is not allowed for this project. Contact your instructor.',403)
+            raise CheckoutError('This email address is not allowed for this project. Contact an administrator.',403)
         address=client_address(checkout_client_ip())
         networks=policy['allowed_subnets']
         if networks and (address is None or not any(address in ipaddress.ip_network(network) for network in networks)):
-            raise CheckoutError('Checkout is not allowed from this IP network. Contact your instructor.',403)
+            raise CheckoutError('Checkout is not allowed from this IP network. Contact an administrator.',403)
         if not new_checkout:
             return
         limit=policy['subnet_checkout_limit']
         subnet_delay=policy['subnet_delay_seconds']
         if (limit or subnet_delay) and address is None:
-            raise CheckoutError('Could not determine your checkout IP address. Contact your instructor.',403)
+            raise CheckoutError('Could not determine your checkout IP address. Contact an administrator.',403)
         subnet=ipaddress.ip_network((address,policy['ipv4_prefix'] if address.version==4 else policy['ipv6_prefix']),strict=False) if address else None
         if limit:
             assigned=db.execute('SELECT checkout_ip FROM accounts WHERE pool_id=? AND email IS NOT NULL',(pool['id'],))
             if sum(client_address(row['checkout_ip']) in subnet for row in assigned if client_address(row['checkout_ip']) is not None)>=limit:
-                raise CheckoutError('The active checkout limit for your IP subnet has been reached. Contact your instructor.',429)
+                raise CheckoutError('The active checkout limit for your IP subnet has been reached. Contact an administrator.',429)
         now=time.time()
         delay=policy['global_delay_seconds']
         if delay:
@@ -412,7 +412,7 @@ class CheckoutStore:
                 sql += ' AND eligible=1'
             row = db.execute(sql+' ORDER BY username LIMIT 1',args).fetchone()
             if not row:
-                raise CheckoutError('No accounts are available. Contact your instructor.', 409)
+                raise CheckoutError('No accounts are available. Contact an administrator.', 409)
             assigned=time.time()
             db.execute('UPDATE accounts SET email=?,name=?,assigned_at=?,checked_out_at=?,checkout_ip=?,lease_id=?,login_disabled=0,awaiting_checkout=0 WHERE pool_id=? AND username=?', (email,name,assigned,assigned,checkout_client_ip(),secrets.token_urlsafe(24),pool_id,row['username']))
             self.event(db,pool_id,row['username'],email,'assigned',actor)
@@ -493,7 +493,7 @@ class CheckoutStore:
         with self.transaction() as db:
             self.pool(db,pool_id)
             if db.execute('SELECT 1 FROM accounts WHERE pool_id=? AND username=?',(pool_id,user_id(username))).fetchone():
-                raise CheckoutError('The login-management administrator cannot be a student account in this pool.',409)
+                raise CheckoutError('The administrator account cannot be published to this checkout pool.',409)
             db.execute('UPDATE pools SET manager_username=?,manager_password_enc=? WHERE id=?',(username,encrypt_str(password),pool_id))
             self.event(db,pool_id,None,None,'login_manager_saved',username)
 

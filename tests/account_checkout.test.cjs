@@ -29,7 +29,7 @@ function harness(){
   return {el,loginFields,calls,focused:()=>focused};
 }
 
-test('a student can request another project with the same identity while prior credential fields are cleared',async()=>{
+test('a user can request another project with the same identity while prior credential fields are cleared',async()=>{
   const h=harness();h.el('checkout-name').value='Ava Stone';h.el('checkout-email').value='ava@example.edu';h.el('checkout-secret').value='network-secret';
   await h.el('checkout-start').fire('submit');
   assert.equal(h.el('checkout-project').textContent,'Networking');assert.equal(h.el('checkout-username').value,'network01@pve');

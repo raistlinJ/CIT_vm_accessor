@@ -612,13 +612,13 @@ TPL_BASE = """
       {% if session.get('pve_user') %}
         <span class="muted">{{ session.get('pve_user') }}</span> |
         {% if checkout_enabled and session.get('checkout_admin') %}<a href="{{ url_for('home') }}">Connections</a> |{% endif %}
-        {% if checkout_enabled and session.get('checkout_admin') %}<a href="/admin/checkouts">Management</a> |{% endif %}
+        {% if checkout_enabled and session.get('checkout_admin') %}<a href="/admin/checkouts">Checkouts</a> |{% endif %}
         {% if checkout_enabled %}<button type="button" id="relinquish-account" class="btn-danger" hidden style="padding:.25rem .5rem; font-size:.7rem">Relinquish account</button>{% endif %}
         <a href="{{ url_for('logout') }}">Logout</a>
       {% endif %}
     </div>
   </div>
-  {% if checkout_enabled and session.get('pve_user') %}<script src="/static/relinquish-account.js?v=20261106-accessforge-only" defer></script>{% endif %}
+  {% if checkout_enabled and session.get('pve_user') %}<script src="/static/relinquish-account.js?v=20261107-neutral-wording" defer></script>{% endif %}
   <div class="card">
     {% block content %}{% endblock %}
   </div>
@@ -714,9 +714,9 @@ TPL_LOGIN = """
   .login-checkout-arrow { flex:0 0 auto; margin-left:auto; color:var(--accent); font-size:1.5rem; }
   @media (max-width:480px) { .login-checkout-card { gap:.7rem; padding:.9rem .85rem; } .login-checkout-icon { width:2.25rem; height:2.25rem; } }
 </style>
-<a id="login-checkout-link" class="login-checkout-card" href="{{ url_for('account_checkout') }}" aria-label="Get lab access" aria-describedby="login-checkout-description">
+<a id="login-checkout-link" class="login-checkout-card" href="{{ url_for('account_checkout') }}" aria-label="Get access" aria-describedby="login-checkout-description">
   <span class="login-checkout-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4"/><path d="m11 11 9 9m-3-3 3-3m-6 0 3-3"/></svg></span>
-  <span class="login-checkout-copy"><strong>Get lab access</strong><span id="login-checkout-description" class="login-checkout-description">Check out or recover your student account.</span></span>
+  <span class="login-checkout-copy"><strong>Get access</strong><span id="login-checkout-description" class="login-checkout-description">Check out or recover your account.</span></span>
   <span class="login-checkout-arrow" aria-hidden="true">→</span>
 </a>
 {% endif %}
@@ -1139,7 +1139,7 @@ def login():
       raise ValueError("Missing ticket or CSRF token in response.")
     if not checkout_session_current({"pve_user":user_with_realm,"pve_host":host_override,"pve_port":port_override},strict=True,authenticating=True):
       return render_template_string(TPL_LOGIN,host=host_override,port=port_override,realm=realm_override,verify_ssl=verify_override,
-                                    username=username,error="This account is disabled or awaiting checkout. Use Get lab access to claim an On-Demand account, or ask your instructor to enable it."),403
+                                    username=username,error="This account is disabled or awaiting checkout. Use Get access to claim an On-Demand account, or ask an administrator to enable it."),403
     # Persist minimal session state
     session.pop("checkout_admin", None)
     session["pve_user"] = user_with_realm

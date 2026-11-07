@@ -31,9 +31,9 @@
     document.getElementById('admin-enabled').checked=pool.enabled;
     document.getElementById('admin-verify').checked=pool.verify_email;
     renderPolicy(pool.policy);
-    document.getElementById('admin-secret-label').textContent=`Lab secret for ${pool.name}`;
-    const secret=document.getElementById('admin-secret');secret.value='';secret.placeholder=pool.secret_set?'A secret is set for this project; enter a new one to replace it':'Set this project’s lab secret (8+ characters)';
-    document.getElementById('admin-policy-note').textContent=!pool.verify_email?'Verification is off: anyone with the lab secret and an email can retrieve that email’s credentials.':pool.smtp_configured?'Students must verify their email before receiving credentials.':'Configure SMTP on this AccessForge server before verified checkout can be used.';
+    document.getElementById('admin-secret-label').textContent=`Project secret for ${pool.name}`;
+    const secret=document.getElementById('admin-secret');secret.value='';secret.placeholder=pool.secret_set?'A secret is set for this project; enter a new one to replace it':'Set this project’s secret (8+ characters)';
+    document.getElementById('admin-policy-note').textContent=!pool.verify_email?'Verification is off: anyone with the project secret and an email can retrieve that email’s credentials.':pool.smtp_configured?'Users must verify their email before receiving credentials.':'Configure SMTP on this AccessForge server before verified checkout can be used.';
     rows();
   }
   async function refresh(){
@@ -75,8 +75,8 @@
       const usernames=Array.from(root.querySelectorAll('[data-account]:checked'),box=>box.dataset.account);
       if(!usernames.length)throw new Error('Select at least one account.');
       let email;
-      if(action==='assign'){if(usernames.length!==1)throw new Error('Select one account to assign.');email=prompt('Student email address:');if(!email)return;}
-      if((action==='release'||action==='remove')&&!confirm(action==='release'?`Relinquish ${usernames.length} selected account(s)? Students will be signed out and their AccessForge access will be disabled until enabled again.`:`Remove ${usernames.length} unassigned account(s) from this checkout pool?`))return;
+      if(action==='assign'){if(usernames.length!==1)throw new Error('Select one account to assign.');email=prompt('Email address:');if(!email)return;}
+      if((action==='release'||action==='remove')&&!confirm(action==='release'?`Relinquish ${usernames.length} selected account(s)? Users will be signed out and their AccessForge access will be disabled until enabled again.`:`Remove ${usernames.length} unassigned account(s) from this checkout pool?`))return;
       const data=await api('/pools/'+encodeURIComponent(pool.id),'POST',{action,usernames,email});
       await refresh();const errors=(data.results||[]).filter(row=>!row.released);
       const success={enable:'Selected accounts marked On-Demand.',disable:'Selected accounts marked Permanent.',assign:'Account assigned.',release:'Selected accounts relinquished. Their AccessForge access remains disabled.',remove:'Selected accounts removed.'}[action]||'Accounts updated.';

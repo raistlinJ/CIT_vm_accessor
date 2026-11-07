@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="checkout-card" style="width:100%; max-width:32rem; margin:0 auto">
-  <h2>Get lab access</h2>
+  <h2>Get access</h2>
   {% if not enabled %}
-  <p>Account checkout is not configured. Contact your instructor.</p>
+  <p>Account checkout is not configured. Contact an administrator.</p>
   {% else %}
-  <p class="muted">Enter your name, email, and the project’s lab secret from your instructor. You can hold one account per project using the same email. Each account stays assigned until it is relinquished.</p>
+  <p class="muted">Enter your name, email, and the project’s secret from an administrator. You can hold one account per project using the same email. Each account stays assigned until it is relinquished.</p>
   <form id="checkout-start" data-csrf="{{ csrf }}">
     <label for="checkout-name">Name</label>
     <input id="checkout-name" type="text" autocomplete="name" maxlength="120" required>
     <label for="checkout-email">Email</label>
     <input id="checkout-email" type="email" autocomplete="email" maxlength="254" required>
-    <label for="checkout-secret">Project lab secret</label>
+    <label for="checkout-secret">Project secret</label>
     <input id="checkout-secret" type="password" autocomplete="off" minlength="8" maxlength="256" required>
     <button type="submit">Get my account</button>
   </form>
@@ -40,12 +40,12 @@
       <input type="hidden" name="username"><input type="hidden" name="password">
       <input type="hidden" name="host"><input type="hidden" name="port">
       <input type="hidden" name="realm"><input type="hidden" name="verify_ssl">
-      <button type="submit">Open lab</button>
+      <button type="submit">Sign in</button>
     </form>
     <button type="button" id="checkout-another-project" style="margin-top:.75rem">Check out another project</button>
   </section>
   <p id="checkout-feedback" role="status" aria-live="polite" style="overflow-wrap:anywhere"></p>
-  <script src="{{ url_for('static', filename='account-checkout.js') }}?v=20261106-project-checkouts" defer></script>
+  <script src="{{ url_for('static', filename='account-checkout.js') }}?v=20261107-neutral-wording" defer></script>
   {% endif %}
   <p style="margin-top:1.5rem"><a href="{{ url_for('login') }}">Back to sign in</a></p>
 </div>

@@ -28,7 +28,7 @@
       } else if (data.status === 'assigned') {
         start.hidden = true; verify.hidden = true; result.hidden = false;
         document.getElementById('checkout-project').textContent = data.project;
-        document.getElementById('checkout-assignment').textContent = `Assigned to ${data.name?data.name+' ('+data.email+')':data.email}. Return with the same email and this project’s lab secret to recover this account.`;
+        document.getElementById('checkout-assignment').textContent = `Assigned to ${data.name?data.name+' ('+data.email+')':data.email}. Return with the same email and this project’s secret to recover this account.`;
         document.getElementById('checkout-username').value = data.username;
         document.getElementById('checkout-password').value = data.password;
         const login = document.getElementById('checkout-login');
@@ -65,7 +65,7 @@
     document.getElementById('checkout-project').textContent='';document.getElementById('checkout-assignment').textContent='';
     const login=document.getElementById('checkout-login');
     for(const name of ['username','password','host','port','realm','verify_ssl']){const field=login.elements.namedItem(name);if(field)field.value='';}
-    feedback.className='';feedback.textContent=anotherProject?'Your existing account stays reserved. Enter another project’s lab secret to get its account.':'';
+    feedback.className='';feedback.textContent=anotherProject?'Your existing account stays reserved. Enter another project’s secret to get its account.':'';
     document.getElementById(anotherProject?'checkout-secret':'checkout-email').focus();
   }
   document.getElementById('checkout-restart').addEventListener('click',()=>resetCheckout());

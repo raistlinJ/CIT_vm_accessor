@@ -1,4 +1,4 @@
-"""AccessForge-owned student checkout and authenticated administration."""
+"""AccessForge-owned account checkout and authenticated administration."""
 import functools
 import hmac
 import os
@@ -345,7 +345,7 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
             raise CheckoutError('Could not validate your session. Try again later.',502) from None
         result=store.release(row['pool_id'],row['username'],row['username'],self_service=True,expected_lease=lease)
         if not result['released']:
-            raise CheckoutError('Could not relinquish your account. It remains reserved; try again or contact your instructor.',503)
+            raise CheckoutError('Could not relinquish your account. It remains reserved; try again or contact an administrator.',503)
         host=session.get('pve_host')
         ticket=session['pve_ticket']
         revoke=app.extensions.get('checkout_revoke_sessions')
@@ -374,12 +374,12 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
             name=person_name(data.get('name'))
             secret=data.get('secret')
             if not isinstance(secret,str) or not 8<=len(secret)<=256:
-                raise CheckoutError('Invalid lab secret.',403)
+                raise CheckoutError('Invalid project secret.',403)
             with store.transaction() as db:
                 pool=db.execute('SELECT * FROM pools WHERE enabled=1 AND secret_lookup=?',(store.digest('class:'+secret),)).fetchone()
                 from werkzeug.security import check_password_hash
                 if not pool or not check_password_hash(pool['secret_hash'],secret):
-                    raise CheckoutError('Invalid lab secret or checkout is closed.',403)
+                    raise CheckoutError('Invalid project secret or checkout is closed.',403)
                 existing=db.execute('SELECT 1 FROM accounts WHERE pool_id=? AND email=?',(pool['id'],email)).fetchone()
                 store.check_policy(db,pool,email,new_checkout=not existing)
                 if not pool['verify_email']:

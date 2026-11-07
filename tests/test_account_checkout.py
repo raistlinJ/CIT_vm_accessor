@@ -628,11 +628,11 @@ def test_management_link_is_available_immediately_after_verified_admin_login(che
     with checkout.session_transaction() as session:
         assert bool(session.get('checkout_admin')) is visible
     page=checkout.get('/checkout')
-    assert (b'<a href="/admin/checkouts">Management</a>' in page.data) is visible
+    assert (b'<a href="/admin/checkouts">Checkouts</a>' in page.data) is visible
     assert (b'<a href="/">Connections</a>' in page.data) is visible
-    assert b'<a href="/checkout">Get lab access</a>' not in page.data
+    assert b'<a href="/checkout">Get access</a>' not in page.data
     if visible:
-        assert page.data.index(b'>Connections</a>') < page.data.index(b'>Management</a>')
+        assert page.data.index(b'>Connections</a>') < page.data.index(b'>Checkouts</a>')
     assert b'Manage account checkouts' not in page.data
 
 
@@ -666,7 +666,7 @@ def test_home_backfills_admin_navigation_for_existing_sessions_and_clears_revoke
         with patch.object(main,'proxmox_get',side_effect=[reply([]),reply(permissions)]):
             response=checkout.get('/')
         assert response.status_code==200
-        assert (b'<a href="/admin/checkouts">Management</a>' in response.data) is visible
+        assert (b'<a href="/admin/checkouts">Checkouts</a>' in response.data) is visible
         assert (b'<a href="/">Connections</a>' in response.data) is visible
 
 
