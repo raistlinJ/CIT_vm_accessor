@@ -461,6 +461,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 expect(page.locator("#console-controls")).to_be_hidden()
                 expect(page.locator("#clipboard-panel")).to_be_visible()
                 expect(page.locator("#clipboard-send")).to_be_visible()
+                expect(page.locator("#clipboard-auto-controls")).to_be_visible()
                 assert page.locator("#spice-area").bounding_box() == full_bounds
                 page.get_by_role("button", name="Pin", exact=True).click()
                 expect(page.locator("#clipboard-pin")).to_have_attribute("aria-pressed", "true")
@@ -538,6 +539,8 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     page.get_by_text("Auto-send to VM", exact=True).click()
                     expect(page.locator("#clipboard-auto-to")).not_to_be_checked()
                     expect(page.locator("#clipboard-status")).to_contain_text("Auto-send to VM paused")
+                    expect(page.locator("#clipboard-access-help")).to_have_attribute("open", "")
+                    expect(page.locator("#clipboard-access-message")).to_contain_text("Site settings → Clipboard → Allow")
                     page.get_by_text("Auto-copy from VM", exact=True).click()
                     expect(page.locator("#clipboard-auto-from")).not_to_be_checked()
                     expect(page.locator("#clipboard-status")).to_contain_text("Auto-copy from VM paused")
@@ -607,7 +610,20 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 expect(page.locator("#controls-toggle")).to_have_attribute("data-error", "true")
                 expect(page.locator("#display-notice")).to_be_hidden()
                 vm_state["status"] = "stopped"
+                # Safari exposes readText/writeText but cannot grant persistent
+                # access. Explain this before users try automatic sharing.
+                page.add_init_script("Object.defineProperty(navigator, 'userAgent', {value: 'Mozilla/5.0 Version/18.0 Safari/605.1.15'})")
                 page.reload()
+                page.locator("#clipboard-toggle").click()
+                expect(page.locator("#clipboard-access-help")).to_have_attribute("open", "")
+                expect(page.locator("#clipboard-access-message")).to_contain_text("Safari")
+                expect(page.locator("#clipboard-access-message")).to_contain_text("no always-allow clipboard setting")
+                expect(page.locator("#clipboard-auto-controls")).to_be_hidden()
+                expect(page.get_by_role("switch", name="Auto-send to VM", exact=True)).to_have_count(0)
+                expect(page.get_by_role("switch", name="Auto-copy from VM", exact=True)).to_have_count(0)
+                expect(page.get_by_role("button", name="Paste from computer", exact=True)).to_be_visible()
+                expect(page.get_by_role("button", name="Copy from VM", exact=True)).to_be_visible()
+                page.get_by_role("button", name="Close clipboard", exact=True).click()
                 expect(page.locator("#display-notice")).to_have_text(
                     "This machine is off. Click Start VM in the controls drawer to start it.")
                 expect(page.locator("#display-notice")).to_be_visible()
@@ -638,6 +654,8 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.locator("#power-status")).to_have_text(status_text, timeout=10000)
                     expect(page.locator("canvas")).to_be_visible(timeout=15000)
                     expect(page.locator("#status")).to_contain_text("Connected")
+                    expect(page.locator("#clipboard-auto-to")).to_be_disabled()
+                    expect(page.locator("#clipboard-auto-from")).to_be_disabled()
                     expect(page.locator("#display-notice")).to_be_hidden()
                     expect(page.locator("#controls-alert")).to_be_hidden()
                     assert len(authenticated_channels) >= channel_count + 3

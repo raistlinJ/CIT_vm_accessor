@@ -1,6 +1,6 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
 import { ClipboardSpiceConnection } from './spice-clipboard.js';
-import { ClipboardSync } from './spice-clipboard-sync.js';
+import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
 import { WheelAccumulator } from './spice-scroll.js';
@@ -101,6 +101,15 @@ const clipboardPin = document.getElementById('clipboard-pin');
 const clipboardClose = document.getElementById('clipboard-close');
 const clipboardAutoTo = document.getElementById('clipboard-auto-to');
 const clipboardAutoFrom = document.getElementById('clipboard-auto-from');
+const clipboardAccessDetails = document.getElementById('clipboard-access-help');
+const clipboardAccess = clipboardAccessHelp({
+  userAgent: navigator.userAgent, secure: window.isSecureContext,
+  readable: Boolean(navigator.clipboard?.readText), writable: Boolean(navigator.clipboard?.writeText),
+});
+document.getElementById('clipboard-access-message').textContent = clipboardAccess.message;
+document.getElementById('clipboard-access-link').href = clipboardAccess.url;
+clipboardAccessDetails.open = !clipboardAccess.automaticSupported;
+document.getElementById('clipboard-auto-controls').hidden = !clipboardAccess.automaticSupported;
 const filePanel = document.getElementById('file-panel');
 const fileDisabled = document.getElementById('file-disabled');
 const clipboardSend = document.getElementById('clipboard-send');
@@ -153,7 +162,9 @@ const clipboardSync = new ClipboardSync({
     (direction === 'to' ? clipboardAutoTo : clipboardAutoFrom).checked = false;
     updateClipboardSyncTimer();
     const action = direction === 'to' ? 'Auto-send to VM' : 'Auto-copy from VM';
-    const reason = error.name === 'NotAllowedError' ? 'Browser clipboard permission is blocked.' : error.message;
+    const denied = error.name === 'NotAllowedError';
+    const reason = denied ? 'Browser clipboard access was denied. See Clipboard access below for setup instructions.' : error.message;
+    if (denied) clipboardAccessDetails.open = true;
     showClipboardStatus(`${action} paused. ${reason} Use the manual clipboard controls or enable it again to retry.`, true);
   },
 });
@@ -593,7 +604,7 @@ async function connect() {
       onclipboardstate(ready) {
         if (attempt !== generation) return;
         clipboardSendButton.disabled = !ready;
-        clipboardAutoTo.disabled = clipboardAutoFrom.disabled = !ready;
+        clipboardAutoTo.disabled = clipboardAutoFrom.disabled = !ready || !clipboardAccess.automaticSupported;
         if (!ready) {
           clipboardSync.reset();
           clipboardAutoTo.checked = clipboardAutoFrom.checked = false;

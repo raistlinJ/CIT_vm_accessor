@@ -1,5 +1,34 @@
 // Optional text clipboard synchronization. Browser access stays in the caller,
 // allowing permission failures and delayed reads to be tested without OS access.
+export function clipboardAccessHelp({ userAgent, secure, readable, writable }) {
+  const docs = 'https://developer.mozilla.org/en-US/docs/Web/API/Clipboard_API#security_considerations';
+  if (!secure) return {
+    automaticSupported: false,
+    message: 'Open this console using HTTPS to enable browser clipboard access. You can still paste or copy manually in the text boxes.',
+    url: docs,
+  };
+  if (/Firefox|FxiOS/.test(userAgent)) return {
+    automaticSupported: false,
+    message: 'Firefox requires a user action for clipboard access and has no always-allow clipboard setting. Use Paste from computer, then Send to VM, or Copy from VM. For automatic sharing, open this console in Chrome or Edge.',
+    url: docs,
+  };
+  if (/Safari/.test(userAgent) && !/Chrome|Chromium|CriOS|Edg|OPR/.test(userAgent)) return {
+    automaticSupported: false,
+    message: 'Safari requires a user action for clipboard access and has no always-allow clipboard setting. Use Paste from computer, then Send to VM, or Copy from VM. For automatic sharing, open this console in Chrome or Edge.',
+    url: docs,
+  };
+  if (!readable || !writable) return {
+    automaticSupported: false,
+    message: 'Browser clipboard access is unavailable here. Paste or copy manually in the text boxes, or open the console directly in Chrome or Edge over HTTPS.',
+    url: docs,
+  };
+  return {
+    automaticSupported: true,
+    message: 'In Chrome, click the site information icon beside the web address → Site settings → Clipboard → Allow. Reload this console, then turn automatic sharing back on. If this popup hides the address bar, change the permission from the main AccessForge tab on the same site. In an embedded view, open the console in its own window.',
+    url: 'https://support.google.com/chrome/answer/114662?hl=en',
+  };
+}
+
 export class ClipboardSync {
   constructor({ readText, writeText, offerText, isActive, onSend, onCopy, onError }) {
     Object.assign(this, { readText, writeText, offerText, isActive, onSend, onCopy, onError });

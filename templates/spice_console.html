@@ -90,11 +90,16 @@
         <button id="clipboard-pin" type="button" aria-pressed="false" title="Pin clipboard and fit the VM beside it">Pin</button>
         <button id="clipboard-close" type="button" aria-label="Close clipboard" title="Close clipboard">×</button>
       </header>
-      <div class="clipboard-auto">
+      <div id="clipboard-auto-controls" class="clipboard-auto" hidden>
         <label class="clipboard-switch"><span>Auto-send to VM</span><input id="clipboard-auto-to" type="checkbox" role="switch" disabled><span class="switch-track" aria-hidden="true"></span></label>
         <label class="clipboard-switch"><span>Auto-copy from VM</span><input id="clipboard-auto-from" type="checkbox" role="switch" disabled><span class="switch-track" aria-hidden="true"></span></label>
       </div>
       <p id="clipboard-status" role="status" aria-live="polite">Clipboard sharing requires a connected SPICE guest agent.</p>
+      <details id="clipboard-access-help">
+        <summary>Clipboard access</summary>
+        <p id="clipboard-access-message"></p>
+        <a id="clipboard-access-link" target="_blank" rel="noopener noreferrer">Browser instructions ↗</a>
+      </details>
       <div class="clipboard-columns">
         <div>
           <label for="clipboard-send">Text to send to the VM</label>

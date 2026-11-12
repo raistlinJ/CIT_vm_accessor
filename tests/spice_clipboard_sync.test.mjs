@@ -1,6 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ClipboardSync } from '../static/spice-clipboard-sync.js';
+import { ClipboardSync, clipboardAccessHelp } from '../static/spice-clipboard-sync.js';
+
+test('explains Safari and Firefox restrictions instead of offering unsupported automatic sharing', () => {
+  for (const userAgent of ['Mozilla/5.0 Version/18.0 Safari/605.1.15', 'Mozilla/5.0 Firefox/140.0']) {
+    const result = clipboardAccessHelp({ userAgent, secure: true, readable: true, writable: true });
+    assert.equal(result.automaticSupported, false);
+    assert.match(result.message, /no always-allow clipboard setting/);
+    assert.match(result.message, /Paste from computer/);
+    assert.match(result.message, /Chrome or Edge/);
+  }
+});
+
+test('provides Chrome settings instructions and distinguishes HTTPS or missing API problems', () => {
+  const options = { userAgent: 'Mozilla/5.0 Chrome/140.0 Safari/537.36', secure: true, readable: true, writable: true };
+  const chrome = clipboardAccessHelp(options);
+  assert.equal(chrome.automaticSupported, true);
+  assert.match(chrome.message, /Site settings → Clipboard → Allow/);
+  assert.match(chrome.message, /popup hides the address bar/);
+  assert.match(chrome.url, /support.google.com/);
+  const insecure = clipboardAccessHelp({ ...options, secure: false });
+  assert.equal(insecure.automaticSupported, false);
+  assert.match(insecure.message, /HTTPS/);
+  const missing = clipboardAccessHelp({ ...options, readable: false });
+  assert.equal(missing.automaticSupported, false);
+  assert.match(missing.message, /unavailable/);
+});
 
 function deferred() {
   let resolve, reject;
