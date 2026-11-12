@@ -259,6 +259,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     writeText: async text => {
                       if (clipboardTest.denied) throw new DOMException('Denied', 'NotAllowedError');
                       clipboardTest.writes.push(text);
+                      clipboardTest.text = text;
                     }
                   }});
                 })();""")
@@ -453,13 +454,50 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 if agent_enabled:
                     while received_resizes.get(timeout=5) != expanded_size:
                         pass
-                page.get_by_role("button", name="Open console controls").click()
+                # Clipboard is independent of the console controls. Floating
+                # leaves the display alone; pinning reserves usable space.
+                full_bounds = page.locator("#spice-area").bounding_box()
+                page.get_by_role("button", name="Open clipboard", exact=True).click()
+                expect(page.locator("#console-controls")).to_be_hidden()
                 expect(page.locator("#clipboard-panel")).to_be_visible()
-                expect(page.locator("#clipboard-panel > summary")).to_have_text("Clipboard")
-                expect(page.locator("#clipboard-send")).to_be_hidden()
-                page.locator("#clipboard-panel > summary").click()
                 expect(page.locator("#clipboard-send")).to_be_visible()
+                assert page.locator("#spice-area").bounding_box() == full_bounds
+                page.get_by_role("button", name="Pin", exact=True).click()
+                expect(page.locator("#clipboard-pin")).to_have_attribute("aria-pressed", "true")
+                page.wait_for_function("""() => {
+                  const display = document.querySelector('#spice-area').getBoundingClientRect();
+                  const panel = document.querySelector('#clipboard-panel').getBoundingClientRect();
+                  return display.right <= panel.left && display.width < innerWidth;
+                }""")
                 page.wait_for_function(fitted)
+                if agent_enabled:
+                    pinned_size = tuple(page.locator("#spice-area").evaluate("""e => [
+                      Math.max(320, Math.floor(e.clientWidth / 8) * 8),
+                      Math.max(200, Math.floor(e.clientHeight / 8) * 8)
+                    ]"""))
+                    while received_resizes.get(timeout=5) != pinned_size:
+                        pass
+                page.screenshot(path=str(tmp_path / "clipboard-pinned.png"))
+                page.set_viewport_size({"width": 420, "height": 360})
+                page.wait_for_function("""() => {
+                  const display = document.querySelector('#spice-area').getBoundingClientRect();
+                  const panel = document.querySelector('#clipboard-panel').getBoundingClientRect();
+                  const canvas = document.querySelector('canvas').getBoundingClientRect();
+                  return display.bottom <= panel.top && display.height > 100 &&
+                    panel.height > 100 && canvas.bottom <= display.bottom + 1;
+                }""")
+                page.screenshot(path=str(tmp_path / "clipboard-pinned-small.png"))
+                page.set_viewport_size({"width": 1100, "height": 760})
+                page.get_by_role("button", name="Unpin", exact=True).click()
+                assert page.locator("#spice-area").bounding_box() == full_bounds
+                page.get_by_role("button", name="Close clipboard", exact=True).click()
+                expect(page.get_by_role("button", name="Open clipboard", exact=True)).to_be_focused()
+                page.get_by_role("button", name="Open console controls").click()
+                page.get_by_role("button", name="Clipboard", exact=True).click()
+                expect(page.locator("#console-controls")).to_be_hidden()
+                expect(page.locator("#clipboard-panel")).to_be_visible()
+                expect(page.locator("#clipboard-auto-to")).not_to_be_checked()
+                expect(page.locator("#clipboard-auto-from")).not_to_be_checked()
                 if agent_enabled:
                     expect(page.locator("#clipboard-send-button")).to_be_enabled()
                     expect(page.locator("#clipboard-receive")).to_have_value(guest_text)
@@ -473,6 +511,36 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.locator("#clipboard-send")).to_have_value(host_text)
                     page.get_by_role("button", name="Send to VM", exact=True).click()
                     assert received_clipboards.get(timeout=5) == host_text
+
+                    # Independently enabled automatic sharing works with the
+                    # panel closed, without echoing guest writes back to VM.
+                    page.evaluate("clipboardTest.text = 'auto host ✓'")
+                    page.get_by_role("switch", name="Auto-send to VM", exact=True).check()
+                    assert received_clipboards.get(timeout=5) == "auto host ✓"
+                    expect(page.locator("#clipboard-receive")).to_have_value(guest_text)
+                    writes_before_auto = page.evaluate("clipboardTest.writes.length")
+                    page.get_by_role("switch", name="Auto-copy from VM", exact=True).check()
+                    page.wait_for_function("count => clipboardTest.writes.length > count", arg=writes_before_auto)
+                    assert page.evaluate("clipboardTest.text") == guest_text
+                    page.get_by_role("button", name="Close clipboard", exact=True).click()
+                    page.evaluate("clipboardTest.text = 'changed while closed'")
+                    assert received_clipboards.get(timeout=5) == "changed while closed"
+                    page.wait_for_function("text => clipboardTest.text === text", arg=guest_text)
+                    with pytest.raises(queue.Empty):
+                        received_clipboards.get(timeout=1)
+                    page.get_by_role("button", name="Open clipboard", exact=True).click()
+                    page.get_by_role("switch", name="Auto-send to VM", exact=True).uncheck()
+                    page.get_by_role("switch", name="Auto-copy from VM", exact=True).uncheck()
+
+                    # A blocked automatic direction switches off and leaves
+                    # manual controls available, rather than retrying prompts.
+                    page.evaluate("clipboardTest.denied = true")
+                    page.get_by_text("Auto-send to VM", exact=True).click()
+                    expect(page.locator("#clipboard-auto-to")).not_to_be_checked()
+                    expect(page.locator("#clipboard-status")).to_contain_text("Auto-send to VM paused")
+                    page.get_by_text("Auto-copy from VM", exact=True).click()
+                    expect(page.locator("#clipboard-auto-from")).not_to_be_checked()
+                    expect(page.locator("#clipboard-status")).to_contain_text("Auto-copy from VM paused")
 
                     # Denied API access still allows manual paste/copy via text areas.
                     page.evaluate("clipboardTest.denied = true")
@@ -494,15 +562,17 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     page.get_by_role("button", name="Send to VM", exact=True).click()
                     expect(page.locator("#clipboard-status")).to_contain_text("limited to 1 MiB")
                     expect(page.locator("#clipboard-panel")).to_have_attribute("data-error", "true")
-                    expect(page.locator("#clipboard-panel > summary")).to_have_attribute(
-                        "aria-label", "Clipboard — attention needed")
-                    page.locator("#clipboard-panel > summary").click()
+                    page.get_by_role("button", name="Close clipboard", exact=True).click()
+                    expect(page.locator("#clipboard-toggle")).to_have_attribute(
+                        "aria-label", "Open clipboard — attention needed")
                     expect(page.locator("#clipboard-status")).to_be_hidden()
-                    page.locator("#clipboard-panel > summary").click()
+                    page.locator("#clipboard-toggle").click()
                     page.locator("#clipboard-send").fill("draft cleared on disconnect")
                 else:
                     expect(page.locator("#clipboard-send-button")).to_be_disabled()
                     expect(page.locator("#clipboard-copy")).to_be_disabled()
+                    expect(page.locator("#clipboard-auto-to")).to_be_disabled()
+                    expect(page.locator("#clipboard-auto-from")).to_be_disabled()
                     expect(page.locator("#clipboard-status")).to_contain_text("SPICE guest agent")
                 page.screenshot(path=str(tmp_path / "spice-connected.png"))
                 if agent_enabled:
@@ -511,13 +581,18 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.locator("canvas").evaluate("c => c.sc.ws.close()")
                 expect(page.locator("#status")).to_contain_text("Connection lost")
                 expect(page.locator("canvas")).to_have_count(0)
-                expect(page.get_by_role("button", name="Take screenshot", exact=True)).to_be_disabled()
+                expect(page.locator("#take-screenshot")).to_be_disabled()
                 expect(page.locator("#clipboard-send")).to_have_value("")
                 expect(page.locator("#clipboard-receive")).to_have_value("")
                 expect(page.locator("#clipboard-copy")).to_be_disabled()
+                expect(page.locator("#clipboard-auto-to")).not_to_be_checked()
+                expect(page.locator("#clipboard-auto-from")).not_to_be_checked()
+                expect(page.locator("#clipboard-auto-to")).to_be_disabled()
                 if agent_enabled:
                     page.evaluate("clipboardTest.resolve('late clipboard value')")
                     expect(page.locator("#clipboard-send")).to_have_value("")
+                page.get_by_role("button", name="Close clipboard", exact=True).click()
+                page.get_by_role("button", name="Open console controls").click()
                 page.get_by_role("button", name="Re-Fit Window", exact=True).click()
                 expect(page.locator("canvas")).to_be_visible(timeout=15000)
                 expect(page.locator("#controls-alert")).to_be_hidden()

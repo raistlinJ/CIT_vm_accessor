@@ -7,7 +7,7 @@ AccessForge signs into the Proxmox VE API and opens browser consoles across your
 - Proxmox login and VM listing, grouped by scenario
 - Materials links grouped into category dropdowns with each project's VMs
 - Browser SPICE with Re-Fit Window, Ctrl+Alt+Del, and a noVNC fallback
-- Clipboard panel for two-way text transfer, including browsers that deny clipboard permission
+- Pinnable clipboard popout with independent automatic text sharing in each direction and manual transfer controls
 - Optional browser-to-VM uploads and VM-to-browser downloads
 - Container xterm.js consoles
 - Cluster-aware SPICE routing; reconnect resolves the VM's current node
@@ -104,7 +104,7 @@ The server requests `/nodes/{node}/qemu/{vmid}/spiceproxy` with the signed-in us
 
 The bridge verifies the VM server's certificate chain and exact subject using the API-provided cluster CA, even if API `VERIFY_SSL` is disabled. Grants accept new channels for 25 seconds, before Proxmox's 30-second password expiry. AccessForge imposes no fixed login or established-channel age limit. Existing channels stay connected until disconnect or explicit logout. The reverse proxy retains its 60-minute transport inactivity timeouts; these measure gaps in network traffic, not keyboard/mouse inactivity, and WebSocket keepalive traffic normally prevents them on healthy connections. Proxmox still controls its own ticket validity, so API actions and reconnects may require signing in again if the upstream ticket expires; AccessForge does not renew tickets automatically. **Re-Fit Window** obtains fresh SPICE credentials and resolves the VM's current node. Seamless live migration is not supported; use **Re-Fit Window** after migration if the session drops.
 
-The vendored client is pinned in `static/vendor/spice-html5/UPSTREAM.md`; assets are served locally without a CDN. Console controls are tucked into a drawer, opened with the tab on the left edge. The drawer overlays the display without changing the guest resolution; close it with the tab or press Escape while focused inside it. Connection, power-action, and clipboard errors turn the drawer tab red and add an exclamation badge; open the drawer for details. The badge clears when the reported problems are resolved. The display automatically fits inside the popup while preserving its aspect ratio, including when the guest agent cannot resize the desktop. With an agent connected, AccessForge requests a matching guest resolution when the browser window changes. **Re-Fit Window** reconnects the SPICE session, recalculates the fit, and requests a matching guest resolution. Browser SPICE has upstream feature limits, including multiple displays, USB redirection, and some graphics/video formats; it is not guaranteed to match native-client performance. Keep noVNC available while evaluating your workloads.
+The vendored client is pinned in `static/vendor/spice-html5/UPSTREAM.md`; assets are served locally without a CDN. Console controls are tucked into a drawer, opened with the thin bump centered on the left edge of the window. The drawer overlays the display without changing the guest resolution; close it with the bump or press Escape while focused inside it. Connection, power-action, and clipboard errors turn the bump red and add an exclamation badge; open the drawer for details. The badge clears when the reported problems are resolved. The display automatically fits inside the popup while preserving its aspect ratio, including when the guest agent cannot resize the desktop. With an agent connected, AccessForge requests a matching guest resolution when the browser window changes. **Re-Fit Window** reconnects the SPICE session, recalculates the fit, and requests a matching guest resolution. Browser SPICE has upstream feature limits, including multiple displays, USB redirection, and some graphics/video formats; it is not guaranteed to match native-client performance. Keep noVNC available while evaluating your workloads.
 
 ## VM power controls
 
@@ -120,13 +120,14 @@ Use **Take screenshot** in the controls drawer to download a PNG of the VM displ
 
 ## Clipboard
 
-Open the collapsible **Clipboard** section in the left-edge controls drawer to share text. Sharing requires a running SPICE guest agent inside the VM; users do not install anything on their own computers.
+Open **Clipboard** with the tab centered on the right edge, or the Clipboard button in console controls. The popout works independently of the controls drawer. **Pin** keeps it beside the VM and refits the display into the remaining space; on narrow windows it docks below the display. The pin preference is remembered in this browser. Closing the panel restores the display space; reopening restores its pinned layout. Sharing requires a running SPICE guest agent inside the VM; users do not install anything on their own computers.
 
 - **Computer → VM:** paste into the outgoing text box, or click **Paste from computer**, then **Send to VM**. Paste normally inside the guest application. Sending sets the guest clipboard; it does not simulate typing or automatically paste into the focused application.
 - **VM → computer:** copy text inside the VM. It appears in the incoming text box. Click **Copy from VM**, or select the text and copy it manually.
 - If browser clipboard access is blocked or unavailable, the text boxes still work with normal copy/paste shortcuts. API access generally requires HTTPS and may require browser permission; embedded views can impose additional restrictions.
 - Transfers support UTF-8 text, including multiple lines, up to **1 MiB**. Images and files are not supported by this clipboard panel. Large text is reassembled across agent packets.
-- Sharing is explicit: focusing the VM never reads or overwrites the computer's clipboard. Guest copies update only the incoming text box until the user clicks **Copy from VM**. Clipboard text is held in the console's memory, cleared on disconnect/reconnect, and is not saved to browser storage or logged by AccessForge.
+- **Auto-send to VM** shares changes from your computer clipboard while the console window is active. **Auto-copy from VM** copies guest text to your computer clipboard while the window is active, or on return to it. Both switches are independent, off by default, work with the popout closed, and turn off on disconnect/reconnect or guest-agent loss. Automatic sharing updates clipboards; paste normally in the destination application.
+- Automatic sharing requires browser clipboard permission and HTTPS (or localhost). If access is denied or unavailable, the affected switch turns off with an explanation; manual controls remain available. Without automatic sharing enabled, focusing the VM never reads or overwrites the computer clipboard. Clipboard text is held in console memory, cleared on disconnect/reconnect, and is not saved to browser storage or logged by AccessForge.
 - If **Send to VM** stays disabled, verify the VM's SPICE agent is connected and supports clipboard sharing. No Proxmox host configuration is changed by this feature.
 
 ## Material categories
@@ -328,7 +329,7 @@ Set `PLAYWRIGHT_BROWSER=firefox` or `PLAYWRIGHT_BROWSER=webkit` to run the same 
 Protocol edge cases (message fragmentation, selection handling, size limits, and agent disconnects) can also be tested without a browser:
 
 ```bash
-node --test tests/spice_clipboard.test.mjs
+node --test tests/spice_clipboard.test.mjs tests/spice_clipboard_sync.test.mjs
 ```
 
 ## License

@@ -1,5 +1,6 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
 import { ClipboardSpiceConnection } from './spice-clipboard.js';
+import { ClipboardSync } from './spice-clipboard-sync.js';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
 import { WheelAccumulator } from './spice-scroll.js';
@@ -95,6 +96,11 @@ const keys = document.getElementById('ctrl-alt-del');
 const fallback = document.getElementById('fallback');
 const clipboardStatus = document.getElementById('clipboard-status');
 const clipboardPanel = document.getElementById('clipboard-panel');
+const clipboardToggle = document.getElementById('clipboard-toggle');
+const clipboardPin = document.getElementById('clipboard-pin');
+const clipboardClose = document.getElementById('clipboard-close');
+const clipboardAutoTo = document.getElementById('clipboard-auto-to');
+const clipboardAutoFrom = document.getElementById('clipboard-auto-from');
 const filePanel = document.getElementById('file-panel');
 const fileDisabled = document.getElementById('file-disabled');
 const clipboardSend = document.getElementById('clipboard-send');
@@ -125,6 +131,92 @@ let powerCooldownUntil = 0;
 let powerCooldownTimer;
 let pendingPowerAction = null;
 let fileDownloadController = null;
+let clipboardSyncTimer;
+
+const clipboardSync = new ClipboardSync({
+  readText: () => {
+    if (!navigator.clipboard?.readText) throw new Error('Browser clipboard access is unavailable.');
+    return navigator.clipboard.readText();
+  },
+  writeText: text => {
+    if (!navigator.clipboard?.writeText) throw new Error('Browser clipboard access is unavailable.');
+    return navigator.clipboard.writeText(text);
+  },
+  offerText: text => connection.offerClipboard(text),
+  isActive: () => Boolean(connection?.clipboardReady && document.hasFocus() && !document.hidden),
+  onSend(text) {
+    clipboardSend.value = text;
+    showClipboardStatus('Computer clipboard sent to VM. Paste inside the VM.');
+  },
+  onCopy() { showClipboardStatus('VM clipboard copied to your computer.'); },
+  onError(direction, error) {
+    (direction === 'to' ? clipboardAutoTo : clipboardAutoFrom).checked = false;
+    updateClipboardSyncTimer();
+    const action = direction === 'to' ? 'Auto-send to VM' : 'Auto-copy from VM';
+    const reason = error.name === 'NotAllowedError' ? 'Browser clipboard permission is blocked.' : error.message;
+    showClipboardStatus(`${action} paused. ${reason} Use the manual clipboard controls or enable it again to retry.`, true);
+  },
+});
+
+function updateClipboardSyncTimer() {
+  clearInterval(clipboardSyncTimer);
+  if (clipboardAutoTo.checked) clipboardSyncTimer = setInterval(() => clipboardSync.poll(), 750);
+}
+
+function setClipboardOpen(open) {
+  clipboardPanel.hidden = !open;
+  clipboardToggle.hidden = open;
+  clipboardToggle.setAttribute('aria-expanded', String(open));
+  resize();
+}
+
+function setClipboardPinned(pinned) {
+  clipboardPanel.dataset.pinned = String(pinned);
+  clipboardPin.setAttribute('aria-pressed', String(pinned));
+  clipboardPin.textContent = pinned ? 'Unpin' : 'Pin';
+  clipboardPin.title = pinned ? 'Unpin clipboard' : 'Pin clipboard and fit the VM beside it';
+  try { localStorage.setItem('spice-clipboard-pinned', String(pinned)); } catch { }
+  resize();
+}
+
+clipboardToggle.addEventListener('click', () => setClipboardOpen(true));
+document.getElementById('open-clipboard').addEventListener('click', () => {
+  setControlsOpen(false);
+  setClipboardOpen(true);
+  clipboardPin.focus();
+});
+clipboardPin.addEventListener('click', () => setClipboardPinned(clipboardPanel.dataset.pinned !== 'true'));
+clipboardClose.addEventListener('click', () => {
+  setClipboardOpen(false);
+  clipboardToggle.focus();
+});
+clipboardPanel.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    setClipboardOpen(false);
+    clipboardToggle.focus();
+  }
+});
+clipboardAutoTo.addEventListener('change', () => {
+  clipboardSync.setToVM(clipboardAutoTo.checked);
+  updateClipboardSyncTimer();
+});
+clipboardAutoFrom.addEventListener('change', () => clipboardSync.setFromVM(clipboardAutoFrom.checked));
+function resumeClipboardSync() {
+  // Flush a guest copy first so a stale computer clipboard cannot replace it.
+  void clipboardSync.copyGuest();
+  void clipboardSync.poll();
+}
+window.addEventListener('focus', resumeClipboardSync);
+document.addEventListener('visibilitychange', resumeClipboardSync);
+screen.addEventListener('pointerdown', resumeClipboardSync, { capture: true });
+try {
+  if (localStorage.getItem('spice-clipboard-pinned') === 'true') {
+    setClipboardPinned(true);
+    setClipboardOpen(true);
+  }
+} catch { }
 
 function showFileStatus(element, message, error = false) {
   if (!element) return;
@@ -315,7 +407,6 @@ function setControlsOpen(open) {
   consoleControls.hidden = !open;
   controlsDrawer.dataset.open = String(open);
   controlsToggle.setAttribute('aria-expanded', String(open));
-  controlsToggle.firstElementChild.textContent = open ? '‹' : '☰';
   updateDrawerIndicator();
 }
 
@@ -323,8 +414,9 @@ function updateDrawerIndicator() {
   const clipboardError = clipboardStatus.dataset.error === 'true';
   const fileError = [fileUploadStatus, fileDownloadStatus].some(element => element?.dataset.error === 'true');
   clipboardPanel.dataset.error = String(clipboardError);
-  clipboardPanel.querySelector('summary').setAttribute('aria-label',
-    `Clipboard${clipboardError ? ' — attention needed' : ''}`);
+  clipboardToggle.dataset.error = String(clipboardError);
+  clipboardToggle.setAttribute('aria-label', `Open clipboard${clipboardError ? ' — attention needed' : ''}`);
+  clipboardToggle.title = clipboardToggle.getAttribute('aria-label');
   if (filePanel) {
     filePanel.dataset.error = String(fileError);
     filePanel.querySelector('summary').setAttribute('aria-label',
@@ -365,6 +457,10 @@ function showStatus(message, error = false, code = '') {
 
 function stop() {
   generation++;
+  clipboardSync.reset();
+  clipboardAutoTo.checked = clipboardAutoFrom.checked = false;
+  clipboardAutoTo.disabled = clipboardAutoFrom.disabled = true;
+  updateClipboardSyncTimer();
   pending?.abort();
   pending = null;
   clearTimeout(resizeTimer);
@@ -497,6 +593,12 @@ async function connect() {
       onclipboardstate(ready) {
         if (attempt !== generation) return;
         clipboardSendButton.disabled = !ready;
+        clipboardAutoTo.disabled = clipboardAutoFrom.disabled = !ready;
+        if (!ready) {
+          clipboardSync.reset();
+          clipboardAutoTo.checked = clipboardAutoFrom.checked = false;
+          updateClipboardSyncTimer();
+        }
         if (fileUpload) fileUpload.disabled = !uploadAllowed || !connection?.agent_connected;
         showClipboardStatus(ready ? 'Clipboard ready. Send text to the VM or copy text inside it.' :
           'Clipboard sharing requires a connected SPICE guest agent.');
@@ -507,6 +609,7 @@ async function connect() {
         clipboardReceive.value = text ?? '';
         clipboardCopy.disabled = text === null;
         if (text !== null) showClipboardStatus('VM text received. Click Copy from VM or select and copy it below.');
+        void clipboardSync.receiveGuest(text);
       },
       onfiletransfer(name, error) {
         if (attempt !== generation) return;
@@ -639,6 +742,7 @@ clipboardSendButton.addEventListener('click', () => {
   try {
     if (!connection) throw new Error('Connect to the VM first.');
     connection.offerClipboard(clipboardSend.value);
+    clipboardSync.rememberHost(clipboardSend.value);
     showClipboardStatus('Text ready to paste inside the VM.');
   } catch (error) { showClipboardStatus(error.message, true); }
 });
@@ -651,6 +755,7 @@ clipboardCopy.addEventListener('click', async () => {
     // preserves transient user activation required by Firefox and Safari.
     if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
     await navigator.clipboard.writeText(text);
+    if (attempt === generation) clipboardSync.rememberHost(text);
     if (attempt === generation && guestClipboard === text) showClipboardStatus('Copied VM text to your computer.');
   } catch {
     if (attempt !== generation || guestClipboard !== text) return;
