@@ -122,3 +122,29 @@ test('clipboard release and agent disconnect clear cached text and pending reque
   assert.equal(client.received.at(-1), null);
   assert.equal(client.states.at(-1), false);
 });
+
+test('limited VM clipboard waits for an explicit receive action', () => {
+  const client = peer();
+  client.clipboardPolicy = {from_vm: {enabled: true, limit: 100, remaining: 100}};
+  client.inject(7, u32(0, 1));
+  assert.equal(client.sent.length, 0);
+  assert.equal(client.awaitingClipboard, false);
+  client.requestClipboard();
+  assert.equal(client.sent[0].kind, 8);
+  assert.equal(client.awaitingClipboard, true);
+  client.inject(4, concat(u32(0, 1), utf8.encode('received')));
+  assert.equal(client.received.at(-1), 'received');
+});
+
+test('client allowance counts Unicode characters and disabled directions cannot share', () => {
+  const client = peer();
+  client.clipboardPolicy = {to_vm: {enabled: true, limit: 2, remaining: 2}, from_vm: {enabled: false, remaining: 0}};
+  client.offerClipboard('é😀');
+  assert.throws(() => client.offerClipboard('é😀x'), /Only 2 characters/);
+  client.inject(7, u32(0, 1));
+  const sent = client.sent.length;
+  client.requestClipboard();
+  assert.equal(client.sent.length, sent);
+  client.clipboardPolicy.to_vm.enabled = false;
+  assert.throws(() => client.offerClipboard('x'), /disabled/);
+});

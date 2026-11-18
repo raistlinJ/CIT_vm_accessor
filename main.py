@@ -18,7 +18,9 @@ from jinja2 import ChoiceLoader, DictLoader, FileSystemLoader
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.http import parse_cookie
 from spice_bridge import SpiceBridge, Target, session_owner
-from transfer_policy import parse_transfer_policy
+from transfer_policy import parse_transfer_policy, parse_accessforge_metadata
+from clipboard_policy import parse_clipboard_policy
+from clipboard_store import ClipboardStore
 from project_metadata import collect_project_metadata
 import concurrent.futures
 import re
@@ -26,6 +28,7 @@ import html
 import json
 import base64
 import binascii
+import sqlite3
 
 """
 Quick start
@@ -1609,6 +1612,90 @@ def vm_transfer_policy(node, vmid, cookies, headers, fetch=None):
     return {"file_upload": False, "file_download": False}
 
 
+def clipboard_store():
+  return ClipboardStore(app.config.get('CHECKOUT_DATA_DIR') or os.environ.get('CHECKOUT_DATA_DIR') or os.path.join(app.root_path, 'data'))
+
+
+def clipboard_cluster(host, port):
+  return str(host).strip('[]').lower().rstrip('.') + ':' + str(port)
+
+
+def read_vm_clipboard(vmid, cookies, headers, fetch):
+  resources = fetch('/cluster/resources', params={'type': 'vm'}, cookies=cookies, headers=headers, timeout=10)
+  resources.raise_for_status()
+  vm = next(v for v in resources.json()['data'] if str(v.get('vmid')) == str(vmid) and v.get('type') == 'qemu')
+  node = vm.get('node', '')
+  if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]*', node):
+    raise ValueError('Invalid VM node')
+  config = fetch(f'/nodes/{node}/qemu/{vmid}/config', params={'current': 1}, cookies=cookies, headers=headers, timeout=10)
+  config.raise_for_status()
+  return parse_clipboard_policy(parse_accessforge_metadata(config.json()['data'].get('description')))
+
+
+@app.get('/api/spice/<int:vmid>/clipboard')
+@require_session(api=True)
+def vm_clipboard_usage(vmid):
+  try:
+    cookies = {'PVEAuthCookie': session['pve_ticket']}
+    headers = {'CSRFPreventionToken': session.get('pve_csrf')}
+    policy = read_vm_clipboard(vmid, cookies, headers, proxmox_get)
+    cluster = clipboard_cluster(session.get('pve_host', PROXMOX_HOST), session.get('pve_port', PROXMOX_PORT))
+    result = jsonify(clipboard=clipboard_store().snapshot(cluster, vmid, policy))
+    result.headers['Cache-Control'] = 'no-store'
+    return result
+  except (requests.RequestException, ValueError, KeyError, TypeError, StopIteration, OSError, sqlite3.Error):
+    return jsonify(error='Clipboard usage is unavailable. Check VM access and persistent storage.'), 503
+
+
+@app.get('/api/admin/clipboard/status')
+def admin_clipboard_status():
+  from account_checkout import authenticate_admin
+  from checkout_store import CheckoutError
+  try:
+    principal = authenticate_admin()
+    response = jsonify(service='AccessForge', clipboard_api=1, administrator=principal['username'],
+        cluster={'host': app.config['CHECKOUT_PROXMOX_HOST'], 'port': app.config['CHECKOUT_PROXMOX_PORT']})
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+  except CheckoutError as exc:
+    return jsonify(error=exc.message), exc.status
+
+
+@app.get('/api/admin/clipboard/usage')
+def admin_clipboard_usage():
+  from account_checkout import authenticate_admin, backend_url
+  from checkout_store import CheckoutError
+  try:
+    principal = authenticate_admin()
+    vmids = [int(value) for value in request.args.get('vmids', '').split(',') if value]
+    if not vmids or len(vmids) > 500 or any(vmid <= 0 for vmid in vmids):
+      return jsonify(error='Provide 1 to 500 VM IDs'), 400
+    host, port = app.config['CHECKOUT_PROXMOX_HOST'], app.config['CHECKOUT_PROXMOX_PORT']
+    cluster = clipboard_cluster(host, port)
+    cookies = {'PVEAuthCookie': principal['ticket']}
+    resources = None
+    def fetch(path, **kwargs):
+      nonlocal resources
+      if path == '/cluster/resources' and resources is not None:
+        return resources
+      response = requests.get(backend_url()+path, verify=app.config['CHECKOUT_PROXMOX_VERIFY'], allow_redirects=False, **kwargs)
+      if path == '/cluster/resources':
+        resources = response
+      return response
+    store = clipboard_store()
+    result = {}
+    for vmid in dict.fromkeys(vmids):
+      policy = read_vm_clipboard(vmid, cookies, {}, fetch)
+      result[str(vmid)] = store.snapshot(cluster, vmid, policy)
+    response = jsonify(usage=result, cluster={'host': host, 'port': port})
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+  except CheckoutError as exc:
+    return jsonify(error=exc.message), exc.status
+  except (requests.RequestException, ValueError, KeyError, TypeError, StopIteration, OSError, sqlite3.Error):
+    return jsonify(error='Clipboard usage is unavailable.'), 503
+
+
 def validate_console_request():
   # Require a page-issued token as well as a same-origin browser request. This
   # app allows iframe embedding, so cookies alone don't prevent console CSRF.
@@ -1859,8 +1946,18 @@ def spice_session(vmid):
         return vm_transfer_policy(current_node, vmid, cookies, headers, fetch=background_get)["file_upload"]
       except (requests.RequestException, ValueError, KeyError, TypeError, StopIteration):
         return False
+    usage_store = clipboard_store()
+    usage_cluster = clipboard_cluster(session.get('pve_host', PROXMOX_HOST), session.get('pve_port', PROXMOX_PORT))
+    def clipboard_check(events):
+      try:
+        current_policy = read_vm_clipboard(vmid, cookies, headers, background_get)
+        return usage_store.consume(usage_cluster, vmid, current_policy, events)
+      except Exception:
+        logger.warning('Clipboard transfer denied: policy or usage unavailable for VM %s', vmid)
+        return False
     token = spice_bridge.issue(target, session_owner(session["pve_ticket"]), origin,
-                               upload_allowed=policy["file_upload"], upload_check=upload_check)
+                               upload_allowed=policy["file_upload"], upload_check=upload_check,
+                               clipboard_check=clipboard_check)
     result = jsonify(websocket=f"/spice/ws?token={token}", password=config["password"],
                      title=config.get("title", f"VM {vmid}"), node=node, fallback=fallback,
                      file_upload=policy["file_upload"], file_download=policy["file_download"])
@@ -1868,7 +1965,7 @@ def spice_session(vmid):
     return result
   except RuntimeError as exc:
     return jsonify(error=str(exc), fallback=fallback), 429
-  except (requests.RequestException, ValueError, KeyError, TypeError, ssl.SSLError):
+  except (requests.RequestException, ValueError, KeyError, TypeError, ssl.SSLError, OSError, sqlite3.Error):
     logger.warning("SPICE configuration request failed for VM %s", vmid)
     return jsonify(error="Could not prepare the SPICE console. Check Proxmox connectivity and the VM display configuration.",
                    fallback=fallback), 502

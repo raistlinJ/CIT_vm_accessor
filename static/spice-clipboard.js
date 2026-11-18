@@ -57,6 +57,8 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     super(options);
     this.onclipboard = options.onclipboard || (() => {});
     this.onclipboardstate = options.onclipboardstate || (() => {});
+    this.onclipboardavailable = options.onclipboardavailable || (() => {});
+    this.clipboardPolicy = options.clipboardPolicy || null;
     this.onmonitorchange = options.onmonitorchange || (() => {});
     this.onfiletransfer = options.onfiletransfer || (() => {});
     this.agentReader = new AgentMessageReader();
@@ -100,8 +102,25 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
   // The upstream display calls this on focus. Sharing is explicit in our UI.
   send_clipboard_grab() {}
 
+  clipboardRule(direction) {
+    return this.clipboardPolicy?.[direction] || {enabled: true, limit: null, remaining: null};
+  }
+
+  requestClipboard() {
+    const rule = this.clipboardRule('from_vm');
+    if (!this.clipboardReady || !this.guestOwnsClipboard || !rule.enabled || rule.remaining === 0) return;
+    this.awaitingClipboard = true;
+    this.send_agent_message(C.VD_AGENT_CLIPBOARD_REQUEST,
+      new SpiceMsgClipboardRequest(C.VD_AGENT_CLIPBOARD_UTF8_TEXT, this.agent_caps));
+  }
+
   offerClipboard(text) {
     if (!this.clipboardReady) throw new Error('Clipboard sharing requires a connected SPICE guest agent.');
+    const rule = this.clipboardRule('to_vm');
+    if (!rule.enabled) throw new Error('Client to VM clipboard access is disabled.');
+    if (rule.remaining !== null && Array.from(text).length > rule.remaining) {
+      throw new Error(`Only ${rule.remaining} characters remain for client to VM clipboard transfers.`);
+    }
     if (new TextEncoder().encode(text).length > MAX_CLIPBOARD_BYTES) {
       throw new Error('Clipboard text is limited to 1 MiB. Send a smaller selection.');
     }
@@ -152,6 +171,7 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
       this.guestOwnsClipboard = false;
       this.awaitingClipboard = false;
       this.onclipboard(null);
+      this.onclipboardavailable?.(false);
       return;
     }
     if (data.byteLength < prefix + 4) throw new Error('Invalid clipboard message.');
@@ -164,14 +184,15 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
       this.onclipboard(null);
       for (let offset = prefix; offset < data.byteLength; offset += 4) {
         if (data.getUint32(offset, true) === C.VD_AGENT_CLIPBOARD_UTF8_TEXT) {
-          this.awaitingClipboard = true;
-          this.send_agent_message(C.VD_AGENT_CLIPBOARD_REQUEST,
-            new SpiceMsgClipboardRequest(C.VD_AGENT_CLIPBOARD_UTF8_TEXT, this.agent_caps));
+          this.onclipboardavailable?.(true);
+          if (this.clipboardRule('from_vm').limit === null) this.requestClipboard();
           break;
         }
       }
     } else if (kind === C.VD_AGENT_CLIPBOARD_REQUEST) {
-      const available = type === C.VD_AGENT_CLIPBOARD_UTF8_TEXT && this.localClipboard !== null;
+      const rule = this.clipboardRule('to_vm');
+      const available = type === C.VD_AGENT_CLIPBOARD_UTF8_TEXT && this.localClipboard !== null && rule.enabled &&
+        (rule.remaining === null || Array.from(this.localClipboard).length <= rule.remaining);
       this.send_agent_message(C.VD_AGENT_CLIPBOARD, new SpiceMsgClipboardSend(
         available ? C.VD_AGENT_CLIPBOARD_UTF8_TEXT : C.VD_AGENT_CLIPBOARD_NONE,
         available ? this.localClipboard : '', this.agent_caps));

@@ -23,6 +23,7 @@ from cryptography import x509
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 from spice_policy import SpiceClientInspector, SpicePolicyError
+from clipboard_wire import ClipboardWire
 
 logger = logging.getLogger(__name__)
 # WebSocket debug logging includes cookies and grant URLs.
@@ -174,6 +175,7 @@ class Grant:
     connections: set = field(default_factory=set)
     upload_allowed: bool = False
     upload_check: object = None
+    clipboard_check: object = None
 
 
 class SpiceBridge:
@@ -192,7 +194,7 @@ class SpiceBridge:
     def running(self):
         return self.thread is not None and self.thread.is_alive() and self.server is not None
 
-    def issue(self, target, owner, origin, *, upload_allowed=False, upload_check=None):
+    def issue(self, target, owner, origin, *, upload_allowed=False, upload_check=None, clipboard_check=None):
         now = time.monotonic()
         with self.lock:
             self._prune(now)
@@ -202,7 +204,8 @@ class SpiceBridge:
             token = secrets.token_urlsafe(32)
             # QEMU expires newly issued SPICE passwords after 30 seconds.
             self.grants[token] = Grant(target, owner, origin, now + 25,
-                                       upload_allowed=upload_allowed, upload_check=upload_check)
+                                       upload_allowed=upload_allowed, upload_check=upload_check,
+                                       clipboard_check=clipboard_check)
         return token
 
     def _prune(self, now):
@@ -243,13 +246,43 @@ class SpiceBridge:
         tasks = []
         try:
             reader, writer = await open_tunnel(grant.target)
+            inspector = SpiceClientInspector()
+            client_wire, server_wire = ClipboardWire(), ClipboardWire(server=True)
+            client_wire.peer, server_wire.peer = server_wire, client_wire
+            browser_lock, vm_lock = asyncio.Lock(), asyncio.Lock()
+
+            async def send_browser(data):
+                async with browser_lock:
+                    await websocket.send(data)
+
+            async def send_vm(data):
+                async with vm_lock:
+                    writer.write(data)
+                    await writer.drain()
+
+            async def clipboard_frames(wire, data):
+                forward = send_browser if wire.server else send_vm
+                reimburse = send_vm if wire.server else send_browser
+                for frame, kind in wire.feed(data):
+                    frames, credit, events = wire.prepare(frame, kind)
+                    if credit:
+                        await reimburse(credit)
+                    if events is not None:
+                        allowed = not events or await asyncio.to_thread(grant.clipboard_check, events)
+                        frames, credit = wire.finish(allowed)
+                        if credit:
+                            await reimburse(credit)
+                    for ready in frames:
+                        await forward(ready)
 
             async def to_browser():
                 while data := await reader.read(65536):
-                    await websocket.send(data)
+                    if grant.clipboard_check and inspector.channel == 1:
+                        await clipboard_frames(server_wire, data)
+                    else:
+                        await send_browser(data)
 
             async def to_vm():
-                inspector = SpiceClientInspector()
                 checked_at = -float("inf")
                 async for data in websocket:
                     if not isinstance(data, bytes):
@@ -263,8 +296,10 @@ class SpiceBridge:
                                 if grant.upload_check is None or not await asyncio.to_thread(grant.upload_check):
                                     raise SpicePolicyError("VM file uploads are disabled")
                                 checked_at = time.monotonic()
-                        writer.write(frame)
-                        await writer.drain()
+                        if grant.clipboard_check and inspector.channel == 1:
+                            await clipboard_frames(client_wire, frame)
+                        else:
+                            await send_vm(frame)
 
             tasks = [asyncio.create_task(to_browser()), asyncio.create_task(to_vm())]
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

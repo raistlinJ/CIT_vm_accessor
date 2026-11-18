@@ -117,6 +117,62 @@ const clipboardReceive = document.getElementById('clipboard-receive');
 const clipboardSendButton = document.getElementById('clipboard-send-button');
 const clipboardCopy = document.getElementById('clipboard-copy');
 const clipboardPaste = document.getElementById('clipboard-paste');
+const clipboardReceiveButton = document.getElementById('clipboard-receive-button');
+const clipboardRemaining = document.getElementById('clipboard-remaining');
+let clipboardPolicy = null;
+let clipboardUsageRequest = 0;
+
+function clipboardLimited() {
+  return !clipboardPolicy || Object.values(clipboardPolicy).some(rule => rule.limit !== null);
+}
+
+function applyClipboardPolicy() {
+  const ready = Boolean(connection?.clipboardReady);
+  const limited = clipboardLimited();
+  const to = clipboardPolicy?.to_vm, from = clipboardPolicy?.from_vm;
+  clipboardSendButton.disabled = !ready || !to?.enabled || to.remaining === 0;
+  clipboardReceiveButton.disabled = !ready || !from?.enabled || from.remaining === 0 || !connection?.guestOwnsClipboard || connection?.awaitingClipboard;
+  clipboardAutoTo.disabled = !ready || limited || !to?.enabled || !clipboardAccess.automaticSupported;
+  clipboardAutoFrom.disabled = !ready || limited || !from?.enabled || !clipboardAccess.automaticSupported;
+  clipboardAutoTo.title = clipboardAutoFrom.title = limited ? 'Automatic sharing is disabled while a character limit is set.' : '';
+  if (clipboardAutoTo.disabled) { clipboardAutoTo.checked = false; clipboardSync.setToVM(false); }
+  if (clipboardAutoFrom.disabled) { clipboardAutoFrom.checked = false; clipboardSync.setFromVM(false); }
+  updateClipboardSyncTimer();
+  if (connection) {
+    connection.clipboardPolicy = clipboardPolicy || {to_vm: {enabled: false, remaining: 0}, from_vm: {enabled: false, remaining: 0}};
+    if (!to?.enabled) connection.localClipboard = null;
+  }
+  if (!from?.enabled) { guestClipboard = null; clipboardReceive.value = ''; clipboardCopy.disabled = true; }
+  clipboardRemaining.textContent = clipboardPolicy ? ['to_vm', 'from_vm'].map(direction => {
+    const rule = clipboardPolicy[direction];
+    return `${direction === 'to_vm' ? 'Client → VM' : 'VM → client'}: ${!rule.enabled ? 'disabled' : rule.remaining === null ? 'unlimited' : `${rule.remaining.toLocaleString()} copy/paste characters remaining (${rule.used.toLocaleString()} / ${rule.limit.toLocaleString()} used)`}`;
+  }).join(' · ') : 'Clipboard usage unavailable. Sharing is paused.';
+}
+
+async function refreshClipboardUsage() {
+  const revision = ++clipboardUsageRequest, attempt = generation;
+  try {
+    const response = await fetch(`/api/spice/${document.body.dataset.vmid}/clipboard`, {credentials: 'same-origin', cache: 'no-store'});
+    const data = await response.json();
+    if (revision !== clipboardUsageRequest || attempt !== generation) return false;
+    if (!response.ok || !data.clipboard) throw new Error('Clipboard allowance unavailable');
+    const previous = clipboardPolicy;
+    clipboardPolicy = data.clipboard;
+    for (const direction of ['to_vm', 'from_vm']) {
+      if (clipboardPolicy[direction].denied_at && clipboardPolicy[direction].denied_at !== previous?.[direction]?.denied_at) {
+        if (connection) connection.awaitingClipboard = false;
+        showClipboardStatus(`A ${direction === 'to_vm' ? 'client → VM' : 'VM → client'} transfer exceeded the remaining allowance. Use a smaller selection. No characters were charged.`, true);
+      }
+    }
+    applyClipboardPolicy();
+    return true;
+  } catch {
+    if (revision !== clipboardUsageRequest || attempt !== generation) return false;
+    clipboardPolicy = null;
+    applyClipboardPolicy();
+    return false;
+  }
+}
 const MAX_VM_FILE_BYTES = 1024 * 1024 * 1024;
 const fileUpload = document.getElementById('file-upload');
 const fileUploadStatus = document.getElementById('file-upload-status');
@@ -152,7 +208,7 @@ const clipboardSync = new ClipboardSync({
     return navigator.clipboard.writeText(text);
   },
   offerText: text => connection.offerClipboard(text),
-  isActive: () => Boolean(connection?.clipboardReady && document.hasFocus() && !document.hidden),
+  isActive: () => Boolean(!clipboardLimited() && connection?.clipboardReady && document.hasFocus() && !document.hidden),
   onSend(text) {
     clipboardSend.value = text;
     showClipboardStatus('Computer clipboard sent to VM. Paste inside the VM.');
@@ -210,10 +266,21 @@ clipboardPanel.addEventListener('keydown', event => {
   }
 });
 clipboardAutoTo.addEventListener('change', () => {
+  if (clipboardAutoTo.disabled) { clipboardAutoTo.checked = false; return; }
   clipboardSync.setToVM(clipboardAutoTo.checked);
   updateClipboardSyncTimer();
 });
-clipboardAutoFrom.addEventListener('change', () => clipboardSync.setFromVM(clipboardAutoFrom.checked));
+clipboardAutoFrom.addEventListener('change', () => {
+  if (clipboardAutoFrom.disabled) { clipboardAutoFrom.checked = false; return; }
+  clipboardSync.setFromVM(clipboardAutoFrom.checked);
+});
+clipboardReceiveButton.addEventListener('click', async () => {
+  if (!await refreshClipboardUsage()) return;
+  connection?.requestClipboard();
+  applyClipboardPolicy();
+  showClipboardStatus('Requesting VM text. The received characters count toward the VM → client allowance.');
+});
+setInterval(() => { if (connection && !document.hidden) void refreshClipboardUsage(); }, 2000);
 function resumeClipboardSync() {
   // Flush a guest copy first so a stale computer clipboard cannot replace it.
   void clipboardSync.copyGuest();
@@ -468,6 +535,9 @@ function showStatus(message, error = false, code = '') {
 
 function stop() {
   generation++;
+  clipboardUsageRequest++;
+  clipboardPolicy = null;
+  clipboardReceiveButton.disabled = true;
   clipboardSync.reset();
   clipboardAutoTo.checked = clipboardAutoFrom.checked = false;
   clipboardAutoTo.disabled = clipboardAutoFrom.disabled = true;
@@ -578,11 +648,14 @@ async function connect() {
       throw error;
     }
     updateFileTransferAvailability();
+    await refreshClipboardUsage();
+    if (attempt !== generation) return;
     document.getElementById('console-title').textContent = config.title;
     document.title = `${config.title} · AccessForge`;
     const url = new URL(config.websocket, window.location.href);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     connection = new ClipboardSpiceConnection({
+      clipboardPolicy: clipboardPolicy || {to_vm: {enabled:false, remaining:0}, from_vm: {enabled:false, limit:0, remaining:0}},
       networkObserver: networkMetrics.observer,
       uri: url.href, password: config.password,
       screen_id: 'spice-screen', message_id: 'message-div', dump_id: 'debug-div',
@@ -603,8 +676,7 @@ async function connect() {
       },
       onclipboardstate(ready) {
         if (attempt !== generation) return;
-        clipboardSendButton.disabled = !ready;
-        clipboardAutoTo.disabled = clipboardAutoFrom.disabled = !ready || !clipboardAccess.automaticSupported;
+        applyClipboardPolicy();
         if (!ready) {
           clipboardSync.reset();
           clipboardAutoTo.checked = clipboardAutoFrom.checked = false;
@@ -621,7 +693,10 @@ async function connect() {
         clipboardCopy.disabled = text === null;
         if (text !== null) showClipboardStatus('VM text received. Click Copy from VM or select and copy it below.');
         void clipboardSync.receiveGuest(text);
+        applyClipboardPolicy();
+        if (text !== null) void refreshClipboardUsage();
       },
+      onclipboardavailable() { applyClipboardPolicy(); },
       onfiletransfer(name, error) {
         if (attempt !== generation) return;
         showFileStatus(fileUploadStatus, error ? `Could not send ${name}: ${error}` : `Sent ${name} to the VM.`, Boolean(error));
@@ -749,13 +824,16 @@ clipboardPaste.addEventListener('click', async () => {
     if (attempt === generation) clipboardPaste.disabled = false;
   }
 });
-clipboardSendButton.addEventListener('click', () => {
+clipboardSendButton.addEventListener('click', async () => {
   try {
+    clipboardSendButton.disabled = true;
+    if (!await refreshClipboardUsage()) throw new Error('Clipboard allowance is unavailable. Try again.');
     if (!connection) throw new Error('Connect to the VM first.');
     connection.offerClipboard(clipboardSend.value);
     clipboardSync.rememberHost(clipboardSend.value);
     showClipboardStatus('Text ready to paste inside the VM.');
   } catch (error) { showClipboardStatus(error.message, true); }
+  finally { applyClipboardPolicy(); }
 });
 clipboardCopy.addEventListener('click', async () => {
   if (guestClipboard === null) return;

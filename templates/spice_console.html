@@ -95,6 +95,7 @@
         <label class="clipboard-switch"><span>Auto-copy from VM</span><input id="clipboard-auto-from" type="checkbox" role="switch" disabled><span class="switch-track" aria-hidden="true"></span></label>
       </div>
       <p id="clipboard-status" role="status" aria-live="polite">Clipboard sharing requires a connected SPICE guest agent.</p>
+      <p id="clipboard-remaining" role="status" aria-live="polite">Loading clipboard allowances…</p>
       <details id="clipboard-access-help">
         <summary>Clipboard access</summary>
         <p id="clipboard-access-message"></p>
@@ -113,6 +114,7 @@
           <label for="clipboard-receive">Text copied inside the VM</label>
           <textarea id="clipboard-receive" rows="4" spellcheck="false" readonly placeholder="Copy text inside the VM to see it here"></textarea>
           <div class="clipboard-actions">
+            <button id="clipboard-receive-button" type="button" disabled>Receive from VM</button>
             <button id="clipboard-copy" type="button" disabled>Copy from VM</button>
           </div>
         </div>

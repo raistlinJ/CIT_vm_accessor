@@ -1,5 +1,34 @@
 # AccessForge
 
+### Persistent clipboard allowances
+
+SCE-web's **VM Manager → Clipboard Access** configures clipboard access and
+optional character allowances separately for client → VM and VM → client. The
+SPICE bridge checks current VM Notes before forwarding clipboard text and
+atomically charges Unicode code points to a persistent count shared by all
+logins and workers. Over-limit transfers are dropped in full, without charging
+characters or disconnecting the display. Clipboard text is never written to
+the accounting database.
+
+The clipboard panel shows remaining characters in both directions. While either
+direction has a limit, both automatic sharing switches are disabled. Limited
+VM → client transfers require **Receive from VM**, followed by **Copy from VM**.
+Copying text inside the VM alone does not consume a limited allowance. Reusing
+text already received by the browser does not consume another allowance.
+
+Counts live in `clipboard_usage.sqlite3` under `CHECKOUT_DATA_DIR` (default:
+`data` beside the app). Preserve this volume across restarts and share it across
+workers for this deployment. SCE-web can read usage through its saved AccessForge
+administrator connection. The clipboard administration endpoints work even when
+account checkout is disabled. SCE-web resets both directions by updating reset
+identifiers in VM Notes; changing a limit or signing out does not reset usage.
+
+Existing readable `AccessForge` Notes objects without clipboard fields retain
+unlimited clipboard access. Explicit disabled settings, malformed Notes, or
+unreadable configuration deny clipboard sharing. These controls cover the
+AccessForge SPICE bridge; native clients and direct Proxmox console connections
+have their own policies. Deploy the updated SCE-web and AccessForge code together.
+
 AccessForge signs into the Proxmox VE API and opens browser consoles across your cluster. QEMU VMs automatically use embedded SPICE when their display is SPICE/QXL and clipboard is Default; other VMs use noVNC. Containers use Proxmox's xterm.js terminal. Users do not install a native client.
 
 ## Features
