@@ -4,6 +4,8 @@ MAX_CHARACTERS = 1_000_000_000
 
 
 def parse_clipboard_policy(metadata):
+    if metadata is None:
+        metadata = {}
     result = {}
     for direction in DIRECTIONS:
         key = 'clipboard_' + direction

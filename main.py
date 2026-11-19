@@ -1629,7 +1629,10 @@ def read_vm_clipboard(vmid, cookies, headers, fetch):
     raise ValueError('Invalid VM node')
   config = fetch(f'/nodes/{node}/qemu/{vmid}/config', params={'current': 1}, cookies=cookies, headers=headers, timeout=10)
   config.raise_for_status()
-  return parse_clipboard_policy(parse_accessforge_metadata(config.json()['data'].get('description')))
+  metadata = parse_accessforge_metadata(config.json()['data'].get('description'), default={})
+  if metadata is None:
+    raise ValueError('Invalid AccessForge clipboard settings')
+  return parse_clipboard_policy(metadata)
 
 
 @app.get('/api/spice/<int:vmid>/clipboard')

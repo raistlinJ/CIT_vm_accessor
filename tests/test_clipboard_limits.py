@@ -20,6 +20,39 @@ def policy(**changes):
         'clipboard_from_vm': True, 'clipboard_to_vm_limit': 5, 'clipboard_from_vm_limit': 8, **changes})
 
 
+@pytest.mark.parametrize('metadata', [None, {}, {'materials': []}])
+def test_unconfigured_clipboard_defaults_to_unlimited_in_both_directions(metadata):
+    for rule in parse_clipboard_policy(metadata).values():
+        assert rule['enabled'] is True
+        assert rule['limit'] is None
+
+
+@pytest.mark.parametrize('notes', [None, '', 'Human-readable notes only', '{"Scenario":"lab"}',
+                                  '{"AccessForge":{}}', '{"AccessForge":{"file_upload":false}}'])
+def test_vm_without_clipboard_settings_allows_both_directions(client, tmp_path, monkeypatch, notes):
+    monkeypatch.setitem(main.app.config, 'CHECKOUT_DATA_DIR', str(tmp_path))
+    with patch.object(main, 'proxmox_get', side_effect=[vm_resources(), response({'description': notes})]):
+        result = client.get('/api/spice/101/clipboard')
+    assert result.status_code == 200
+    for rule in result.json['clipboard'].values():
+        assert rule['enabled'] is True and rule['limit'] is None and rule['remaining'] is None
+
+
+@pytest.mark.parametrize('notes', ['{"AccessForge":false}', '{"AccessForge":{broken',
+    '{"AccessForge":{"clipboard_to_vm":false,"clipboard_to_vm":true}}',
+    '{"AccessForge":{}}\n{"AccessForge":{}}'])
+def test_malformed_clipboard_settings_remain_unavailable(client, tmp_path, monkeypatch, notes):
+    monkeypatch.setitem(main.app.config, 'CHECKOUT_DATA_DIR', str(tmp_path))
+    with patch.object(main, 'proxmox_get', side_effect=[vm_resources(), response({'description': notes})]):
+        assert client.get('/api/spice/101/clipboard').status_code == 503
+
+
+def test_explicit_disabled_direction_and_its_limit_are_preserved():
+    policy = parse_clipboard_policy({'clipboard_to_vm': False, 'clipboard_from_vm_limit': 50})
+    assert policy['to_vm']['enabled'] is False
+    assert policy['from_vm']['enabled'] is True and policy['from_vm']['limit'] == 50
+
+
 def test_counts_are_atomic_persistent_independent_and_shared_across_logins(tmp_path):
     rule = policy()
     store = ClipboardStore(tmp_path)

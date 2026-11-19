@@ -6,6 +6,7 @@ This validates the real vendored protocol client, not real-VM performance.
 """
 
 import base64
+import json
 import os
 import queue
 import socketserver
@@ -177,6 +178,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
     monkeypatch.setattr(main, "spice_bridge", bridge)
     vm_state = {"status": "running", "task_polls": 0, "deny_power": False}
     power_actions = []
+    clipboard_settings = {}
 
     def proxmox_get(path, **kwargs):
         if path == "/cluster/resources":
@@ -196,7 +198,8 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                              "bytes-read": end - offset, "truncated": end < len(guest_file)})
         assert path == "/nodes/node-b/qemu/101/config"
         assert kwargs["params"] == {"current": 1}
-        return response({"vga": "qxl,memory=128", "description": '{"AccessForge":{"file_upload":true,"file_download":true}}'})
+        return response({"vga": "qxl,memory=128", "description": json.dumps({
+            "AccessForge": {"file_upload": True, "file_download": True, **clipboard_settings}})})
 
     def proxmox_post(path, **kwargs):
         if path.endswith("/spiceproxy"):
@@ -461,6 +464,9 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 expect(page.locator("#console-controls")).to_be_hidden()
                 expect(page.locator("#clipboard-panel")).to_be_visible()
                 expect(page.locator("#clipboard-send")).to_be_visible()
+                expect(page.locator("#clipboard-policy-status")).to_contain_text("Clipboard is allowed in both directions.")
+                if not agent_enabled:
+                    expect(page.locator("#clipboard-policy-status")).to_contain_text("SPICE guest agent with clipboard support")
                 expect(page.locator("#clipboard-auto-controls")).to_be_visible()
                 assert page.locator("#spice-area").bounding_box() == full_bounds
                 page.get_by_role("button", name="Pin", exact=True).click()
@@ -579,6 +585,15 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.locator("#clipboard-status")).to_contain_text("SPICE guest agent")
                 page.screenshot(path=str(tmp_path / "spice-connected.png"))
                 if agent_enabled:
+                    clipboard_settings.update(clipboard_to_vm=False, clipboard_from_vm=False)
+                    expect(page.locator("#clipboard-policy-status")).to_contain_text("Client → VM clipboard is disabled by this VM’s settings.")
+                    expect(page.locator("#clipboard-policy-status")).to_contain_text("VM → client clipboard is disabled by this VM’s settings.")
+                    expect(page.locator("#clipboard-send-button")).to_be_disabled()
+                    expect(page.locator("#clipboard-receive-button")).to_be_disabled()
+                    page.screenshot(path=str(tmp_path / "clipboard-disabled.png"))
+                    clipboard_settings.clear()
+                    expect(page.locator("#clipboard-policy-status")).to_have_text("Clipboard is allowed in both directions.")
+                    expect(page.locator("#clipboard-send-button")).to_be_enabled()
                     page.evaluate("clipboardTest.pending = true")
                     page.get_by_role("button", name="Paste from computer", exact=True).click()
                 page.locator("canvas").evaluate("c => c.sc.ws.close()")

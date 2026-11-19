@@ -23,8 +23,10 @@ administrator connection. The clipboard administration endpoints work even when
 account checkout is disabled. SCE-web resets both directions by updating reset
 identifiers in VM Notes; changing a limit or signing out does not reset usage.
 
-Existing readable `AccessForge` Notes objects without clipboard fields retain
-unlimited clipboard access. Explicit disabled settings, malformed Notes, or
+VMs with no clipboard configuration allow unlimited clipboard access in both
+directions, including VMs without an `AccessForge` Notes object. The clipboard
+popout explains disabled directions, exhausted allowances, unavailable permissions,
+and guest-agent requirements. Explicit disabled settings, malformed policies, or
 unreadable configuration deny clipboard sharing. These controls cover the
 AccessForge SPICE bridge; native clients and direct Proxmox console connections
 have their own policies. Deploy the updated SCE-web and AccessForge code together.

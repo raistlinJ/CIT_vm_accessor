@@ -71,6 +71,8 @@ button:disabled { opacity: .45; cursor: default; }
 #file-panel[data-error="true"] > summary::after { content: '! ▸'; }
 #file-panel[data-error="true"][open] > summary::after { content: '! ▾'; }
 #clipboard-status { color: #aabbd0; }
+#clipboard-policy-status { color: #aabbd0; line-height: 1.5; }
+#clipboard-policy-status[data-blocked="true"] { color: #ffc1b5; }
 #clipboard-status[data-error="true"] { color: #ffc1b5; }
 #clipboard-access-help { margin: 12px 0 16px; font-size: 12px; color: #aabbd0; line-height: 1.5; }
 #clipboard-access-help > summary { cursor: pointer; color: #9bcaff; }

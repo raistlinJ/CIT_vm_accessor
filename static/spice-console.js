@@ -1,10 +1,10 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
-import { ClipboardSpiceConnection } from './spice-clipboard.js';
-import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js';
+import { ClipboardSpiceConnection } from './spice-clipboard.js?v=20261119-clipboard-access';
+import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-access';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
-import { WheelAccumulator } from './spice-scroll.js';
-import { ConsoleNetworkMetrics, formatNetworkBytes } from './spice-network.js';
+import { WheelAccumulator } from './spice-scroll.js?v=20261119-clipboard-access';
+import { ConsoleNetworkMetrics, formatNetworkBytes } from './spice-network.js?v=20261119-clipboard-access';
 
 const networkMetrics = new ConsoleNetworkMetrics();
 const networkToggle = document.getElementById('network-enabled');
@@ -96,6 +96,12 @@ const keys = document.getElementById('ctrl-alt-del');
 const fallback = document.getElementById('fallback');
 const clipboardStatus = document.getElementById('clipboard-status');
 const clipboardPanel = document.getElementById('clipboard-panel');
+// Keep access explanations visible even with a pre-update cached template.
+const clipboardPolicyStatus = document.getElementById('clipboard-policy-status') ||
+  clipboardPanel.insertBefore(document.createElement('p'), clipboardStatus);
+clipboardPolicyStatus.id = 'clipboard-policy-status';
+clipboardPolicyStatus.setAttribute('role', 'status');
+clipboardPolicyStatus.setAttribute('aria-live', 'polite');
 const clipboardToggle = document.getElementById('clipboard-toggle');
 const clipboardPin = document.getElementById('clipboard-pin');
 const clipboardClose = document.getElementById('clipboard-close');
@@ -106,10 +112,15 @@ const clipboardAccess = clipboardAccessHelp({
   userAgent: navigator.userAgent, secure: window.isSecureContext,
   readable: Boolean(navigator.clipboard?.readText), writable: Boolean(navigator.clipboard?.writeText),
 });
-document.getElementById('clipboard-access-message').textContent = clipboardAccess.message;
-document.getElementById('clipboard-access-link').href = clipboardAccess.url;
-clipboardAccessDetails.open = !clipboardAccess.automaticSupported;
-document.getElementById('clipboard-auto-controls').hidden = !clipboardAccess.automaticSupported;
+// A running server can still have an older template cached after its static
+// files are updated. Optional clipboard UI must not prevent console startup.
+const clipboardAccessMessage = document.getElementById('clipboard-access-message');
+const clipboardAccessLink = document.getElementById('clipboard-access-link');
+const clipboardAutoControls = document.getElementById('clipboard-auto-controls');
+if (clipboardAccessMessage) clipboardAccessMessage.textContent = clipboardAccess.message;
+if (clipboardAccessLink) clipboardAccessLink.href = clipboardAccess.url;
+if (clipboardAccessDetails) clipboardAccessDetails.open = !clipboardAccess.automaticSupported;
+if (clipboardAutoControls) clipboardAutoControls.hidden = !clipboardAccess.automaticSupported;
 const filePanel = document.getElementById('file-panel');
 const fileDisabled = document.getElementById('file-disabled');
 const clipboardSend = document.getElementById('clipboard-send');
@@ -126,12 +137,38 @@ function clipboardLimited() {
   return !clipboardPolicy || Object.values(clipboardPolicy).some(rule => rule.limit !== null);
 }
 
+function updateClipboardAvailability() {
+  if (!clipboardPolicy) {
+    clipboardPolicyStatus.textContent = 'Clipboard access could not be verified. Sharing is paused until AccessForge can load this VM’s permissions.';
+    clipboardPolicyStatus.dataset.blocked = 'true';
+    return;
+  }
+  const rules = ['to_vm', 'from_vm'].map(direction => clipboardPolicy[direction]);
+  const available = rules.some(rule => rule.enabled && rule.remaining !== 0);
+  const restricted = rules.some(rule => !rule.enabled || rule.remaining === 0);
+  const messages = restricted ? rules.map((rule, index) => {
+    const label = index === 0 ? 'Client → VM' : 'VM → client';
+    if (!rule.enabled) return `${label} clipboard is disabled by this VM’s settings.`;
+    if (rule.remaining === 0) return `${label} clipboard is blocked because its character allowance has been used up.`;
+    return `${label} clipboard is allowed.`;
+  }) : ['Clipboard is allowed in both directions.'];
+  if (available && !connection?.clipboardReady) {
+    messages.push('Sharing is unavailable until a SPICE guest agent with clipboard support is connected inside the VM.');
+  } else if (available && !clipboardAccess.automaticSupported) {
+    messages.push('Automatic clipboard sharing is unavailable in this browser. Use the text boxes for manual copy and paste.');
+  } else if (available && clipboardLimited()) {
+    messages.push('Automatic sharing is disabled while a character limit is configured. Use the manual clipboard buttons.');
+  }
+  clipboardPolicyStatus.textContent = messages.join(' ');
+  clipboardPolicyStatus.dataset.blocked = String(restricted || !connection?.clipboardReady);
+}
+
 function applyClipboardPolicy() {
   const ready = Boolean(connection?.clipboardReady);
   const limited = clipboardLimited();
   const to = clipboardPolicy?.to_vm, from = clipboardPolicy?.from_vm;
   clipboardSendButton.disabled = !ready || !to?.enabled || to.remaining === 0;
-  clipboardReceiveButton.disabled = !ready || !from?.enabled || from.remaining === 0 || !connection?.guestOwnsClipboard || connection?.awaitingClipboard;
+  if (clipboardReceiveButton) clipboardReceiveButton.disabled = !ready || !from?.enabled || from.remaining === 0 || !connection?.guestOwnsClipboard || connection?.awaitingClipboard;
   clipboardAutoTo.disabled = !ready || limited || !to?.enabled || !clipboardAccess.automaticSupported;
   clipboardAutoFrom.disabled = !ready || limited || !from?.enabled || !clipboardAccess.automaticSupported;
   clipboardAutoTo.title = clipboardAutoFrom.title = limited ? 'Automatic sharing is disabled while a character limit is set.' : '';
@@ -143,10 +180,11 @@ function applyClipboardPolicy() {
     if (!to?.enabled) connection.localClipboard = null;
   }
   if (!from?.enabled) { guestClipboard = null; clipboardReceive.value = ''; clipboardCopy.disabled = true; }
-  clipboardRemaining.textContent = clipboardPolicy ? ['to_vm', 'from_vm'].map(direction => {
+  if (clipboardRemaining) clipboardRemaining.textContent = clipboardPolicy ? ['to_vm', 'from_vm'].map(direction => {
     const rule = clipboardPolicy[direction];
     return `${direction === 'to_vm' ? 'Client → VM' : 'VM → client'}: ${!rule.enabled ? 'disabled' : rule.remaining === null ? 'unlimited' : `${rule.remaining.toLocaleString()} copy/paste characters remaining (${rule.used.toLocaleString()} / ${rule.limit.toLocaleString()} used)`}`;
   }).join(' · ') : 'Clipboard usage unavailable. Sharing is paused.';
+  updateClipboardAvailability();
 }
 
 async function refreshClipboardUsage() {
@@ -220,7 +258,7 @@ const clipboardSync = new ClipboardSync({
     const action = direction === 'to' ? 'Auto-send to VM' : 'Auto-copy from VM';
     const denied = error.name === 'NotAllowedError';
     const reason = denied ? 'Browser clipboard access was denied. See Clipboard access below for setup instructions.' : error.message;
-    if (denied) clipboardAccessDetails.open = true;
+    if (denied && clipboardAccessDetails) clipboardAccessDetails.open = true;
     showClipboardStatus(`${action} paused. ${reason} Use the manual clipboard controls or enable it again to retry.`, true);
   },
 });
@@ -274,7 +312,7 @@ clipboardAutoFrom.addEventListener('change', () => {
   if (clipboardAutoFrom.disabled) { clipboardAutoFrom.checked = false; return; }
   clipboardSync.setFromVM(clipboardAutoFrom.checked);
 });
-clipboardReceiveButton.addEventListener('click', async () => {
+clipboardReceiveButton?.addEventListener('click', async () => {
   if (!await refreshClipboardUsage()) return;
   connection?.requestClipboard();
   applyClipboardPolicy();
@@ -537,7 +575,7 @@ function stop() {
   generation++;
   clipboardUsageRequest++;
   clipboardPolicy = null;
-  clipboardReceiveButton.disabled = true;
+  if (clipboardReceiveButton) clipboardReceiveButton.disabled = true;
   clipboardSync.reset();
   clipboardAutoTo.checked = clipboardAutoFrom.checked = false;
   clipboardAutoTo.disabled = clipboardAutoFrom.disabled = true;
@@ -571,6 +609,8 @@ function stop() {
     showFileStatus(fileUploadStatus, 'Sending requires a connected SPICE guest agent.');
   }
   showClipboardStatus('Clipboard sharing requires a connected SPICE guest agent.');
+  clipboardPolicyStatus.textContent = 'Clipboard sharing is unavailable while the VM console is disconnected.';
+  clipboardPolicyStatus.dataset.blocked = 'true';
 }
 
 function fitDisplay() {
@@ -683,7 +723,8 @@ async function connect() {
           updateClipboardSyncTimer();
         }
         if (fileUpload) fileUpload.disabled = !uploadAllowed || !connection?.agent_connected;
-        showClipboardStatus(ready ? 'Clipboard ready. Send text to the VM or copy text inside it.' :
+        const allowed = clipboardPolicy && Object.values(clipboardPolicy).some(rule => rule.enabled && rule.remaining !== 0);
+        showClipboardStatus(ready && allowed ? 'Clipboard ready. Use the allowed directions shown above.' : ready ? 'Clipboard transfers are blocked. See the access status above.' :
           'Clipboard sharing requires a connected SPICE guest agent.');
       },
       onclipboard(text) {
