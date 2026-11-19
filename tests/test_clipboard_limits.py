@@ -144,6 +144,26 @@ def test_wire_directions_and_primary_selection():
     assert server.prepare(packet(109, raw), 109)[2] == [('from_vm', -1)]
 
 
+@pytest.mark.parametrize('client_selection,guest_selection', [(True, True), (True, False), (False, True), (False, False)])
+def test_clipboard_framing_uses_selection_only_when_both_peers_support_it(client_selection, guest_selection):
+    client, guest = peers()
+    client.caps = 64 if client_selection else 0
+    guest.caps = 64 if guest_selection else 0
+    prefix = bytes(4) if client_selection and guest_selection else b''
+    text = 'Windows café 😀\r\nSecond line'.encode('utf-8')
+    for wire, kind, direction in ((client, 107, 'to_vm'), (guest, 109, 'from_vm')):
+        grab = packet(kind, agent(7, prefix + struct.pack('<I', 1)))
+        assert wire.prepare(grab, kind)[2] == [(direction, 0)]
+        assert wire.finish(True)[0] == [grab]
+        wire.requested = True
+        clipboard = packet(kind, agent(4, prefix + struct.pack('<I', 1) + text))
+        assert wire.prepare(clipboard, kind)[2] == [(direction, len(text.decode('utf-8')))]
+        assert wire.finish(True)[0] == [clipboard]
+        release = packet(kind, agent(9, prefix))
+        assert wire.prepare(release, kind)[2] == [(direction, 0)]
+        assert wire.finish(True)[0] == [release]
+
+
 def test_unsolicited_vm_text_cannot_spend_allowance_until_client_requests_it():
     client, server = peers()
     server.requested = False

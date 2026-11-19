@@ -1,10 +1,10 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
-import { ClipboardSpiceConnection } from './spice-clipboard.js?v=20261119-clipboard-access';
-import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-access';
+import { ClipboardSpiceConnection } from './spice-clipboard.js?v=20261119-clipboard-no-help';
+import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-no-help';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
-import { WheelAccumulator } from './spice-scroll.js?v=20261119-clipboard-access';
-import { ConsoleNetworkMetrics, formatNetworkBytes } from './spice-network.js?v=20261119-clipboard-access';
+import { WheelAccumulator } from './spice-scroll.js?v=20261119-clipboard-no-help';
+import { ConsoleNetworkMetrics, formatNetworkBytes } from './spice-network.js?v=20261119-clipboard-no-help';
 
 const networkMetrics = new ConsoleNetworkMetrics();
 const networkToggle = document.getElementById('network-enabled');
@@ -107,19 +107,14 @@ const clipboardPin = document.getElementById('clipboard-pin');
 const clipboardClose = document.getElementById('clipboard-close');
 const clipboardAutoTo = document.getElementById('clipboard-auto-to');
 const clipboardAutoFrom = document.getElementById('clipboard-auto-from');
-const clipboardAccessDetails = document.getElementById('clipboard-access-help');
+document.getElementById('clipboard-access-help')?.remove();
 const clipboardAccess = clipboardAccessHelp({
   userAgent: navigator.userAgent, secure: window.isSecureContext,
   readable: Boolean(navigator.clipboard?.readText), writable: Boolean(navigator.clipboard?.writeText),
 });
 // A running server can still have an older template cached after its static
 // files are updated. Optional clipboard UI must not prevent console startup.
-const clipboardAccessMessage = document.getElementById('clipboard-access-message');
-const clipboardAccessLink = document.getElementById('clipboard-access-link');
 const clipboardAutoControls = document.getElementById('clipboard-auto-controls');
-if (clipboardAccessMessage) clipboardAccessMessage.textContent = clipboardAccess.message;
-if (clipboardAccessLink) clipboardAccessLink.href = clipboardAccess.url;
-if (clipboardAccessDetails) clipboardAccessDetails.open = !clipboardAccess.automaticSupported;
 if (clipboardAutoControls) clipboardAutoControls.hidden = !clipboardAccess.automaticSupported;
 const filePanel = document.getElementById('file-panel');
 const fileDisabled = document.getElementById('file-disabled');
@@ -139,6 +134,7 @@ function clipboardLimited() {
 
 function updateClipboardAvailability() {
   if (!clipboardPolicy) {
+    clipboardPolicyStatus.hidden = false;
     clipboardPolicyStatus.textContent = 'Clipboard access could not be verified. Sharing is paused until AccessForge can load this VM’s permissions.';
     clipboardPolicyStatus.dataset.blocked = 'true';
     return;
@@ -146,12 +142,12 @@ function updateClipboardAvailability() {
   const rules = ['to_vm', 'from_vm'].map(direction => clipboardPolicy[direction]);
   const available = rules.some(rule => rule.enabled && rule.remaining !== 0);
   const restricted = rules.some(rule => !rule.enabled || rule.remaining === 0);
-  const messages = restricted ? rules.map((rule, index) => {
+  const messages = rules.flatMap((rule, index) => {
     const label = index === 0 ? 'Client → VM' : 'VM → client';
-    if (!rule.enabled) return `${label} clipboard is disabled by this VM’s settings.`;
-    if (rule.remaining === 0) return `${label} clipboard is blocked because its character allowance has been used up.`;
-    return `${label} clipboard is allowed.`;
-  }) : ['Clipboard is allowed in both directions.'];
+    if (!rule.enabled) return [`${label} clipboard is disabled by this VM’s settings.`];
+    if (rule.remaining === 0) return [`${label} clipboard is blocked because its character allowance has been used up.`];
+    return [];
+  });
   if (available && !connection?.clipboardReady) {
     messages.push('Sharing is unavailable until a SPICE guest agent with clipboard support is connected inside the VM.');
   } else if (available && !clipboardAccess.automaticSupported) {
@@ -160,6 +156,7 @@ function updateClipboardAvailability() {
     messages.push('Automatic sharing is disabled while a character limit is configured. Use the manual clipboard buttons.');
   }
   clipboardPolicyStatus.textContent = messages.join(' ');
+  clipboardPolicyStatus.hidden = messages.length === 0;
   clipboardPolicyStatus.dataset.blocked = String(restricted || !connection?.clipboardReady);
 }
 
@@ -257,8 +254,7 @@ const clipboardSync = new ClipboardSync({
     updateClipboardSyncTimer();
     const action = direction === 'to' ? 'Auto-send to VM' : 'Auto-copy from VM';
     const denied = error.name === 'NotAllowedError';
-    const reason = denied ? 'Browser clipboard access was denied. See Clipboard access below for setup instructions.' : error.message;
-    if (denied && clipboardAccessDetails) clipboardAccessDetails.open = true;
+    const reason = denied ? 'Browser clipboard access was denied.' : error.message;
     showClipboardStatus(`${action} paused. ${reason} Use the manual clipboard controls or enable it again to retry.`, true);
   },
 });
@@ -558,6 +554,7 @@ controlsDrawer.addEventListener('keydown', event => {
 });
 
 function showClipboardStatus(message, error = false) {
+  clipboardStatus.hidden = !message;
   clipboardStatus.textContent = message;
   clipboardStatus.dataset.error = String(error);
   updateDrawerIndicator();
@@ -610,6 +607,7 @@ function stop() {
   }
   showClipboardStatus('Clipboard sharing requires a connected SPICE guest agent.');
   clipboardPolicyStatus.textContent = 'Clipboard sharing is unavailable while the VM console is disconnected.';
+  clipboardPolicyStatus.hidden = false;
   clipboardPolicyStatus.dataset.blocked = 'true';
 }
 
@@ -723,8 +721,7 @@ async function connect() {
           updateClipboardSyncTimer();
         }
         if (fileUpload) fileUpload.disabled = !uploadAllowed || !connection?.agent_connected;
-        const allowed = clipboardPolicy && Object.values(clipboardPolicy).some(rule => rule.enabled && rule.remaining !== 0);
-        showClipboardStatus(ready && allowed ? 'Clipboard ready. Use the allowed directions shown above.' : ready ? 'Clipboard transfers are blocked. See the access status above.' :
+        showClipboardStatus(ready ? '' :
           'Clipboard sharing requires a connected SPICE guest agent.');
       },
       onclipboard(text) {

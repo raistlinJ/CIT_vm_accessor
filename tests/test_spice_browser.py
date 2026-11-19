@@ -40,8 +40,8 @@ def message(kind, body):
     return struct.pack("<HI", kind, len(body)) + body
 
 
-@pytest.mark.parametrize("agent_enabled,mouse_mode", [(False, 2), (True, 2), (False, 1)])
-def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkeypatch, tmp_path, agent_enabled, mouse_mode):
+@pytest.mark.parametrize("agent_enabled,mouse_mode,clipboard_selection", [(False, 2, True), (True, 2, True), (False, 1, True), (True, 2, False)])
+def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkeypatch, tmp_path, agent_enabled, mouse_mode, clipboard_selection):
     from playwright.sync_api import sync_playwright, expect
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
@@ -58,7 +58,9 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
     file_reads = []
     guest_text = "VM café — こんにちは 😀\n" * 800
     host_text = "Host café — こんにちは 😀\n" * 800
-    clipboard_formats = struct.pack("<II", 0, 1)  # CLIPBOARD selection, UTF-8
+    # Windows agents may advertise by-demand clipboard without X11 selections.
+    clipboard_caps = 32 | (64 if clipboard_selection else 0)
+    clipboard_formats = struct.pack("<II", 0, 1) if clipboard_selection else struct.pack("<I", 1)
 
     def agent_message(kind, payload):
         return struct.pack("<IIQI", 1, kind, 0, len(payload)) + payload
@@ -101,7 +103,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                         stream.sendall(message(104, struct.pack("<I4B", 2, 2, 0, 3, 0)))
                         if agent_enabled:
                             # Capabilities + clipboard ownership can share one data stream.
-                            send_agent(stream, agent_message(6, struct.pack("<II", 0, 96))
+                            send_agent(stream, agent_message(6, struct.pack("<II", 0, clipboard_caps))
                                        + agent_message(7, clipboard_formats))
                     elif channel == 2:  # primary display surface and solid fill
                         stream.sendall(message(314, struct.pack("<5I", 0, 640, 480, 32, 1)))
@@ -146,8 +148,8 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                                     assert agent_body == clipboard_formats
                                     send_agent(stream, agent_message(8, clipboard_formats))
                                 elif agent_kind == 4:
-                                    assert agent_body[:8] == clipboard_formats
-                                    received_clipboards.put(agent_body[8:].decode())
+                                    assert agent_body[:len(clipboard_formats)] == clipboard_formats
+                                    received_clipboards.put(agent_body[len(clipboard_formats):].decode())
                                     # A later guest copy replaces ownership, as in a real desktop.
                                     send_agent(stream, agent_message(7, clipboard_formats))
                                 elif agent_kind == 10:  # file transfer start
@@ -464,8 +466,10 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 expect(page.locator("#console-controls")).to_be_hidden()
                 expect(page.locator("#clipboard-panel")).to_be_visible()
                 expect(page.locator("#clipboard-send")).to_be_visible()
-                expect(page.locator("#clipboard-policy-status")).to_contain_text("Clipboard is allowed in both directions.")
-                if not agent_enabled:
+                if agent_enabled:
+                    expect(page.locator("#clipboard-policy-status")).to_be_hidden()
+                    expect(page.locator("#clipboard-status")).not_to_contain_text("Clipboard ready")
+                else:
                     expect(page.locator("#clipboard-policy-status")).to_contain_text("SPICE guest agent with clipboard support")
                 expect(page.locator("#clipboard-auto-controls")).to_be_visible()
                 assert page.locator("#spice-area").bounding_box() == full_bounds
@@ -545,8 +549,8 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     page.get_by_text("Auto-send to VM", exact=True).click()
                     expect(page.locator("#clipboard-auto-to")).not_to_be_checked()
                     expect(page.locator("#clipboard-status")).to_contain_text("Auto-send to VM paused")
-                    expect(page.locator("#clipboard-access-help")).to_have_attribute("open", "")
-                    expect(page.locator("#clipboard-access-message")).to_contain_text("Site settings → Clipboard → Allow")
+                    expect(page.locator("#clipboard-access-help")).to_have_count(0)
+                    expect(page.locator("#clipboard-status")).to_contain_text("Browser clipboard access was denied.")
                     page.get_by_text("Auto-copy from VM", exact=True).click()
                     expect(page.locator("#clipboard-auto-from")).not_to_be_checked()
                     expect(page.locator("#clipboard-status")).to_contain_text("Auto-copy from VM paused")
@@ -592,7 +596,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.locator("#clipboard-receive-button")).to_be_disabled()
                     page.screenshot(path=str(tmp_path / "clipboard-disabled.png"))
                     clipboard_settings.clear()
-                    expect(page.locator("#clipboard-policy-status")).to_have_text("Clipboard is allowed in both directions.")
+                    expect(page.locator("#clipboard-policy-status")).to_be_hidden()
                     expect(page.locator("#clipboard-send-button")).to_be_enabled()
                     page.evaluate("clipboardTest.pending = true")
                     page.get_by_role("button", name="Paste from computer", exact=True).click()
@@ -630,9 +634,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.add_init_script("Object.defineProperty(navigator, 'userAgent', {value: 'Mozilla/5.0 Version/18.0 Safari/605.1.15'})")
                 page.reload()
                 page.locator("#clipboard-toggle").click()
-                expect(page.locator("#clipboard-access-help")).to_have_attribute("open", "")
-                expect(page.locator("#clipboard-access-message")).to_contain_text("Safari")
-                expect(page.locator("#clipboard-access-message")).to_contain_text("no always-allow clipboard setting")
+                expect(page.locator("#clipboard-access-help")).to_have_count(0)
                 expect(page.locator("#clipboard-auto-controls")).to_be_hidden()
                 expect(page.get_by_role("switch", name="Auto-send to VM", exact=True)).to_have_count(0)
                 expect(page.get_by_role("switch", name="Auto-copy from VM", exact=True)).to_have_count(0)

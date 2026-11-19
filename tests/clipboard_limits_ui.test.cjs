@@ -42,7 +42,8 @@ const allowed = {enabled: true, limit: null, remaining: null};
 test('the popup clearly names disabled directions without saying they are ready', () => {
   const status = availability({to_vm: {...allowed, enabled: false}, from_vm: allowed});
   assert.match(status.textContent, /Client → VM clipboard is disabled by this VM’s settings/);
-  assert.match(status.textContent, /VM → client clipboard is allowed/);
+  assert.doesNotMatch(status.textContent, /VM → client/);
+  assert.equal(status.hidden, false);
   assert.equal(status.dataset.blocked, 'true');
   const both = availability({to_vm: {...allowed, enabled: false}, from_vm: {...allowed, enabled: false}});
   assert.match(both.textContent, /VM → client clipboard is disabled/);
@@ -60,7 +61,8 @@ test('the popup distinguishes exhausted quotas, unavailable permissions and a mi
 
 test('allowed sharing explains browser restrictions and manual-only character limits', () => {
   const full = availability({to_vm: allowed, from_vm: allowed});
-  assert.equal(full.textContent, 'Clipboard is allowed in both directions.');
+  assert.equal(full.textContent, '');
+  assert.equal(full.hidden, true);
   assert.equal(full.dataset.blocked, 'false');
   const browser = availability({to_vm: allowed, from_vm: allowed}, true, false);
   assert.match(browser.textContent, /Automatic clipboard sharing is unavailable in this browser.*manual copy and paste/);

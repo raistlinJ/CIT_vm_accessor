@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>VM {{ vmid }} · AccessForge</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css', v='20261119-clipboard-access') }}">
-  <script type="module" src="{{ url_for('static', filename='spice-console.js', v='20261119-clipboard-access') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css', v='20261119-clipboard-no-help') }}">
+  <script type="module" src="{{ url_for('static', filename='spice-console.js', v='20261119-clipboard-no-help') }}"></script>
 </head>
 <body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-power-url="{{ url_for('console_power', vmid=vmid) }}" data-csrf="{{ csrf }}" data-vmid="{{ vmid }}">
   <div id="controls-drawer">
@@ -97,11 +97,6 @@
       <p id="clipboard-policy-status" role="status" aria-live="polite">Checking clipboard access…</p>
       <p id="clipboard-status" role="status" aria-live="polite">Clipboard sharing requires a connected SPICE guest agent.</p>
       <p id="clipboard-remaining" role="status" aria-live="polite">Loading clipboard allowances…</p>
-      <details id="clipboard-access-help">
-        <summary>Clipboard access</summary>
-        <p id="clipboard-access-message"></p>
-        <a id="clipboard-access-link" target="_blank" rel="noopener noreferrer">Browser instructions ↗</a>
-      </details>
       <div class="clipboard-columns">
         <div>
           <label for="clipboard-send">Text to send to the VM</label>

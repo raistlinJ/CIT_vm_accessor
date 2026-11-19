@@ -96,8 +96,8 @@ class ClipboardWire:
                     raise SpicePolicyError('Invalid agent capabilities')
                 self.caps = struct.unpack_from('<I', body, 4)[0]
             elif agent_kind in (4, 7, 8, 9):
-                # Selection prefixes are negotiated independently by each peer.
-                prefix = 4 if self.peer.caps & 64 else 0
+                # The selection header exists only when both peers support it.
+                prefix = 4 if self.caps & self.peer.caps & 64 else 0
                 if len(body) < prefix:
                     raise SpicePolicyError('Invalid clipboard selection')
                 if prefix and body[:4] != bytes(4):
