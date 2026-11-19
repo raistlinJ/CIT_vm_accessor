@@ -1,5 +1,5 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
-import { ClipboardSpiceConnection } from './spice-clipboard.js?v=20261119-clipboard-no-help';
+import { ClipboardSpiceConnection } from './spice-clipboard.js?v=20261119-clipboard-retry';
 import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-no-help';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
@@ -124,12 +124,49 @@ const clipboardSendButton = document.getElementById('clipboard-send-button');
 const clipboardCopy = document.getElementById('clipboard-copy');
 const clipboardPaste = document.getElementById('clipboard-paste');
 const clipboardReceiveButton = document.getElementById('clipboard-receive-button');
-const clipboardRemaining = document.getElementById('clipboard-remaining');
+let clipboardRemaining = document.getElementById('clipboard-remaining');
+// Older cached templates use a paragraph, which cannot contain a table.
+if (clipboardRemaining?.tagName === 'P') {
+  const container = document.createElement('div');
+  container.id = clipboardRemaining.id;
+  container.setAttribute('aria-live', 'polite');
+  clipboardRemaining.replaceWith(container);
+  clipboardRemaining = container;
+}
 let clipboardPolicy = null;
-let clipboardUsageRequest = 0;
+let clipboardUsageRequest = null;
 
 function clipboardLimited() {
   return !clipboardPolicy || Object.values(clipboardPolicy).some(rule => rule.limit !== null);
+}
+
+function renderClipboardAllowances() {
+  if (!clipboardRemaining) return;
+  let markup = '<p>Clipboard usage unavailable.</p>';
+  if (clipboardPolicy) {
+    const rows = Object.entries({to_vm: 'Client → VM', from_vm: 'VM → client'}).map(([direction, label]) => {
+      const {enabled, remaining, used, limit} = clipboardPolicy[direction];
+      let usage = '—';
+      let balance = enabled ? 'Unlimited' : 'Disabled';
+      if (enabled && limit !== null) {
+        const percent = limit > 0 ? Number(remaining) / Number(limit) * 100 : 0;
+        const band = percent > 75 ? 'high' : percent >= 30 ? 'medium' : 'low';
+        const rounded = Math.round(percent * 10) / 10;
+        let percentage = `${rounded.toLocaleString()}%`;
+        if (band === 'high' && rounded === 75) percentage = '&gt;75%';
+        if (band === 'low' && rounded === 30) percentage = '&lt;30%';
+        usage = `${Number(used).toLocaleString()} / ${Number(limit).toLocaleString()}`;
+        balance = `<span class="clipboard-balance" data-band="${band}">${Number(remaining).toLocaleString()} <small>${percentage}</small></span>`;
+      }
+      return `<tr><th scope="row">${label}</th><td>${usage}</td><td>${balance}</td></tr>`;
+    }).join('');
+    markup = `<table class="clipboard-allowances">
+      <caption>Clipboard allowance (characters)</caption>
+      <thead><tr><th scope="col">Direction</th><th scope="col">Used / limit</th><th scope="col">Remaining</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+  if (clipboardRemaining.innerHTML !== markup) clipboardRemaining.innerHTML = markup;
 }
 
 function updateClipboardAvailability() {
@@ -177,32 +214,45 @@ function applyClipboardPolicy() {
     if (!to?.enabled) connection.localClipboard = null;
   }
   if (!from?.enabled) { guestClipboard = null; clipboardReceive.value = ''; clipboardCopy.disabled = true; }
-  if (clipboardRemaining) clipboardRemaining.textContent = clipboardPolicy ? ['to_vm', 'from_vm'].map(direction => {
-    const rule = clipboardPolicy[direction];
-    return `${direction === 'to_vm' ? 'Client → VM' : 'VM → client'}: ${!rule.enabled ? 'disabled' : rule.remaining === null ? 'unlimited' : `${rule.remaining.toLocaleString()} copy/paste characters remaining (${rule.used.toLocaleString()} / ${rule.limit.toLocaleString()} used)`}`;
-  }).join(' · ') : 'Clipboard usage unavailable. Sharing is paused.';
+  renderClipboardAllowances();
   updateClipboardAvailability();
 }
 
-async function refreshClipboardUsage() {
-  const revision = ++clipboardUsageRequest, attempt = generation;
+function refreshClipboardUsage() {
+  // Polling and manual transfers need the same snapshot. Starting a newer
+  // request must not turn a successful transfer preflight into a failure.
+  if (clipboardUsageRequest) return clipboardUsageRequest.promise;
+  const request = {controller: new AbortController()};
+  clipboardUsageRequest = request;
+  request.promise = fetchClipboardUsage(request).finally(() => {
+    if (clipboardUsageRequest === request) clipboardUsageRequest = null;
+  });
+  return request.promise;
+}
+
+async function fetchClipboardUsage(request) {
   try {
-    const response = await fetch(`/api/spice/${document.body.dataset.vmid}/clipboard`, {credentials: 'same-origin', cache: 'no-store'});
+    const response = await fetch(`/api/spice/${document.body.dataset.vmid}/clipboard`, {
+      credentials: 'same-origin', cache: 'no-store', signal: request.controller.signal,
+    });
     const data = await response.json();
-    if (revision !== clipboardUsageRequest || attempt !== generation) return false;
+    if (clipboardUsageRequest !== request) return false;
     if (!response.ok || !data.clipboard) throw new Error('Clipboard allowance unavailable');
     const previous = clipboardPolicy;
     clipboardPolicy = data.clipboard;
     for (const direction of ['to_vm', 'from_vm']) {
       if (clipboardPolicy[direction].denied_at && clipboardPolicy[direction].denied_at !== previous?.[direction]?.denied_at) {
-        if (connection) connection.awaitingClipboard = false;
+        if (direction === 'from_vm' && connection) {
+          clearTimeout(clipboardReceiveTimer);
+          connection.awaitingClipboard = false;
+        }
         showClipboardStatus(`A ${direction === 'to_vm' ? 'client → VM' : 'VM → client'} transfer exceeded the remaining allowance. Use a smaller selection. No characters were charged.`, true);
       }
     }
     applyClipboardPolicy();
     return true;
   } catch {
-    if (revision !== clipboardUsageRequest || attempt !== generation) return false;
+    if (clipboardUsageRequest !== request) return false;
     clipboardPolicy = null;
     applyClipboardPolicy();
     return false;
@@ -232,6 +282,7 @@ let powerCooldownTimer;
 let pendingPowerAction = null;
 let fileDownloadController = null;
 let clipboardSyncTimer;
+let clipboardReceiveTimer;
 
 const clipboardSync = new ClipboardSync({
   readText: () => {
@@ -309,10 +360,28 @@ clipboardAutoFrom.addEventListener('change', () => {
   clipboardSync.setFromVM(clipboardAutoFrom.checked);
 });
 clipboardReceiveButton?.addEventListener('click', async () => {
-  if (!await refreshClipboardUsage()) return;
-  connection?.requestClipboard();
-  applyClipboardPolicy();
-  showClipboardStatus('Requesting VM text. The received characters count toward the VM → client allowance.');
+  const attempt = generation;
+  clipboardReceiveButton.disabled = true;
+  try {
+    const verified = await refreshClipboardUsage();
+    if (attempt !== generation) return;
+    if (!verified) throw new Error('Clipboard allowance is unavailable. Try again.');
+    const rule = clipboardPolicy.from_vm;
+    if (!rule.enabled || rule.remaining === 0) return;
+    if (!connection?.requestClipboard()) throw new Error('Copy plain text inside the VM, then try Receive from VM again.');
+    showClipboardStatus('Requesting text from the VM…');
+    clearTimeout(clipboardReceiveTimer);
+    clipboardReceiveTimer = setTimeout(() => {
+      if (attempt !== generation || !connection?.awaitingClipboard) return;
+      connection.awaitingClipboard = false;
+      applyClipboardPolicy();
+      showClipboardStatus('The VM did not respond. Copy the text inside the VM again, then retry.', true);
+    }, 15000);
+  } catch (error) {
+    if (attempt === generation) showClipboardStatus(error.message, true);
+  } finally {
+    if (attempt === generation) applyClipboardPolicy();
+  }
 });
 setInterval(() => { if (connection && !document.hidden) void refreshClipboardUsage(); }, 2000);
 function resumeClipboardSync() {
@@ -570,8 +639,11 @@ function showStatus(message, error = false, code = '') {
 
 function stop() {
   generation++;
-  clipboardUsageRequest++;
+  clipboardUsageRequest?.controller.abort();
+  clipboardUsageRequest = null;
+  clearTimeout(clipboardReceiveTimer);
   clipboardPolicy = null;
+  renderClipboardAllowances();
   if (clipboardReceiveButton) clipboardReceiveButton.disabled = true;
   clipboardSync.reset();
   clipboardAutoTo.checked = clipboardAutoFrom.checked = false;
@@ -726,6 +798,7 @@ async function connect() {
       },
       onclipboard(text) {
         if (attempt !== generation) return;
+        clearTimeout(clipboardReceiveTimer);
         guestClipboard = text;
         clipboardReceive.value = text ?? '';
         clipboardCopy.disabled = text === null;
@@ -735,6 +808,12 @@ async function connect() {
         if (text !== null) void refreshClipboardUsage();
       },
       onclipboardavailable() { applyClipboardPolicy(); },
+      onclipboardempty() {
+        if (attempt !== generation) return;
+        clearTimeout(clipboardReceiveTimer);
+        applyClipboardPolicy();
+        showClipboardStatus('The VM returned no text. Copy plain text inside the VM and try again.', true);
+      },
       onfiletransfer(name, error) {
         if (attempt !== generation) return;
         showFileStatus(fileUploadStatus, error ? `Could not send ${name}: ${error}` : `Sent ${name} to the VM.`, Boolean(error));
@@ -863,15 +942,21 @@ clipboardPaste.addEventListener('click', async () => {
   }
 });
 clipboardSendButton.addEventListener('click', async () => {
+  const attempt = generation;
   try {
     clipboardSendButton.disabled = true;
-    if (!await refreshClipboardUsage()) throw new Error('Clipboard allowance is unavailable. Try again.');
+    const verified = await refreshClipboardUsage();
+    if (attempt !== generation) return;
+    if (!verified) throw new Error('Clipboard allowance is unavailable. Try again.');
     if (!connection) throw new Error('Connect to the VM first.');
     connection.offerClipboard(clipboardSend.value);
     clipboardSync.rememberHost(clipboardSend.value);
-    showClipboardStatus('Text ready to paste inside the VM.');
-  } catch (error) { showClipboardStatus(error.message, true); }
-  finally { applyClipboardPolicy(); }
+    showClipboardStatus('Click inside the VM and paste the text.');
+  } catch (error) {
+    if (attempt === generation) showClipboardStatus(error.message, true);
+  } finally {
+    if (attempt === generation) applyClipboardPolicy();
+  }
 });
 clipboardCopy.addEventListener('click', async () => {
   if (guestClipboard === null) return;

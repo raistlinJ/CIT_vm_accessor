@@ -28,7 +28,7 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
         # Reproduce a running Flask process still holding the template from
         # before clipboard guidance/quotas while bind-mounted JS is updated.
         html = re.sub(r'<details id="clipboard-access-help">.*?</details>', '', html, flags=re.S)
-        html = re.sub(r'<p id="clipboard-remaining"[^>]*>.*?</p>', '', html, flags=re.S)
+        html = re.sub(r'<div id="clipboard-remaining"[^>]*>.*?</div>', '', html, flags=re.S)
         html = re.sub(r'<p id="clipboard-policy-status"[^>]*>.*?</p>', '', html, flags=re.S)
         html = re.sub(r'<button id="clipboard-receive-button"[^>]*>.*?</button>', '', html, flags=re.S)
         html = html.replace('id="clipboard-auto-controls"', '')

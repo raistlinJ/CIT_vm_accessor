@@ -23,8 +23,8 @@ test('either limit turns off both automatic switches and displays both persisten
   assert.equal(context.clipboardAutoFrom.disabled,true);
   assert.equal(context.clipboardAutoTo.checked,false);
   assert.equal(context.clipboardAutoFrom.checked,false);
-  assert.match(context.clipboardRemaining.textContent,/12 copy\/paste characters remaining/);
-  assert.match(context.clipboardRemaining.textContent,/VM → client: unlimited/);
+  assert.match(context.clipboardRemaining.innerHTML, /Client → VM<\/th><td>8 \/ 20<\/td>.*data-band="medium">12 <small>60%/);
+  assert.match(context.clipboardRemaining.innerHTML, /VM → client<\/th><td>—<\/td><td>Unlimited/);
   assert.equal(context.clipboardReceiveButton.disabled,false);
 });
 
@@ -38,6 +38,51 @@ function availability(policy, ready = true, automaticSupported = true) {
   return context.clipboardPolicyStatus;
 }
 const allowed = {enabled: true, limit: null, remaining: null};
+
+test('a manual allowance check and a background refresh share the same result', async () => {
+  let finishFetch;
+  let requests = 0;
+  const context = vm.createContext({
+    AbortController,
+    clipboardUsageRequest: null,
+    clipboardPolicy: null,
+    document: {body: {dataset: {vmid: '101'}}},
+    fetch() {
+      requests++;
+      return new Promise(resolve => { finishFetch = resolve; });
+    },
+  });
+  vm.runInContext(helpers, context);
+  context.applyClipboardPolicy = () => {};
+  const manual = context.refreshClipboardUsage();
+  const poll = context.refreshClipboardUsage();
+  assert.equal(requests, 1);
+  finishFetch({ok: true, json: async () => ({clipboard: {to_vm: allowed, from_vm: allowed}})});
+  assert.deepEqual(await Promise.all([manual, poll]), [true, true]);
+  assert.equal(context.clipboardUsageRequest, null);
+
+  const failure = context.refreshClipboardUsage();
+  finishFetch({ok: false, json: async () => ({})});
+  assert.equal(await failure, false);
+  assert.equal(context.clipboardPolicy, null);
+  const retry = context.refreshClipboardUsage();
+  finishFetch({ok: true, json: async () => ({clipboard: {to_vm: allowed, from_vm: allowed}})});
+  assert.equal(await retry, true);
+});
+
+test('allowance colors follow the remaining percentage, including exact thresholds and zero allowance', () => {
+  const context = vm.createContext({clipboardRemaining: {}, clipboardPolicy: {from_vm: {...allowed, enabled: false}}});
+  vm.runInContext(helpers, context);
+  for (const [limit, remaining, band] of [
+    [2000, 2000, 'high'], [2000, 1501, 'high'], [2000, 1500, 'medium'],
+    [2000, 600, 'medium'], [2000, 599, 'low'], [0, 0, 'low'],
+  ]) {
+    context.clipboardPolicy.to_vm = {enabled: true, limit, remaining, used: limit - remaining};
+    context.renderClipboardAllowances();
+    assert.ok(context.clipboardRemaining.innerHTML.includes(`data-band="${band}"`));
+    assert.match(context.clipboardRemaining.innerHTML, /VM → client<\/th><td>—<\/td><td>Disabled/);
+  }
+});
 
 test('the popup clearly names disabled directions without saying they are ready', () => {
   const status = availability({to_vm: {...allowed, enabled: false}, from_vm: allowed});

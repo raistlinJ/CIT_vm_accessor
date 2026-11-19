@@ -57,6 +57,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
     guest_file = b"guest\x00binary\xfffile"
     file_reads = []
     guest_text = "VM café — こんにちは 😀\n" * 800
+    guest_clipboard = guest_text
     host_text = "Host café — こんにちは 😀\n" * 800
     # Windows agents may advertise by-demand clipboard without X11 selections.
     clipboard_caps = 32 | (64 if clipboard_selection else 0)
@@ -143,7 +144,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                                     received_resizes.put((width, height))
                                 elif agent_kind == 8:  # client requests guest clipboard
                                     assert agent_body == clipboard_formats
-                                    send_agent(stream, agent_message(4, clipboard_formats + guest_text.encode()))
+                                    send_agent(stream, agent_message(4, clipboard_formats + guest_clipboard.encode()))
                                 elif agent_kind == 7:  # client offers text
                                     assert agent_body == clipboard_formats
                                     send_agent(stream, agent_message(8, clipboard_formats))
@@ -589,6 +590,25 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.locator("#clipboard-status")).to_contain_text("SPICE guest agent")
                 page.screenshot(path=str(tmp_path / "spice-connected.png"))
                 if agent_enabled:
+                    if not clipboard_selection:
+                        guest_clipboard = "Text from Windows"
+                        clipboard_settings.update(clipboard_to_vm_limit=2000, clipboard_from_vm_limit=2000,
+                                                  clipboard_to_vm_reset="limited-test", clipboard_from_vm_reset="limited-test")
+                        expect(page.locator("#clipboard-remaining")).to_contain_text("0 / 2,000")
+                        expect(page.locator("#clipboard-auto-to")).to_be_disabled()
+                        page.locator("#clipboard-send").fill("Text for Windows")
+                        page.get_by_role("button", name="Send to VM", exact=True).click()
+                        assert received_clipboards.get(timeout=5) == "Text for Windows"
+                        receive = page.get_by_role("button", name="Receive from VM", exact=True)
+                        expect(receive).to_be_enabled()
+                        expect(page.locator("#clipboard-receive")).to_have_value("")
+                        receive.click()
+                        expect(page.locator("#clipboard-receive")).to_have_value(guest_clipboard)
+                        rows = page.locator("#clipboard-remaining tbody tr")
+                        expect(rows.nth(0)).to_contain_text("16 / 2,000")
+                        expect(rows.nth(1)).to_contain_text("17 / 2,000")
+                        clipboard_settings.clear()
+                        guest_clipboard = guest_text
                     clipboard_settings.update(clipboard_to_vm=False, clipboard_from_vm=False)
                     expect(page.locator("#clipboard-policy-status")).to_contain_text("Client → VM clipboard is disabled by this VM’s settings.")
                     expect(page.locator("#clipboard-policy-status")).to_contain_text("VM → client clipboard is disabled by this VM’s settings.")

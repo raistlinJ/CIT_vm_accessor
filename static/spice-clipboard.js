@@ -58,6 +58,7 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     this.onclipboard = options.onclipboard || (() => {});
     this.onclipboardstate = options.onclipboardstate || (() => {});
     this.onclipboardavailable = options.onclipboardavailable || (() => {});
+    this.onclipboardempty = options.onclipboardempty || (() => {});
     this.clipboardPolicy = options.clipboardPolicy || null;
     this.onmonitorchange = options.onmonitorchange || (() => {});
     this.onfiletransfer = options.onfiletransfer || (() => {});
@@ -108,10 +109,11 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
 
   requestClipboard() {
     const rule = this.clipboardRule('from_vm');
-    if (!this.clipboardReady || !this.guestOwnsClipboard || !rule.enabled || rule.remaining === 0) return;
+    if (!this.clipboardReady || !this.guestOwnsClipboard || this.awaitingClipboard || !rule.enabled || rule.remaining === 0) return false;
     this.awaitingClipboard = true;
     this.send_agent_message(C.VD_AGENT_CLIPBOARD_REQUEST,
       new SpiceMsgClipboardRequest(C.VD_AGENT_CLIPBOARD_UTF8_TEXT, this.agent_caps));
+    return true;
   }
 
   offerClipboard(text) {
@@ -198,7 +200,10 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
         available ? this.localClipboard : '', this.agent_caps));
     } else if (kind === C.VD_AGENT_CLIPBOARD && this.guestOwnsClipboard && this.awaitingClipboard) {
       this.awaitingClipboard = false;
-      if (type !== C.VD_AGENT_CLIPBOARD_UTF8_TEXT) return;
+      if (type !== C.VD_AGENT_CLIPBOARD_UTF8_TEXT) {
+        this.onclipboardempty?.();
+        return;
+      }
       const text = new Uint8Array(buffer, prefix + 4);
       if (text.byteLength > MAX_CLIPBOARD_BYTES) throw new Error('Clipboard text exceeds 1 MiB.');
       this.onclipboard(new TextDecoder().decode(text));
