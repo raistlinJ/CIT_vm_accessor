@@ -7,7 +7,7 @@ test('explains Safari and Firefox restrictions instead of offering unsupported a
     const result = clipboardAccessHelp({ userAgent, secure: true, readable: true, writable: true });
     assert.equal(result.automaticSupported, false);
     assert.match(result.message, /no always-allow clipboard setting/);
-    assert.match(result.message, /Paste from my clipboard/);
+    assert.match(result.message, /Paste here/);
     assert.match(result.message, /Chrome or Edge/);
   }
 });

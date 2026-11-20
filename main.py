@@ -965,7 +965,14 @@ def proxmox_request(method: str, path: str, **kwargs):
   start_time = time.time()
   resp = requests.request(method.upper(), url, verify=verify_flag, **kwargs)
   elapsed = (time.time() - start_time) * 1000.0
-  preview = "<file content redacted>" if file_read or file_write else "<SPICE credentials redacted>" if path.endswith("/spiceproxy") else resp.text[:160].replace('\n',' ').replace('\r',' ')
+  if file_read or file_write:
+    preview = "<file content redacted>"
+  elif path.endswith("/spiceproxy"):
+    preview = "<SPICE credentials redacted>"
+  elif path.endswith("/config"):
+    preview = "<VM config redacted>"
+  else:
+    preview = resp.text[:160].replace('\n', ' ').replace('\r', ' ')
   logger.info(
     f"[{req_id()}] INBOUND {method.upper()} {url} status={resp.status_code} elapsed_ms={elapsed:.1f} body_preview={preview!r}"
   )
@@ -1620,7 +1627,7 @@ def clipboard_cluster(host, port):
   return str(host).strip('[]').lower().rstrip('.') + ':' + str(port)
 
 
-def read_vm_clipboard(vmid, cookies, headers, fetch):
+def read_vm_description(vmid, cookies, headers, fetch):
   resources = fetch('/cluster/resources', params={'type': 'vm'}, cookies=cookies, headers=headers, timeout=10)
   resources.raise_for_status()
   vm = next(v for v in resources.json()['data'] if str(v.get('vmid')) == str(vmid) and v.get('type') == 'qemu')
@@ -1629,7 +1636,12 @@ def read_vm_clipboard(vmid, cookies, headers, fetch):
     raise ValueError('Invalid VM node')
   config = fetch(f'/nodes/{node}/qemu/{vmid}/config', params={'current': 1}, cookies=cookies, headers=headers, timeout=10)
   config.raise_for_status()
-  metadata = parse_accessforge_metadata(config.json()['data'].get('description'), default={})
+  return config.json()['data'].get('description')
+
+
+def read_vm_clipboard(vmid, cookies, headers, fetch):
+  description = read_vm_description(vmid, cookies, headers, fetch)
+  metadata = parse_accessforge_metadata(description, default={})
   if metadata is None:
     raise ValueError('Invalid AccessForge clipboard settings')
   return parse_clipboard_policy(metadata)
@@ -2565,6 +2577,29 @@ def _extract_vm_credentials(notes):
         value = value[1:-1]
       credentials[name] = value
   return credentials
+
+
+@app.get('/api/spice/<int:vmid>/login-details')
+@require_session(api=True)
+def vm_login_details(vmid):
+  cookies = {'PVEAuthCookie': session['pve_ticket']}
+  headers = {'CSRFPreventionToken': session.get('pve_csrf')}
+  try:
+    description = read_vm_description(vmid, cookies, headers, proxmox_get)
+    return jsonify(credentials=_extract_vm_credentials(description))
+  except StopIteration:
+    return jsonify(error='This VM is unavailable.'), 404
+  except requests.HTTPError as exc:
+    status = exc.response.status_code if exc.response is not None else None
+    if status == 401:
+      return jsonify(error='Sign in again to view VM login details.'), 401
+    if status == 403:
+      return jsonify(error='Your account cannot view login details for this VM.'), 403
+    if status == 404:
+      return jsonify(error='This VM is unavailable.'), 404
+  except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError):
+    pass
+  return jsonify(error='Could not load VM login details. Close and reopen to try again.'), 502
 
 
 @app.route("/api/vm-notes", methods=["GET"])

@@ -1,5 +1,6 @@
 import html
 import json
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -55,3 +56,41 @@ def test_notes_endpoint_still_requires_authentication():
     with main.app.test_client() as client, patch.object(main, 'proxmox_get') as get:
         assert client.get('/api/vm-notes?node=node&vmid=101&type=qemu').status_code == 401
         get.assert_not_called()
+
+
+def test_console_login_details_resolve_current_node_and_redact_notes(client, caplog):
+    resources = response([{'node': 'node-b', 'vmid': 101, 'type': 'qemu', 'status': 'stopped'}])
+    config = response({'description': LOGIN + '\n' + POLICY})
+    with caplog.at_level(logging.INFO), patch.object(main.requests, 'request', side_effect=[resources, config]) as upstream:
+        page = client.get('/console/spice/101?node=node-a')
+        upstream.assert_not_called()
+        assert '/api/spice/101/login-details' in page.text
+        assert 'guest-password' not in page.text
+        result = client.get('/api/spice/101/login-details?node=node-a')
+
+    assert result.status_code == 200
+    assert result.headers['Cache-Control'] == 'no-store'
+    assert result.json == {'credentials': {'username': 'student', 'password': 'guest-password'}}
+    config_request = upstream.call_args_list[1]
+    assert config_request.args[1].endswith('/nodes/node-b/qemu/101/config')
+    assert config_request.kwargs['cookies'] == {'PVEAuthCookie': 'test-ticket'}
+    assert '<VM config redacted>' in caplog.text
+    assert 'guest-password' not in caplog.text
+
+
+def test_console_login_details_require_a_session():
+    with main.app.test_client() as client, patch.object(main, 'proxmox_get') as get:
+        result = client.get('/api/spice/101/login-details')
+        get.assert_not_called()
+    assert result.status_code == 401
+    assert result.headers['Cache-Control'] == 'no-store'
+
+
+@pytest.mark.parametrize('config_status', [401, 403, 404])
+def test_console_login_details_respect_upstream_permissions(client, config_status):
+    resources = response([{'node': 'node-b', 'vmid': 101, 'type': 'qemu'}])
+    with patch.object(main, 'proxmox_get', side_effect=[resources, response({'description': LOGIN}, config_status)]):
+        result = client.get('/api/spice/101/login-details')
+    assert result.status_code == config_status
+    assert 'credentials' not in result.json
+    assert 'guest-password' not in result.text

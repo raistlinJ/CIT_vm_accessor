@@ -13,6 +13,14 @@ a:hover { text-decoration: underline; }
 #controls-toggle[data-error="true"] { background: #81352a; border-color: #ffc1b5; color: #fff; }
 #controls-alert { position: absolute; top: 3px; right: 0; display: grid; place-items: center; width: 12px; height: 12px; border-radius: 50%; background: #ffc1b5; color: #46160e; font-size: 10px; font-weight: 800; }
 #console-workspace { display: flex; flex: 1; min-height: 0; min-width: 0; }
+#vm-login-details { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 120; }
+#vm-login-details > summary { padding: 7px 10px; border: 1px solid #46566b; border-radius: 5px; background: #243246; cursor: pointer; font-weight: 600; }
+#vm-login-details > summary:hover, #vm-login-details[open] > summary { background: #344860; }
+.vm-login-panel { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - 58px); overflow: auto; padding: 12px; border: 1px solid #46566b; border-radius: 8px; background: #192332; box-shadow: 0 4px 20px #0008; }
+.vm-login-panel p, .vm-login-panel dl { margin: 0; }
+.vm-login-panel dl { display: grid; gap: 10px; }
+.vm-login-panel dt, .vm-login-panel p { color: #aabbd0; }
+.vm-login-panel dd { margin: 4px 0 0; font: 13px ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 #clipboard-toggle { position: fixed; right: 0; top: 50%; transform: translateY(-50%); width: 22px; height: 64px; display: grid; place-items: center; padding: 0; border-right: 0; border-radius: 10px 0 0 10px; z-index: 90; }
 #clipboard-toggle[data-error="true"] { background: #81352a; border-color: #ffc1b5; }
 #clipboard-panel { position: fixed; inset: 16px 16px 16px auto; width: min(340px, calc(100vw - 32px)); overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 16px; background: #192332; border: 1px solid #46566b; border-radius: 10px; box-shadow: 0 4px 20px #0008; z-index: 110; }

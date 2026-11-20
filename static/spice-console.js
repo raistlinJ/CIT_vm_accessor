@@ -1,10 +1,77 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
 import { ClipboardSpiceConnection, clipboardExceedsAllowance } from './spice-clipboard.js?v=20261119-clipboard-silent-limit';
-import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-actions';
+import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-compact-clipboard';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
 import { WheelAccumulator } from './spice-scroll.js?v=20261119-clipboard-no-help';
 import { ConsoleNetworkMetrics, formatNetworkBytes } from './spice-network.js?v=20261119-clipboard-no-help';
+
+const loginDetails = document.getElementById('vm-login-details');
+if (loginDetails) {
+  const summary = loginDetails.querySelector('summary');
+  const loginStatus = loginDetails.querySelector('[role="status"]');
+  const loginFields = loginDetails.querySelector('dl');
+  const values = [...loginFields.querySelectorAll('[data-credential]')];
+  let loginRequest = null;
+
+  function clearLoginDetails() {
+    loginRequest?.abort();
+    loginRequest = null;
+    loginFields.hidden = true;
+    loginStatus.hidden = true;
+    for (const field of values) {
+      field.textContent = '';
+      field.parentElement.hidden = true;
+    }
+  }
+
+  loginDetails.addEventListener('toggle', async () => {
+    clearLoginDetails();
+    if (!loginDetails.open) return;
+    const controller = new AbortController();
+    loginRequest = controller;
+    loginStatus.textContent = 'Loading login details…';
+    loginStatus.hidden = false;
+    const loadError = 'Could not load VM login details. Close and reopen to try again.';
+    try {
+      const response = await fetch(loginDetails.dataset.url, {
+        credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+      });
+      const data = await response.json();
+      if (controller.signal.aborted || !loginDetails.open) return;
+      if (!response.ok) {
+        loginStatus.textContent = response.status === 401
+          ? 'Sign in again to view VM login details.' : data.error || loadError;
+        return;
+      }
+      for (const field of values) {
+        const value = data.credentials?.[field.dataset.credential];
+        if (typeof value !== 'string' || !value) continue;
+        field.textContent = value;
+        field.parentElement.hidden = false;
+        loginFields.hidden = false;
+      }
+      loginStatus.textContent = loginFields.hidden ? 'No VM login details are configured.' : '';
+      loginStatus.hidden = !loginFields.hidden;
+    } catch {
+      if (!controller.signal.aborted && loginDetails.open) loginStatus.textContent = loadError;
+    }
+  });
+
+  document.addEventListener('click', event => {
+    if (loginDetails.open && !loginDetails.contains(event.target)) loginDetails.open = false;
+  });
+  loginDetails.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !loginDetails.open) return;
+    event.stopPropagation();
+    loginDetails.open = false;
+    summary.focus();
+  });
+  window.addEventListener('pagehide', () => {
+    loginDetails.open = false;
+    clearLoginDetails();
+  });
+}
 
 const networkMetrics = new ConsoleNetworkMetrics();
 const networkToggle = document.getElementById('network-enabled');
@@ -956,7 +1023,7 @@ clipboardPaste.addEventListener('click', async () => {
     const text = await navigator.clipboard.readText();
     if (attempt !== generation) return;
     if (clipboardSend.value !== draft) {
-      showClipboardStatus('The text box changed while clipboard access was pending. Click Paste from my clipboard again to replace it.');
+      showClipboardStatus('The text box changed while clipboard access was pending. Click Paste here again to replace it.');
       return;
     }
     clipboardSend.value = text;
@@ -965,7 +1032,7 @@ clipboardPaste.addEventListener('click', async () => {
   } catch {
     if (attempt !== generation) return;
     clipboardSend.focus();
-    showClipboardStatus('Browser clipboard access is blocked. Paste into the text box with Ctrl+V or ⌘V, then click Copy to VM clipboard.', true);
+    showClipboardStatus('Browser clipboard access is blocked. Paste into the text box with Ctrl+V or ⌘V, then click Copy to VM.', true);
   } finally {
     if (attempt === generation) clipboardPaste.disabled = false;
   }
