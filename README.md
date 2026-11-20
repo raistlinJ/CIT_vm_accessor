@@ -285,13 +285,13 @@ The upload switch hides the upload control. The download switch hides the downlo
 | `ENABLE_VM_FILE_DOWNLOAD` | `false` | Show the VM-to-browser download control and enable the file-read route when `true` |
 | `ENABLE_VM_FILE_TRANSFER` | `false` | Legacy fallback for either direction without its own setting |
 | `LOG_LEVEL` | `DEBUG` in Python, `INFO` in Compose | Application logging |
-| `ACCESSFORGE_MAX_LOGS` | `10000` | Successful browser sign-in events retained on disk. Set to `0` to keep only the latest timestamp per account. |
+| `ACCESSFORGE_MAX_LOGS` | `10000` | Successful browser sign-in events retained on disk. Set to `0` to keep only the latest session details per account. |
 | `DEBUG_HTTP` | `false` | Verbose upstream HTTP debugging; leave off in normal use |
 | `DEFAULT_THEME` | `pokemon` | Dashboard theme |
 
-AccessForge records successful browser sign-ins in `sign_ins.sqlite3` under `CHECKOUT_DATA_DIR`. The latest timestamp is stored per Proxmox address and realm-qualified account and survives event pruning. `ACCESSFORGE_MAX_LOGS` applies across all sign-in events on this AccessForge instance. The event history is pruned after each successful sign-in. SCE-web reads the latest timestamps through its project administrator connection.
+AccessForge records successful browser sign-ins in `sign_ins.sqlite3` under `CHECKOUT_DATA_DIR`. The latest session is stored per Proxmox address and realm-qualified account and survives event pruning. `ACCESSFORGE_MAX_LOGS` applies across all sign-in events on this AccessForge instance. The event history is pruned after each successful sign-in. SCE-web reads the latest sessions using the Proxmox credentials from VM Manager.
 
-AccessForge dashboard and SPICE console pages check in every 45 seconds while a browser session is open. SCE-web displays **Currently logged in** if an account has a session that checked in within the past 150 seconds. Signing out clears that session immediately. Presence tracking starts on the next successful sign-in after upgrading.
+AccessForge dashboard and SPICE console pages check in every 45 seconds while a browser session is open. VM Manager displays **Active** if a session checked in within the past 150 seconds. The **Signed-in** column shows the latest session range after it ends. An explicit logout records the end time. If the browser stops checking in, the range ends at the last check-in. After upgrading, reload an already-open AccessForge page to begin tracking its session if the Proxmox ticket is still valid. Session ranges are captured for new sign-ins.
 
 ## Permissions and security
 

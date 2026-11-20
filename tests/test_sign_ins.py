@@ -75,6 +75,7 @@ def test_validated_browser_login_is_returned_by_admin_lookup(login_client):
     assert set(result.json['latest']) == {'student@pve'}
     assert 0 < result.json['latest']['student@pve'] <= result.json['observed_at']
     assert result.json['active'] == ['student@pve']
+    assert result.json['ends'] == {}
     assert 'guest-password' not in result.text and 'pve-ticket' not in result.text
 
     presence = '/api/session/presence'
@@ -89,6 +90,29 @@ def test_validated_browser_login_is_returned_by_admin_lookup(login_client):
         after_logout = login_client.post(LOOKUP, headers=BASIC, json=query)
     assert after_logout.json['active'] == []
     assert after_logout.json['latest'] == result.json['latest']
+    end = after_logout.json['ends']['student@pve']
+    assert end['estimated'] is False
+    assert result.json['latest']['student@pve'] <= end['timestamp'] <= after_logout.json['observed_at']
+
+
+def test_lookup_pairs_latest_session_with_its_last_check_in(login_client):
+    store = SignInStore(main.accessforge_data_dir())
+    cluster = 'pve.example.test:8006'
+    now = main.time.time()
+    store.record(cluster, 'student@pve', now - 400, 0, session_id='old')
+    store.record(cluster, 'student@pve', now - 300, 0, session_id='new')
+    store.touch_presence('new', now - 200)
+    store.touch_presence('new', now - 210)
+    store.end_presence('old', signed_out_at=now - 20)
+    store.record(cluster, 'legacy@pve', now - 300, 0)
+
+    with patch('account_checkout.requests.get', return_value=reply({'/': {'Sys.Modify': 1}})):
+        result = login_client.post(LOOKUP, headers={'X-AccessForge-Proxmox-Ticket': 'admin-ticket'},
+                                   json={'usernames': ['student@pve', 'legacy@pve']})
+    assert result.status_code == 200
+    assert result.json['active'] == []
+    assert result.json['latest'] == {'student@pve': now - 300, 'legacy@pve': now - 300}
+    assert result.json['ends'] == {'student@pve': {'timestamp': now - 200, 'estimated': True}}
 
 
 def test_rejected_browser_login_never_creates_an_event(login_client):
@@ -99,6 +123,33 @@ def test_rejected_browser_login_never_creates_an_event(login_client):
         result = login_client.post('/login', data={'username': 'student', 'password': 'password'})
     assert b'Ticket validation failed' in result.data
     store.assert_not_called()
+
+
+def test_existing_session_can_check_in_without_a_new_sign_in(login_client):
+    with login_client.session_transaction() as browser_session:
+        browser_session.update(pve_user='tester@pve', pve_ticket='existing-ticket',
+                               pve_host='pve.example.test', pve_port='8006')
+
+    page = login_client.get('/console/spice/123')
+    assert page.status_code == 200
+    assert b'/static/session-presence.js' in page.data
+
+    presence = '/api/session/presence'
+    origin = {'Origin': 'http://localhost'}
+    with patch.object(main, 'proxmox_get', return_value=reply({}, 401)):
+        assert login_client.post(presence, headers=origin).status_code == 401
+    with login_client.session_transaction() as browser_session:
+        assert 'presence_id' not in browser_session
+
+    with patch.object(main, 'proxmox_get', return_value=reply({'/': {}})) as proxmox:
+        assert login_client.post(presence, headers=origin).status_code == 204
+        assert proxmox.call_args.kwargs['cookies'] == {'PVEAuthCookie': 'existing-ticket'}
+    with patch('account_checkout.requests.get', return_value=reply({'/': {'Sys.Modify': 1}})):
+        result = login_client.post(LOOKUP, headers={'X-AccessForge-Proxmox-Ticket': 'admin-ticket'},
+                                   json={'usernames': ['tester@pve']})
+    assert result.status_code == 200
+    assert result.json['active'] == ['tester@pve']
+    assert result.json['latest'] == {}
 
 
 def test_admin_lookup_requires_cluster_admin(login_client):
