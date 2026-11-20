@@ -109,6 +109,26 @@ def test_admin_lookup_requires_cluster_admin(login_client):
         assert login_client.post(LOOKUP, headers=BASIC, json={'usernames': ['student@pve']}).status_code == 403
 
 
+@pytest.mark.parametrize('request_headers, upstream_auth', [
+    ({'X-AccessForge-Proxmox-Ticket': 'refresh-ticket'}, {'cookies': {'PVEAuthCookie': 'refresh-ticket'}}),
+    ({'Authorization': 'PVEAPIToken=student@pve!refresh=example'},
+     {'headers': {'Authorization': 'PVEAPIToken=student@pve!refresh=example'}}),
+])
+def test_sign_in_lookup_authorizes_refresh_credentials(login_client, request_headers, upstream_auth):
+    body = {'usernames': ['student@pve']}
+    with patch('account_checkout.requests.get', return_value=reply({'/': {'Sys.Modify': 1}})) as upstream:
+        result = login_client.post(LOOKUP, headers=request_headers, json=body)
+    assert result.status_code == 200
+    assert upstream.call_args.args == ('https://pve.example.test:8006/api2/json/access/permissions',)
+    for name, value in upstream_auth.items():
+        assert upstream.call_args.kwargs[name] == value
+
+    with patch('account_checkout.requests.get', return_value=reply({'/': {'Sys.Audit': 1}})):
+        result = login_client.post(LOOKUP, headers=request_headers, json=body)
+    assert result.status_code == 403
+    assert 'Sys.Modify' in result.json['error']
+
+
 @pytest.mark.parametrize('matching', [True, False])
 def test_admin_lookup_verifies_alternate_cluster_node(login_client, monkeypatch, matching):
     import ipaddress

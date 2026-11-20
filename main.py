@@ -1732,7 +1732,7 @@ def resolve_proxmox_addresses(host):
             for _, _, _, _, address in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)}
 
 
-def sign_in_cluster_addresses(host, port, requested, ticket):
+def sign_in_cluster_addresses(host, port, requested, upstream_auth):
   from account_checkout import backend_url
 
   scopes = {proxmox_cluster_key(host, port)}
@@ -1759,8 +1759,8 @@ def sign_in_cluster_addresses(host, port, requested, ticket):
       configured = set()
     if not addresses or not addresses.issubset(configured):
       try:
-        result = requests.get(backend_url() + '/cluster/status', cookies={'PVEAuthCookie': ticket},
-                              verify=app.config['CHECKOUT_PROXMOX_VERIFY'], timeout=10, allow_redirects=False)
+        result = requests.get(backend_url() + '/cluster/status', verify=app.config['CHECKOUT_PROXMOX_VERIFY'],
+                              timeout=10, allow_redirects=False, **upstream_auth)
         result.raise_for_status()
         members = result.json()['data']
         member_addresses = {ipaddress.ip_address(row['ip']) for row in members
@@ -1775,11 +1775,37 @@ def sign_in_cluster_addresses(host, port, requested, ticket):
   return {'host': requested_host, 'port': requested_port}, scopes
 
 
+def sign_in_admin_auth():
+  from account_checkout import authenticate_admin, backend_url
+
+  token = request.headers.get('Authorization', '')
+  ticket = request.headers.get('X-AccessForge-Proxmox-Ticket')
+  if token.startswith('PVEAPIToken='):
+    upstream_auth = {'headers': {'Authorization': token}}
+  elif ticket:
+    upstream_auth = {'cookies': {'PVEAuthCookie': ticket}}
+  else:
+    return {'cookies': {'PVEAuthCookie': authenticate_admin()['ticket']}}
+
+  try:
+    response = requests.get(backend_url() + '/access/permissions', params={'path': '/'},
+                            verify=app.config['CHECKOUT_PROXMOX_VERIFY'], timeout=10,
+                            allow_redirects=False, **upstream_auth)
+    if response.status_code in (401, 403):
+      raise CheckoutError('The Proxmox credentials used for Refresh were rejected by AccessForge’s cluster.', response.status_code)
+    response.raise_for_status()
+    permissions = response.json()['data'].get('/', {})
+  except (requests.RequestException, KeyError, TypeError, ValueError, AttributeError):
+    raise CheckoutError('Could not verify the Proxmox credentials used for Refresh.', 502) from None
+  if not isinstance(permissions, dict) or 'Sys.Modify' not in permissions:
+    raise CheckoutError('The Proxmox credentials used for Refresh need Sys.Modify on / to view sign-in status.', 403)
+  return upstream_auth
+
+
 @app.post('/api/admin/sign-ins/latest')
 def admin_latest_sign_ins():
-  from account_checkout import authenticate_admin
   try:
-    principal = authenticate_admin()
+    upstream_auth = sign_in_admin_auth()
     if request.content_length is not None and request.content_length > 1024 * 1024:
       return jsonify(error='Sign-in lookup request is too large.'), 413
     body = request.get_json(silent=True)
@@ -1788,7 +1814,7 @@ def admin_latest_sign_ins():
         any(not isinstance(name, str) or not 1 <= len(name) <= 128 or '@' not in name for name in usernames)):
       return jsonify(error='Provide 1 to 5000 realm-qualified Proxmox usernames.'), 400
     host, port = app.config['CHECKOUT_PROXMOX_HOST'], app.config['CHECKOUT_PROXMOX_PORT']
-    cluster, scopes = sign_in_cluster_addresses(host, port, body.get('cluster'), principal['ticket'])
+    cluster, scopes = sign_in_cluster_addresses(host, port, body.get('cluster'), upstream_auth)
     accounts = list(dict.fromkeys(usernames))
     store = SignInStore(accessforge_data_dir())
     observed_at = time.time()
