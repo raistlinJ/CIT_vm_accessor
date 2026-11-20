@@ -99,6 +99,9 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     assert password == certificates.config["password"].encode() + b"\0"
                     authenticated_channels.append(channel)
                     stream.sendall(struct.pack("<I", 0))
+                    # Keep authenticated channels open while browser assertions
+                    # or clipboard transfers run on a different channel.
+                    stream.settimeout(None)
                     if channel == 1:  # main init + display/input channel list
                         stream.sendall(message(103, struct.pack("<8I", 42, 1, mouse_mode, mouse_mode, int(agent_enabled), 32, 0, 0)))
                         stream.sendall(message(104, struct.pack("<I4B", 2, 2, 0, 3, 0)))
@@ -144,7 +147,11 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                                     received_resizes.put((width, height))
                                 elif agent_kind == 8:  # client requests guest clipboard
                                     assert agent_body == clipboard_formats
-                                    send_agent(stream, agent_message(4, clipboard_formats + guest_clipboard.encode()))
+                                    clipboard_bytes = guest_clipboard.encode()
+                                    send_agent(stream, agent_message(4, clipboard_formats + clipboard_bytes))
+                                    if len(clipboard_bytes) > 2 * 1024 * 1024:
+                                        # A later guest copy should still reach the live console.
+                                        send_agent(stream, agent_message(7, clipboard_formats))
                                 elif agent_kind == 7:  # client offers text
                                     assert agent_body == clipboard_formats
                                     send_agent(stream, agent_message(8, clipboard_formats))
@@ -179,6 +186,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
 
     bridge = SpiceBridge(main.spice_cookie_owner)
     monkeypatch.setattr(main, "spice_bridge", bridge)
+    monkeypatch.setitem(main.app.config, "CHECKOUT_DATA_DIR", str(tmp_path / "checkout"))
     vm_state = {"status": "running", "task_polls": 0, "deny_power": False}
     power_actions = []
     clipboard_settings = {}
@@ -591,7 +599,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.screenshot(path=str(tmp_path / "spice-connected.png"))
                 if agent_enabled:
                     if not clipboard_selection:
-                        guest_clipboard = "Text from Windows"
+                        guest_clipboard = "x" * (2 * 1024 * 1024 + 100)
                         clipboard_settings.update(clipboard_to_vm_limit=2000, clipboard_from_vm_limit=2000,
                                                   clipboard_to_vm_reset="limited-test", clipboard_from_vm_reset="limited-test")
                         expect(page.locator("#clipboard-remaining")).to_contain_text("0 / 2,000")
@@ -602,6 +610,12 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                         receive = page.get_by_role("button", name="Receive from VM", exact=True)
                         expect(receive).to_be_enabled()
                         expect(page.locator("#clipboard-receive")).to_have_value("")
+                        receive.click()
+                        expect(page.locator("#clipboard-status")).to_contain_text("Requesting text")
+                        expect(receive).to_be_enabled(timeout=10000)
+                        expect(page.locator("canvas")).to_be_visible()
+                        expect(page.locator("#clipboard-remaining tbody tr").nth(1)).to_contain_text("0 / 2,000")
+                        guest_clipboard = "Text from Windows"
                         receive.click()
                         expect(page.locator("#clipboard-receive")).to_have_value(guest_clipboard)
                         rows = page.locator("#clipboard-remaining tbody tr")

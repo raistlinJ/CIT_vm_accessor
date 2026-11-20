@@ -50,7 +50,7 @@ test('reassembles split headers, Unicode payloads, empty bodies, and coalesced m
 });
 
 test('rejects oversized agent messages and invalid protocol before allocation', () => {
-  assert.throws(() => new AgentMessageReader().push(u32(1, 4, 0, 0, MAX_CLIPBOARD_BYTES + 65).buffer), /oversized/);
+  assert.throws(() => new AgentMessageReader().push(u32(1, 2, 0, 0, MAX_CLIPBOARD_BYTES + 65).buffer), /oversized/);
   assert.throws(() => new AgentMessageReader().push(u32(2, 4, 0, 0, 0).buffer), /invalid/);
 });
 
@@ -104,8 +104,29 @@ test('ignores Linux PRIMARY and declines non-text clipboard formats', () => {
   assert.equal(client.localClipboard, null);
   assert.equal(client.sent.length, 1);
   assert.equal(client.awaitingClipboard, false);
+  assert.equal(client.guestOwnsClipboard, false);
   client.inject(8, u32(0, 2));
   assert.deepEqual(client.sent.at(-1).bytes, u32(0, 0));
+});
+
+test('a rejected guest clipboard message leaves the connection ready for a later copy', () => {
+  const client = peer(false);
+  const errors = [];
+  client.onclipboarderror = message => errors.push(message);
+  client.inject(7, new Uint8Array([1])); // malformed format list
+  assert.match(errors.at(-1), /invalid clipboard format/);
+  client.inject(7, u32(1));
+  const oversized = agent(4, concat(u32(1), new Uint8Array(MAX_CLIPBOARD_BYTES + 100)));
+  for (let position = 0; position < oversized.length; position += 2048) {
+    client.process_channel_message({type: 109, data: oversized.slice(position, position + 2048).buffer});
+  }
+  assert.match(errors.at(-1), /exceeds 1 MiB/);
+  assert.equal(client.awaitingClipboard, false);
+  assert.equal(client.agentReader.skip, 0);
+  client.inject(7, u32(1));
+  client.inject(4, concat(u32(1), utf8.encode('hello from Windows')));
+  assert.equal(client.received.at(-1), 'hello from Windows');
+  assert.equal(client.clipboardReady, true);
 });
 
 test('clipboard release and agent disconnect clear cached text and pending requests', () => {

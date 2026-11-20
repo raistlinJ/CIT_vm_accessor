@@ -134,6 +134,38 @@ def test_wire_rejects_without_forwarding_text_and_reimburses_all_tokens():
     assert client.finish(True)[0] == [packet(107, raw)]
 
 
+@pytest.mark.parametrize('body', [b'', struct.pack('<I', 1)+b'\xff',
+    struct.pack('<I', 1)+b'x'*(1024*1024+1)])
+def test_invalid_or_oversized_guest_clipboard_is_dropped_without_losing_the_stream(body):
+    client, guest = peers()
+    guest.caps = 0  # Windows-style agent, with no selection header.
+    rejected = packet(109, agent(4, body))
+    assert guest.prepare(rejected, 109)[2] == [('from_vm', -1)]
+    assert guest.finish(False) == ([], packet(108, struct.pack('<I', 1)))
+    request = packet(107, agent(8, struct.pack('<I', 1)))
+    assert client.prepare(request, 107)[2] == [('from_vm', 0)]
+    assert client.finish(True)[0] == [request]
+    accepted = packet(109, agent(4, struct.pack('<I', 1)+b'ok'))
+    assert guest.prepare(accepted, 109)[2] == [('from_vm', 2)]
+    assert guest.finish(True)[0] == [accepted]
+
+
+def test_large_guest_clipboard_is_drained_and_a_following_message_survives():
+    _, guest = peers()
+    guest.caps = 0
+    oversized = agent(4, struct.pack('<I', 1) + b'x' * (2*1024*1024+100))
+    last_full_chunk = len(oversized) // 1024 * 1024
+    for offset in range(0, last_full_chunk, 1024):
+        frame = packet(109, oversized[offset:offset+1024])
+        assert guest.prepare(frame, 109) == ([], packet(108, struct.pack('<I', 1)), None)
+        assert not guest.agent
+    tail = oversized[last_full_chunk:]
+    following = agent(7, struct.pack('<I', 1))
+    assert guest.prepare(packet(109, tail + following), 109)[2] == [('from_vm', 0)]
+    assert guest.discard_remaining == 0
+    assert guest.finish(True) == ([packet(109, following)], None)
+
+
 def test_wire_directions_and_primary_selection():
     client, server = peers()
     for wire, kind, expected in ((client, 107, 'from_vm'), (server, 109, 'to_vm')):

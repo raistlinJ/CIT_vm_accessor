@@ -6,7 +6,7 @@
   <meta name="referrer" content="no-referrer">
   <title>VM {{ vmid }} · AccessForge</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css', v='20261119-clipboard-allowances') }}">
-  <script type="module" src="{{ url_for('static', filename='spice-console.js', v='20261119-clipboard-retry') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='spice-console.js', v='20261119-clipboard-recovery') }}"></script>
 </head>
 <body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-power-url="{{ url_for('console_power', vmid=vmid) }}" data-csrf="{{ csrf }}" data-vmid="{{ vmid }}">
   <div id="controls-drawer">

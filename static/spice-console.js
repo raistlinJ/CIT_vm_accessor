@@ -1,5 +1,5 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
-import { ClipboardSpiceConnection } from './spice-clipboard.js?v=20261119-clipboard-retry';
+import { ClipboardSpiceConnection } from './spice-clipboard.js?v=20261119-clipboard-recovery';
 import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-no-help';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
@@ -370,13 +370,6 @@ clipboardReceiveButton?.addEventListener('click', async () => {
     if (!rule.enabled || rule.remaining === 0) return;
     if (!connection?.requestClipboard()) throw new Error('Copy plain text inside the VM, then try Receive from VM again.');
     showClipboardStatus('Requesting text from the VM…');
-    clearTimeout(clipboardReceiveTimer);
-    clipboardReceiveTimer = setTimeout(() => {
-      if (attempt !== generation || !connection?.awaitingClipboard) return;
-      connection.awaitingClipboard = false;
-      applyClipboardPolicy();
-      showClipboardStatus('The VM did not respond. Copy the text inside the VM again, then retry.', true);
-    }, 15000);
   } catch (error) {
     if (attempt === generation) showClipboardStatus(error.message, true);
   } finally {
@@ -813,6 +806,19 @@ async function connect() {
         clearTimeout(clipboardReceiveTimer);
         applyClipboardPolicy();
         showClipboardStatus('The VM returned no text. Copy plain text inside the VM and try again.', true);
+      },
+      onclipboarderror(message) {
+        if (attempt === generation) showClipboardStatus(message, true);
+      },
+      onclipboardrequested() {
+        if (attempt !== generation) return;
+        clearTimeout(clipboardReceiveTimer);
+        clipboardReceiveTimer = setTimeout(() => {
+          if (attempt !== generation || !connection?.awaitingClipboard) return;
+          connection.awaitingClipboard = false;
+          applyClipboardPolicy();
+          showClipboardStatus('No clipboard text received. Copy a smaller plain-text selection inside the VM and retry.', true);
+        }, 15000);
       },
       onfiletransfer(name, error) {
         if (attempt !== generation) return;

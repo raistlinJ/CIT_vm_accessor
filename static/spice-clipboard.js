@@ -3,6 +3,8 @@ import { Constants as C } from './vendor/spice-html5/src/enums.js';
 import { SpiceMsgClipboardGrab, SpiceMsgClipboardRequest, SpiceMsgClipboardSend } from './vendor/spice-html5/src/spicemsg.js';
 
 export const MAX_CLIPBOARD_BYTES = 1024 * 1024;
+const oversizedClipboard = Symbol('oversized clipboard');
+class ClipboardPayloadError extends Error {}
 
 // Agent messages are a byte stream inside SPICE MAIN_AGENT_DATA packets. A
 // packet may contain a partial header, a partial payload, or several messages.
@@ -13,6 +15,7 @@ export class AgentMessageReader {
     this.headerUsed = 0;
     this.message = null;
     this.used = 0;
+    this.skip = 0;
   }
 
   push(buffer) {
@@ -20,6 +23,12 @@ export class AgentMessageReader {
     const complete = [];
     let offset = 0;
     while (offset < bytes.length) {
+      if (this.skip) {
+        const count = Math.min(this.skip, bytes.length - offset);
+        this.skip -= count;
+        offset += count;
+        continue;
+      }
       if (!this.message) {
         const count = Math.min(20 - this.headerUsed, bytes.length - offset);
         this.header.set(bytes.subarray(offset, offset + count), this.headerUsed);
@@ -28,8 +37,17 @@ export class AgentMessageReader {
         if (this.headerUsed < 20) continue;
         const header = new DataView(this.header.buffer);
         const size = header.getUint32(16, true);
-        if (header.getUint32(0, true) !== C.VD_AGENT_PROTOCOL || size > MAX_CLIPBOARD_BYTES + 64) {
+        if (header.getUint32(0, true) !== C.VD_AGENT_PROTOCOL) {
           throw new Error('The VM sent an invalid or oversized agent message.');
+        }
+        if (size > MAX_CLIPBOARD_BYTES + 64) {
+          if (header.getUint32(4, true) !== C.VD_AGENT_CLIPBOARD) {
+            throw new Error('The VM sent an invalid or oversized agent message.');
+          }
+          this.headerUsed = 0;
+          this.skip = size;
+          complete.push(oversizedClipboard);
+          continue;
         }
         this.message = new Uint8Array(20 + size);
         this.message.set(this.header);
@@ -59,6 +77,8 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     this.onclipboardstate = options.onclipboardstate || (() => {});
     this.onclipboardavailable = options.onclipboardavailable || (() => {});
     this.onclipboardempty = options.onclipboardempty || (() => {});
+    this.onclipboarderror = options.onclipboarderror || (() => {});
+    this.onclipboardrequested = options.onclipboardrequested || (() => {});
     this.clipboardPolicy = options.clipboardPolicy || null;
     this.onmonitorchange = options.onmonitorchange || (() => {});
     this.onfiletransfer = options.onfiletransfer || (() => {});
@@ -113,6 +133,7 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     this.awaitingClipboard = true;
     this.send_agent_message(C.VD_AGENT_CLIPBOARD_REQUEST,
       new SpiceMsgClipboardRequest(C.VD_AGENT_CLIPBOARD_UTF8_TEXT, this.agent_caps));
+    this.onclipboardrequested?.();
     return true;
   }
 
@@ -138,10 +159,19 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     if (msg.type === C.SPICE_MSG_MAIN_AGENT_DATA) {
       try {
         for (const data of this.agentReader.push(msg.data)) {
+          if (data === oversizedClipboard) {
+            this.rejectClipboard('Clipboard text exceeds 1 MiB. Copy a smaller selection.');
+            continue;
+          }
           const type = new DataView(data).getUint32(4, true);
           if ([C.VD_AGENT_CLIPBOARD_GRAB, C.VD_AGENT_CLIPBOARD_REQUEST,
                C.VD_AGENT_CLIPBOARD, C.VD_AGENT_CLIPBOARD_RELEASE].includes(type)) {
-            this.processClipboard(type, data.slice(20));
+            try {
+              this.processClipboard(type, data.slice(20));
+            } catch (error) {
+              if (!(error instanceof ClipboardPayloadError)) throw error;
+              this.rejectClipboard(error.message);
+            }
           } else {
             if (type === C.VD_AGENT_ANNOUNCE_CAPABILITIES && data.byteLength < 28) {
               throw new Error('Invalid guest agent capabilities.');
@@ -162,11 +192,18 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     return handled;
   }
 
+  rejectClipboard(message) {
+    this.awaitingClipboard = false;
+    this.guestOwnsClipboard = false;
+    this.onclipboard(null);
+    this.onclipboarderror?.(message);
+  }
+
   processClipboard(kind, buffer) {
     if (!this.clipboardReady) return;
     const data = new DataView(buffer);
     const prefix = (this.agent_caps[0] & (1 << C.VD_AGENT_CAP_CLIPBOARD_SELECTION)) ? 4 : 0;
-    if (data.byteLength < prefix) throw new Error('Invalid clipboard selection.');
+    if (data.byteLength < prefix) throw new ClipboardPayloadError('The VM returned an invalid clipboard selection.');
     // Do not confuse Linux PRIMARY (mouse selection) with explicit Copy/Paste.
     if (prefix && data.getUint8(0) !== 0) return;
     if (kind === C.VD_AGENT_CLIPBOARD_RELEASE) {
@@ -176,22 +213,25 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
       this.onclipboardavailable?.(false);
       return;
     }
-    if (data.byteLength < prefix + 4) throw new Error('Invalid clipboard message.');
-    const type = data.getUint32(prefix, true);
     if (kind === C.VD_AGENT_CLIPBOARD_GRAB) {
-      if ((data.byteLength - prefix) % 4) throw new Error('Invalid clipboard formats.');
+      if ((data.byteLength - prefix) % 4) throw new ClipboardPayloadError('The VM returned an invalid clipboard format list.');
       this.localClipboard = null;
-      this.guestOwnsClipboard = true;
+      this.guestOwnsClipboard = false;
       this.awaitingClipboard = false;
-      this.onclipboard(null);
       for (let offset = prefix; offset < data.byteLength; offset += 4) {
         if (data.getUint32(offset, true) === C.VD_AGENT_CLIPBOARD_UTF8_TEXT) {
-          this.onclipboardavailable?.(true);
-          if (this.clipboardRule('from_vm').limit === null) this.requestClipboard();
+          this.guestOwnsClipboard = true;
           break;
         }
       }
-    } else if (kind === C.VD_AGENT_CLIPBOARD_REQUEST) {
+      this.onclipboard(null);
+      this.onclipboardavailable?.(this.guestOwnsClipboard);
+      if (this.guestOwnsClipboard && this.clipboardRule('from_vm').limit === null) this.requestClipboard();
+      return;
+    }
+    if (data.byteLength < prefix + 4) throw new ClipboardPayloadError('The VM returned an invalid clipboard message.');
+    const type = data.getUint32(prefix, true);
+    if (kind === C.VD_AGENT_CLIPBOARD_REQUEST) {
       const rule = this.clipboardRule('to_vm');
       const available = type === C.VD_AGENT_CLIPBOARD_UTF8_TEXT && this.localClipboard !== null && rule.enabled &&
         (rule.remaining === null || Array.from(this.localClipboard).length <= rule.remaining);
@@ -205,7 +245,7 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
         return;
       }
       const text = new Uint8Array(buffer, prefix + 4);
-      if (text.byteLength > MAX_CLIPBOARD_BYTES) throw new Error('Clipboard text exceeds 1 MiB.');
+      if (text.byteLength > MAX_CLIPBOARD_BYTES) throw new ClipboardPayloadError('Clipboard text exceeds 1 MiB. Copy a smaller selection.');
       this.onclipboard(new TextDecoder().decode(text));
     }
   }
