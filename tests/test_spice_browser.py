@@ -16,6 +16,7 @@ import time
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from flask import has_request_context, request
 import pytest
 from werkzeug.serving import make_server
 
@@ -187,17 +188,23 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
     bridge = SpiceBridge(main.spice_cookie_owner)
     monkeypatch.setattr(main, "spice_bridge", bridge)
     monkeypatch.setitem(main.app.config, "CHECKOUT_DATA_DIR", str(tmp_path / "checkout"))
-    vm_state = {"status": "running", "task_polls": 0, "deny_power": False}
+    vm_state = {"status": "running", "task_polls": 0, "deny_power": False, "stale_session_reads": 0}
     power_actions = []
     clipboard_settings = {}
 
     def proxmox_get(path, **kwargs):
         if path == "/cluster/resources":
-            return response([{"vmid": 101, "type": "qemu", "node": "node-b", "status": vm_state["status"]}])
+            status = vm_state["status"]
+            if vm_state["stale_session_reads"] and has_request_context() and request.endpoint == "spice_session":
+                vm_state["stale_session_reads"] -= 1
+                status = "stopped"
+            return response([{"vmid": 101, "type": "qemu", "node": "node-b", "status": status}])
         if path.startswith("/nodes/node-b/tasks/"):
             vm_state["task_polls"] += 1
             if vm_state["task_polls"] == 1:
                 return response({"status": "running"})
+            if vm_state["status"] == "stopped":
+                vm_state["stale_session_reads"] = 1
             vm_state["status"] = "running"
             return response({"status": "stopped", "exitstatus": "OK"})
         if path == "/nodes/node-b/qemu/101/agent/file-read":
@@ -711,12 +718,16 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.get_by_role("button", name="Start VM", exact=True)).to_be_disabled()
                     expect(page.get_by_role("button", name="Restart VM", exact=True)).to_be_disabled()
                     expect(page.locator("#power-status")).to_have_text(status_text, timeout=10000)
+                    if label == "Start VM":
+                        expect(page.locator("#status")).to_contain_text("Waiting for the VM to come online")
+                        page.clock.fast_forward(2000)
                     expect(page.locator("canvas")).to_be_visible(timeout=15000)
                     expect(page.locator("#status")).to_contain_text("Connected")
                     expect(page.locator("#clipboard-auto-to")).to_be_disabled()
                     expect(page.locator("#clipboard-auto-from")).to_be_disabled()
                     expect(page.locator("#display-notice")).to_be_hidden()
                     expect(page.locator("#controls-alert")).to_be_hidden()
+                    page.wait_for_function("document.querySelector('canvas')?.sc?.inputs?.state === 'ready'", timeout=5000)
                     assert len(authenticated_channels) >= channel_count + 3
                     # Task completion must not end the shared cooldown early.
                     expect(page.get_by_role("button", name="Start VM", exact=True)).to_be_disabled()

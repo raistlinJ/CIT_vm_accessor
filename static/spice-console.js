@@ -548,7 +548,10 @@ async function powerVM(action) {
     }
     powerStatus.textContent = result.message || (action === 'start' ? 'VM started.' : 'VM restarted.');
     // A manual reconnect during the task overrides auto-reconnect.
-    if (intent === connectionIntent && !controller.signal.aborted) connect();
+    if (intent === connectionIntent && !controller.signal.aborted) {
+      const waitForRunningUntil = action === 'start' ? performance.now() + 30000 : 0;
+      connect(waitForRunningUntil);
+    }
   } catch (error) {
     if (controller.signal.reason === 'pagehide') return;
     powerStatus.dataset.error = 'true';
@@ -727,7 +730,7 @@ function resize() {
   resizeTimer = setTimeout(requestGuestResize, 200);
 }
 
-async function connect() {
+async function connect(waitForRunningUntil = 0) {
   stop();
   const attempt = generation;
   reconnect.disabled = true;
@@ -861,6 +864,15 @@ async function connect() {
     }, 20000);
   } catch (error) {
     if (attempt !== generation || error.name === 'AbortError') return;
+    // Proxmox's cluster status can still report stopped after a successful start.
+    if (error.code === 'vm_stopped' && performance.now() < waitForRunningUntil) {
+      showStatus('Waiting for the VM to come online…');
+      reconnect.disabled = false;
+      connectTimer = setTimeout(() => {
+        if (attempt === generation) connect(waitForRunningUntil);
+      }, 2000);
+      return;
+    }
     stop();
     showStatus(error.message || 'Could not open the console.', true, error.code);
   }
