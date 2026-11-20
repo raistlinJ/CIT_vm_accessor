@@ -84,17 +84,24 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
                     })'''), f'Clipboard buttons wrapped at {width}px'
                 login = page.locator('#vm-login-details')
                 summary = login.locator('summary')
-                expect(summary).to_have_text('Login details')
+                expect(summary).to_have_accessible_name('Login details')
+                tab = summary.bounding_box()
+                assert tab['y'] == 0 and tab['width'] > tab['height']
                 expect(login.locator('dl')).to_be_hidden()
                 assert not login_requests
                 summary.click()
-                expect(login.locator('[data-credential="username"]')).to_have_text('guest-user')
+                username = login.locator('[data-credential="username"]')
+                expect(username).to_have_text('guest-user')
                 password = login.locator('[data-credential="password"]')
                 assert password.text_content() == guest_password
                 expect(password.locator('em')).to_have_count(0)
-                page.set_viewport_size({'width': 320, 'height': 760})
-                panel = login.locator('.vm-login-panel').bounding_box()
-                assert 0 <= panel['x'] and panel['x'] + panel['width'] <= 320
+                for width in (320, 1100):
+                    page.set_viewport_size({'width': width, 'height': 760})
+                    panel = login.locator('.vm-login-panel').bounding_box()
+                    assert 0 <= panel['x'] and panel['x'] + panel['width'] <= width
+                    user_bounds, password_bounds = username.bounding_box(), password.bounding_box()
+                    assert user_bounds['y'] == password_bounds['y']
+                    assert password_bounds['x'] >= user_bounds['x'] + user_bounds['width']
                 summary.press('Escape')
                 expect(password).to_be_hidden()
                 expect(password).to_be_empty()
