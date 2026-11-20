@@ -656,6 +656,7 @@ startVM.addEventListener('click', () => confirmPowerVM('start'));
 restartVM.addEventListener('click', () => confirmPowerVM('restart'));
 
 function setControlsOpen(open) {
+  if (!open && loginDetails) loginDetails.open = false;
   consoleControls.hidden = !open;
   controlsDrawer.dataset.open = String(open);
   controlsToggle.setAttribute('aria-expanded', String(open));
