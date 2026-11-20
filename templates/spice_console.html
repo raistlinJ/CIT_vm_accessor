@@ -5,27 +5,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>VM {{ vmid }} · AccessForge</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css', v='20261120-drawer-login-row') }}">
-  <script type="module" src="{{ url_for('static', filename='spice-console.js', v='20261120-drawer-login') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css', v='20261120-login-header') }}">
+  <script type="module" src="{{ url_for('static', filename='spice-console.js', v='20261120-login-header') }}"></script>
 </head>
 <body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-power-url="{{ url_for('console_power', vmid=vmid) }}" data-csrf="{{ csrf }}" data-vmid="{{ vmid }}">
   <div id="controls-drawer">
-    <button id="controls-toggle" type="button" aria-controls="console-controls" aria-expanded="false" aria-label="Open console controls" title="Open console controls"><span class="controls-grip" aria-hidden="true"></span><span id="controls-alert" aria-hidden="true" hidden>!</span></button>
+    <button id="controls-toggle" type="button" aria-controls="console-controls" aria-expanded="false" aria-label="Open console controls" title="Open console controls">
+      <span class="controls-grip" aria-hidden="true"></span>
+      <span id="controls-alert" aria-hidden="true" hidden>!</span>
+      <span id="controls-login-cue" aria-hidden="true" hidden></span>
+    </button>
     <aside id="console-controls" aria-label="Console controls" hidden>
       <header>
         <strong id="console-title">VM {{ vmid }}</strong>
         <span class="badge">SPICE</span>
+        <details id="vm-login-details" data-url="{{ url_for('vm_login_details', vmid=vmid) }}"
+                 data-availability-url="{{ url_for('vm_login_details', vmid=vmid, availability=1) }}">
+          <summary>Login details</summary>
+          <div class="vm-login-panel" role="region" aria-label="VM login details" tabindex="0">
+            <p role="status" hidden></p>
+            <dl hidden>
+              <div hidden><dt>Username</dt><dd data-credential="username"></dd></div>
+              <div hidden><dt>Password</dt><dd data-credential="password"></dd></div>
+            </dl>
+          </div>
+        </details>
       </header>
-      <details id="vm-login-details" data-url="{{ url_for('vm_login_details', vmid=vmid) }}">
-        <summary aria-label="Login details">Login details</summary>
-        <div class="vm-login-panel" role="region" aria-label="VM login details" tabindex="0">
-          <p role="status" hidden></p>
-          <dl hidden>
-            <div hidden><dt>Username</dt><dd data-credential="username"></dd></div>
-            <div hidden><dt>Password</dt><dd data-credential="password"></dd></div>
-          </dl>
-        </div>
-      </details>
       <nav aria-label="Console controls">
         <button id="start-vm" type="button">Start VM</button>
         <button id="restart-vm" type="button" title="Gracefully reboot the VM">Restart VM</button>
@@ -125,7 +130,11 @@
           </div>
         </div>
       </div>
-      <p class="clipboard-help">Text only, up to 1 MiB. Auto sharing updates clipboards while this window is active; paste in the destination app. If browser access is blocked, use the text boxes. Auto sharing turns off on disconnect.</p>
+      <p class="clipboard-help">
+        Text only, up to 1 MiB.<br>
+        <strong>To VM</strong> — Copy on your computer → <strong>Paste here</strong> → <strong>Copy to VM</strong> → paste in the VM.<br>
+        <strong>From VM</strong> — Copy in the VM → <strong>Get VM text</strong> if needed → <strong>Copy to clipboard</strong> → paste on your computer.
+      </p>
     </aside>
   </div>
   <dialog id="power-confirm" aria-labelledby="power-confirm-title" aria-describedby="power-confirm-message">

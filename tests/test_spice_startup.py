@@ -36,6 +36,7 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
     errors = []
     stale_requests = []
     session_requests = []
+    availability_requests = []
     login_requests = []
     guest_password = ' long-unbroken-password-for-the-narrow-drawer <em>with markup</em> '
     with sync_playwright() as playwright:
@@ -59,6 +60,9 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
                     resource = root / url.path.lstrip('/')
                     route.fulfill(body=resource.read_bytes(), content_type=(
                         'text/javascript' if resource.suffix == '.js' else 'text/css'))
+                elif url.path == '/api/spice/101/login-details' and url.query == 'availability=1':
+                    availability_requests.append(url.path)
+                    route.fulfill(json={'available': True})
                 elif url.path == '/api/spice/101/login-details':
                     login_requests.append(url.path)
                     credentials = {'username': 'guest-user', 'password': guest_password} if len(login_requests) < 3 else {}
@@ -72,11 +76,18 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
             page.goto('http://spice.test/console')
             expect(page.locator('#status')).to_have_text('Simulated VM unavailable')
             drawer = page.locator('#console-controls')
-            login = drawer.locator('#vm-login-details')
+            login = drawer.locator('header > #vm-login-details')
+            cue = page.locator('#controls-login-cue')
             if not legacy_template:
                 expect(login).to_be_hidden()
+                expect(cue).to_be_visible()
+                expect(page.locator('#controls-toggle')).to_have_attribute('aria-label', re.compile('VM login details available'))
+                expect(page.locator('#controls-alert')).to_be_visible()
+                assert availability_requests == ['/api/spice/101/login-details']
+                assert not login_requests
             page.locator('#controls-toggle').click()
             expect(drawer).to_be_visible()
+            expect(cue).to_be_hidden()
             page.locator('#clipboard-toggle').click()
             expect(page.locator('#clipboard-panel')).to_be_visible()
             if not legacy_template:
@@ -90,11 +101,10 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
                 summary = login.locator('summary')
                 expect(summary).to_have_accessible_name('Login details')
                 expect(summary).to_be_visible()
-                expect(login.locator('dl')).to_be_hidden()
-                assert not login_requests
-                summary.click()
                 username = login.locator('[data-credential="username"]')
+                expect(username).to_be_visible()
                 expect(username).to_have_text('guest-user')
+                assert login_requests == ['/api/spice/101/login-details']
                 password = login.locator('[data-credential="password"]')
                 assert password.text_content() == guest_password
                 expect(password.locator('em')).to_have_count(0)
@@ -118,11 +128,10 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
                 page.locator('#start-vm').press('Escape')
                 expect(drawer).to_be_hidden()
                 expect(password).to_be_empty()
+                expect(cue).to_be_hidden()
                 page.locator('#controls-toggle').click()
-                expect(login.locator('dl')).to_be_hidden()
-                assert len(login_requests) == 2
-                summary.click()
                 expect(login.get_by_role('status')).to_have_text('No VM login details are configured.')
+                expect(login.locator('dl')).to_be_hidden()
                 assert len(login_requests) == 3
             assert session_requests == ['/api/spice/101/session']
             assert errors == []

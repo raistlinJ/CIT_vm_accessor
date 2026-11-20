@@ -86,6 +86,16 @@ def test_console_login_details_require_a_session():
     assert result.headers['Cache-Control'] == 'no-store'
 
 
+@pytest.mark.parametrize('notes,available', [(LOGIN, True), (POLICY, False)])
+def test_console_login_availability_returns_only_a_boolean(client, notes, available):
+    resources = response([{'node': 'node-b', 'vmid': 101, 'type': 'qemu', 'status': 'stopped'}])
+    with patch.object(main, 'proxmox_get', side_effect=[resources, response({'description': notes})]):
+        result = client.get('/api/spice/101/login-details?availability=1')
+    assert result.status_code == 200
+    assert result.headers['Cache-Control'] == 'no-store'
+    assert result.json == {'available': available}
+
+
 @pytest.mark.parametrize('config_status', [401, 403, 404])
 def test_console_login_details_respect_upstream_permissions(client, config_status):
     resources = response([{'node': 'node-b', 'vmid': 101, 'type': 'qemu'}])

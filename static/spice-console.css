@@ -12,6 +12,9 @@ a:hover { text-decoration: underline; }
 .controls-grip { width: 2px; height: 22px; border-radius: 2px; background: currentColor; }
 #controls-toggle[data-error="true"] { background: #81352a; border-color: #ffc1b5; color: #fff; }
 #controls-alert { position: absolute; top: 3px; right: 0; display: grid; place-items: center; width: 12px; height: 12px; border-radius: 50%; background: #ffc1b5; color: #46160e; font-size: 10px; font-weight: 800; }
+#controls-toggle[data-login-cue="true"]:not([data-error="true"]) { background: #263d58; border-color: #9bcaff; }
+#controls-login-cue { position: absolute; top: 5px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background: #9bcaff; }
+#controls-toggle[data-error="true"] #controls-login-cue { top: auto; bottom: 5px; }
 #console-workspace { display: flex; flex: 1; min-height: 0; min-width: 0; }
 #clipboard-toggle { position: fixed; right: 0; top: 50%; transform: translateY(-50%); width: 22px; height: 64px; display: grid; place-items: center; padding: 0; border-right: 0; border-radius: 10px 0 0 10px; z-index: 90; }
 #clipboard-toggle[data-error="true"] { background: #81352a; border-color: #ffc1b5; }
@@ -70,15 +73,18 @@ button:disabled { opacity: .45; cursor: default; }
 #file-panel[data-error="true"] > summary { color: #ffc1b5; }
 #file-panel[data-error="true"] > summary::after { content: '! ▸'; }
 #file-panel[data-error="true"][open] > summary::after { content: '! ▾'; }
-#vm-login-details + nav { padding-top: 8px; }
-.vm-login-panel { overflow-x: auto; }
+#console-controls > header { row-gap: 8px; }
+#vm-login-details { flex: 1 0 100%; min-width: 0; }
+#vm-login-details > summary { color: #aabbd0; font-size: 12px; font-weight: 600; cursor: pointer; }
+#vm-login-details[open] > summary { color: #9bcaff; }
+.vm-login-panel { margin-top: 6px; overflow-x: auto; }
 .vm-login-panel p, .vm-login-panel dl { margin: 0; }
 .vm-login-panel dl, .vm-login-panel dl > div { display: flex; align-items: baseline; }
 .vm-login-panel dl { width: max-content; gap: 12px; }
 .vm-login-panel dl > div { gap: 6px; }
 .vm-login-panel dt, .vm-login-panel p { color: #aabbd0; }
 .vm-login-panel dt { font-size: 12px; }
-.vm-login-panel dd { margin: 0; font: 13px/1.4 ui-monospace, monospace; white-space: pre; }
+.vm-login-panel dd { margin: 0; color: #c4ddff; font: 600 13px/1.4 ui-monospace, monospace; white-space: pre; }
 #clipboard-status { color: #aabbd0; }
 #clipboard-policy-status { color: #aabbd0; line-height: 1.5; }
 #clipboard-policy-status[data-blocked="true"] { color: #ffc1b5; }

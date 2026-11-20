@@ -2586,7 +2586,10 @@ def vm_login_details(vmid):
   headers = {'CSRFPreventionToken': session.get('pve_csrf')}
   try:
     description = read_vm_description(vmid, cookies, headers, proxmox_get)
-    return jsonify(credentials=_extract_vm_credentials(description))
+    credentials = _extract_vm_credentials(description)
+    if request.args.get('availability') == '1':
+      return jsonify(available=any(credentials.values()))
+    return jsonify(credentials=credentials)
   except StopIteration:
     return jsonify(error='This VM is unavailable.'), 404
   except requests.HTTPError as exc:

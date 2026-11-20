@@ -58,9 +58,6 @@ if (loginDetails) {
     }
   });
 
-  document.addEventListener('click', event => {
-    if (loginDetails.open && !loginDetails.contains(event.target)) loginDetails.open = false;
-  });
   loginDetails.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || !loginDetails.open) return;
     event.stopPropagation();
@@ -123,6 +120,9 @@ const status = document.getElementById('status');
 const controlsDrawer = document.getElementById('controls-drawer');
 const controlsToggle = document.getElementById('controls-toggle');
 const controlsAlert = document.getElementById('controls-alert');
+const controlsLoginCue = document.getElementById('controls-login-cue');
+let hasOpenedControls = false;
+let loginDetailsAvailable = false;
 const displayNotice = document.getElementById('display-notice');
 const consoleControls = document.getElementById('console-controls');
 const screen = document.getElementById('spice-screen');
@@ -656,7 +656,8 @@ startVM.addEventListener('click', () => confirmPowerVM('start'));
 restartVM.addEventListener('click', () => confirmPowerVM('restart'));
 
 function setControlsOpen(open) {
-  if (!open && loginDetails) loginDetails.open = false;
+  if (open) hasOpenedControls = true;
+  if (loginDetails && (!open || consoleControls.contains(loginDetails))) loginDetails.open = open;
   consoleControls.hidden = !open;
   controlsDrawer.dataset.open = String(open);
   controlsToggle.setAttribute('aria-expanded', String(open));
@@ -679,9 +680,27 @@ function updateDrawerIndicator() {
     .some(element => element?.dataset.error === 'true');
   controlsToggle.dataset.error = String(error);
   controlsAlert.hidden = !error;
-  const label = `${consoleControls.hidden ? 'Open' : 'Close'} console controls${error ? ' — attention needed' : ''}`;
+  const loginCue = loginDetailsAvailable && !hasOpenedControls;
+  if (controlsLoginCue) controlsLoginCue.hidden = !loginCue;
+  controlsToggle.dataset.loginCue = String(loginCue);
+  const action = consoleControls.hidden ? 'Open' : 'Close';
+  const label = `${action} console controls${error ? ' — attention needed' : ''}${loginCue ? ' — VM login details available' : ''}`;
   controlsToggle.setAttribute('aria-label', label);
   controlsToggle.title = label;
+}
+
+async function checkLoginAvailability() {
+  const url = loginDetails?.dataset.availabilityUrl;
+  if (!url) return;
+  try {
+    const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) return;
+    const { available } = await response.json();
+    if (available === true && !hasOpenedControls) {
+      loginDetailsAvailable = true;
+      updateDrawerIndicator();
+    }
+  } catch { /* The drawer can still load login details when opened. */ }
 }
 
 controlsToggle.addEventListener('click', () => setControlsOpen(consoleControls.hidden));
@@ -1089,4 +1108,5 @@ document.addEventListener('fullscreenchange', resize);
 window.addEventListener('resize', resize);
 window.addEventListener('pagehide', () => { powerRequest?.abort('pagehide'); fileDownloadController?.abort('pagehide'); stop(); });
 window.addEventListener('pageshow', event => { if (event.persisted) connect(); });
+void checkLoginAvailability();
 connect();
