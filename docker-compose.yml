@@ -57,6 +57,7 @@ services:
       - VERIFY_SSL=${VERIFY_SSL:-false}
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-now}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ACCESSFORGE_MAX_LOGS=${ACCESSFORGE_MAX_LOGS:-10000}
       - DEBUG_HTTP=${DEBUG_HTTP:-false}
       - DEFAULT_THEME=${DEFAULT_THEME:-pokemon}
       # Local checkout state; the SCE-web plugin sends administrator actions and status requests.

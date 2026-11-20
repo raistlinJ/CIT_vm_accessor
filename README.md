@@ -285,8 +285,11 @@ The upload switch hides the upload control. The download switch hides the downlo
 | `ENABLE_VM_FILE_DOWNLOAD` | `false` | Show the VM-to-browser download control and enable the file-read route when `true` |
 | `ENABLE_VM_FILE_TRANSFER` | `false` | Legacy fallback for either direction without its own setting |
 | `LOG_LEVEL` | `DEBUG` in Python, `INFO` in Compose | Application logging |
+| `ACCESSFORGE_MAX_LOGS` | `10000` | Successful browser sign-in events retained on disk. Set to `0` to keep only the latest timestamp per account. |
 | `DEBUG_HTTP` | `false` | Verbose upstream HTTP debugging; leave off in normal use |
 | `DEFAULT_THEME` | `pokemon` | Dashboard theme |
+
+AccessForge records successful browser sign-ins in `sign_ins.sqlite3` under `CHECKOUT_DATA_DIR`. The latest timestamp is stored per Proxmox address and realm-qualified account and survives event pruning. `ACCESSFORGE_MAX_LOGS` applies across all sign-in events on this AccessForge instance. The event history is pruned after each successful sign-in. SCE-web reads the latest timestamps through its project administrator connection.
 
 ## Permissions and security
 

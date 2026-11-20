@@ -6,68 +6,54 @@ import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
 import { WheelAccumulator } from './spice-scroll.js?v=20261119-clipboard-no-help';
 import { ConsoleNetworkMetrics, formatNetworkBytes } from './spice-network.js?v=20261119-clipboard-no-help';
 
-const loginDetails = document.getElementById('vm-login-details');
-if (loginDetails) {
-  const summary = loginDetails.querySelector('summary');
-  const loginStatus = loginDetails.querySelector('[role="status"]');
-  const loginFields = loginDetails.querySelector('dl');
-  const values = [...loginFields.querySelectorAll('[data-credential]')];
-  let loginRequest = null;
+const loginDetails = document.querySelector('#console-controls #vm-login-details');
+const loginStatus = loginDetails?.querySelector('[role="status"]');
+const loginFields = loginDetails?.querySelector('dl');
+const loginValues = loginFields?.querySelectorAll('[data-credential]');
+let loginRequest = null;
 
-  function clearLoginDetails() {
-    loginRequest?.abort();
-    loginRequest = null;
-    loginFields.hidden = true;
-    loginStatus.hidden = true;
-    for (const field of values) {
-      field.textContent = '';
-      field.parentElement.hidden = true;
-    }
+async function updateLoginDetails(drawerOpen) {
+  if (!loginDetails) return;
+  loginRequest?.abort();
+  loginRequest = null;
+  loginDetails.hidden = !drawerOpen;
+  loginFields.hidden = true;
+  loginStatus.hidden = !drawerOpen;
+  for (const field of loginValues) {
+    field.textContent = '';
+    field.parentElement.hidden = true;
   }
+  // Support a cached template with the previous disclosure in the drawer.
+  if (loginDetails instanceof HTMLDetailsElement) loginDetails.open = drawerOpen;
+  if (!drawerOpen) return;
 
-  loginDetails.addEventListener('toggle', async () => {
-    clearLoginDetails();
-    if (!loginDetails.open) return;
-    const controller = new AbortController();
-    loginRequest = controller;
-    loginStatus.textContent = 'Loading login details…';
-    loginStatus.hidden = false;
-    const loadError = 'Could not load VM login details. Close and reopen to try again.';
-    try {
-      const response = await fetch(loginDetails.dataset.url, {
-        credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
-      });
-      const data = await response.json();
-      if (controller.signal.aborted || !loginDetails.open) return;
-      if (!response.ok) {
-        loginStatus.textContent = response.status === 401
-          ? 'Sign in again to view VM login details.' : data.error || loadError;
-        return;
-      }
-      for (const field of values) {
-        const value = data.credentials?.[field.dataset.credential];
-        if (typeof value !== 'string' || !value) continue;
-        field.textContent = value;
-        field.parentElement.hidden = false;
-        loginFields.hidden = false;
-      }
-      loginStatus.textContent = loginFields.hidden ? 'No VM login details are configured.' : '';
-      loginStatus.hidden = !loginFields.hidden;
-    } catch {
-      if (!controller.signal.aborted && loginDetails.open) loginStatus.textContent = loadError;
+  const controller = new AbortController();
+  loginRequest = controller;
+  loginStatus.textContent = 'Loading login details…';
+  const loadError = 'Could not load VM login details. Close and reopen to try again.';
+  try {
+    const response = await fetch(loginDetails.dataset.url, {
+      credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+    });
+    const data = await response.json();
+    if (controller.signal.aborted) return;
+    if (!response.ok) {
+      loginStatus.textContent = response.status === 401
+        ? 'Sign in again to view VM login details.' : data.error || loadError;
+      return;
     }
-  });
-
-  loginDetails.addEventListener('keydown', event => {
-    if (event.key !== 'Escape' || !loginDetails.open) return;
-    event.stopPropagation();
-    loginDetails.open = false;
-    summary.focus();
-  });
-  window.addEventListener('pagehide', () => {
-    loginDetails.open = false;
-    clearLoginDetails();
-  });
+    for (const field of loginValues) {
+      const value = data.credentials?.[field.dataset.credential];
+      if (typeof value !== 'string' || !value) continue;
+      field.textContent = value;
+      field.parentElement.hidden = false;
+      loginFields.hidden = false;
+    }
+    loginStatus.hidden = true;
+    loginDetails.hidden = loginFields.hidden;
+  } catch {
+    if (!controller.signal.aborted) loginStatus.textContent = loadError;
+  }
 }
 
 const networkMetrics = new ConsoleNetworkMetrics();
@@ -657,11 +643,11 @@ restartVM.addEventListener('click', () => confirmPowerVM('restart'));
 
 function setControlsOpen(open) {
   if (open) hasOpenedControls = true;
-  if (loginDetails && (!open || consoleControls.contains(loginDetails))) loginDetails.open = open;
   consoleControls.hidden = !open;
   controlsDrawer.dataset.open = String(open);
   controlsToggle.setAttribute('aria-expanded', String(open));
   updateDrawerIndicator();
+  void updateLoginDetails(open);
 }
 
 function updateDrawerIndicator() {
@@ -1106,7 +1092,16 @@ new MutationObserver(fitDisplay).observe(screen, {
 });
 document.addEventListener('fullscreenchange', resize);
 window.addEventListener('resize', resize);
-window.addEventListener('pagehide', () => { powerRequest?.abort('pagehide'); fileDownloadController?.abort('pagehide'); stop(); });
-window.addEventListener('pageshow', event => { if (event.persisted) connect(); });
+window.addEventListener('pagehide', () => {
+  void updateLoginDetails(false);
+  powerRequest?.abort('pagehide');
+  fileDownloadController?.abort('pagehide');
+  stop();
+});
+window.addEventListener('pageshow', event => {
+  if (!event.persisted) return;
+  if (!consoleControls.hidden) void updateLoginDetails(true);
+  connect();
+});
 void checkLoginAvailability();
 connect();

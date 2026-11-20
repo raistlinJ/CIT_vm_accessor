@@ -31,7 +31,7 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
         html = re.sub(r'<div id="clipboard-remaining"[^>]*>.*?</div>', '', html, flags=re.S)
         html = re.sub(r'<p id="clipboard-policy-status"[^>]*>.*?</p>', '', html, flags=re.S)
         html = re.sub(r'<button id="clipboard-receive-button"[^>]*>.*?</button>', '', html, flags=re.S)
-        html = re.sub(r'<details id="vm-login-details"[^>]*>.*?</details>', '', html, flags=re.S)
+        html = re.sub(r'<section id="vm-login-details"[^>]*>.*?</section>', '', html, flags=re.S)
         html = html.replace('id="clipboard-auto-controls"', '')
     errors = []
     stale_requests = []
@@ -65,7 +65,7 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
                     route.fulfill(json={'available': True})
                 elif url.path == '/api/spice/101/login-details':
                     login_requests.append(url.path)
-                    credentials = {'username': 'guest-user', 'password': guest_password} if len(login_requests) < 3 else {}
+                    credentials = {'username': 'guest-user', 'password': guest_password} if len(login_requests) == 1 else {}
                     route.fulfill(json={'credentials': credentials})
                 else:
                     session_requests.append(url.path)
@@ -76,7 +76,7 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
             page.goto('http://spice.test/console')
             expect(page.locator('#status')).to_have_text('Simulated VM unavailable')
             drawer = page.locator('#console-controls')
-            login = drawer.locator('header > #vm-login-details')
+            login = drawer.locator('header #vm-login-details')
             cue = page.locator('#controls-login-cue')
             if not legacy_template:
                 expect(login).to_be_hidden()
@@ -98,9 +98,9 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
                         return first.top === second.top && second.right <= row.getBoundingClientRect().right;
                     })'''), f'Clipboard buttons wrapped at {width}px'
                 page.locator('#clipboard-close').click()
-                summary = login.locator('summary')
-                expect(summary).to_have_accessible_name('Login details')
-                expect(summary).to_be_visible()
+                expect(login).to_have_accessible_name('VM login details')
+                expect(login).to_be_visible()
+                badge = drawer.locator('header .badge')
                 username = login.locator('[data-credential="username"]')
                 expect(username).to_be_visible()
                 expect(username).to_have_text('guest-user')
@@ -108,31 +108,27 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
                 password = login.locator('[data-credential="password"]')
                 assert password.text_content() == guest_password
                 expect(password.locator('em')).to_have_count(0)
-                panel = login.locator('.vm-login-panel')
                 for width in (320, 1100):
                     page.set_viewport_size({'width': width, 'height': 760})
-                    panel_bounds = panel.bounding_box()
+                    panel_bounds = login.bounding_box()
+                    badge_bounds = badge.bounding_box()
                     drawer_bounds = drawer.bounding_box()
-                    assert drawer_bounds['x'] <= panel_bounds['x']
+                    assert badge_bounds['x'] + badge_bounds['width'] <= panel_bounds['x']
                     assert panel_bounds['x'] + panel_bounds['width'] <= drawer_bounds['x'] + drawer_bounds['width']
+                    assert abs(badge_bounds['y'] + badge_bounds['height'] / 2
+                               - panel_bounds['y'] - panel_bounds['height'] / 2) < 1
                     user_bounds, password_bounds = username.bounding_box(), password.bounding_box()
                     assert user_bounds['y'] == password_bounds['y']
                     assert user_bounds['x'] + user_bounds['width'] <= password_bounds['x']
-                assert panel.evaluate('panel => { panel.scrollLeft = panel.scrollWidth; return panel.scrollLeft > 0; }')
-                summary.press('Escape')
-                expect(password).to_be_hidden()
-                expect(password).to_be_empty()
-                expect(drawer).to_be_visible()
-                summary.click()
-                expect(username).to_have_text('guest-user')
-                page.locator('#start-vm').press('Escape')
+                assert login.evaluate('panel => { panel.scrollLeft = panel.scrollWidth; return panel.scrollLeft > 0; }')
+                login.press('Escape')
                 expect(drawer).to_be_hidden()
                 expect(password).to_be_empty()
                 expect(cue).to_be_hidden()
                 page.locator('#controls-toggle').click()
-                expect(login.get_by_role('status')).to_have_text('No VM login details are configured.')
-                expect(login.locator('dl')).to_be_hidden()
-                assert len(login_requests) == 3
+                expect(login).to_be_hidden()
+                expect(badge).to_be_visible()
+                assert len(login_requests) == 2
             assert session_requests == ['/api/spice/101/session']
             assert errors == []
             assert stale_requests == []

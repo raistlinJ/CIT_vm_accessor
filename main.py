@@ -21,6 +21,7 @@ from spice_bridge import SpiceBridge, Target, session_owner
 from transfer_policy import parse_transfer_policy, parse_accessforge_metadata
 from clipboard_policy import parse_clipboard_policy
 from clipboard_store import ClipboardStore
+from sign_in_store import SignInStore
 from project_metadata import collect_project_metadata
 import concurrent.futures
 import re
@@ -109,6 +110,14 @@ BASE_API = f"https://{PROXMOX_HOST}:{PROXMOX_PORT}/api2/json"
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+try:
+  max_logs = int(os.environ.get('ACCESSFORGE_MAX_LOGS', '10000'))
+  if not 0 <= max_logs < 2**63:
+    raise ValueError('Invalid sign-in log limit')
+except ValueError:
+  logger.warning('Invalid ACCESSFORGE_MAX_LOGS value. Retaining up to 10000 sign-in events.')
+  max_logs = 10000
+app.config['ACCESSFORGE_MAX_LOGS'] = max_logs
 
 
 def spice_cookie_owner(cookie_header):
@@ -664,7 +673,7 @@ def _allow_iframe(resp):
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     resp.headers['Pragma'] = 'no-cache'
     resp.headers['Expires'] = '0'
-  if request.path.startswith('/api/spice/'):
+  if request.path.startswith('/api/spice/') or request.path == '/api/admin/sign-ins/latest':
     resp.headers['Cache-Control'] = 'no-store'
   return resp
 
@@ -1210,7 +1219,6 @@ def login():
         samesite=same_site_mode,
         secure=secure_effective,
       )
-    logger.info(f"[{req_id()}] Login successful for {user_with_realm}")
     # Post-login validation: ensure ticket actually works
     try:
       vr = proxmox_get("/version", cookies={"PVEAuthCookie": ticket}, headers={"CSRFPreventionToken": csrf})
@@ -1244,6 +1252,13 @@ def login():
       )
     bind_checkout_session()
     bind_checkout_admin()
+    logger.info(f"[{req_id()}] Login successful for {user_with_realm}")
+    try:
+      canonical_user = data.get('username') or user_with_realm
+      SignInStore(accessforge_data_dir()).record(proxmox_cluster_key(host_override, port_override),
+          canonical_user, time.time(), app.config['ACCESSFORGE_MAX_LOGS'])
+    except (OSError, sqlite3.Error):
+      logger.warning('Could not save AccessForge sign-in to persistent storage.')
     return resp
   except CheckoutError as e:
     logger.warning("Checkout unavailable during login: %s",e.message)
@@ -1619,11 +1634,15 @@ def vm_transfer_policy(node, vmid, cookies, headers, fetch=None):
     return {"file_upload": False, "file_download": False}
 
 
+def accessforge_data_dir():
+  return app.config.get('CHECKOUT_DATA_DIR') or os.environ.get('CHECKOUT_DATA_DIR') or os.path.join(app.root_path, 'data')
+
+
 def clipboard_store():
-  return ClipboardStore(app.config.get('CHECKOUT_DATA_DIR') or os.environ.get('CHECKOUT_DATA_DIR') or os.path.join(app.root_path, 'data'))
+  return ClipboardStore(accessforge_data_dir())
 
 
-def clipboard_cluster(host, port):
+def proxmox_cluster_key(host, port):
   return str(host).strip('[]').lower().rstrip('.') + ':' + str(port)
 
 
@@ -1654,12 +1673,33 @@ def vm_clipboard_usage(vmid):
     cookies = {'PVEAuthCookie': session['pve_ticket']}
     headers = {'CSRFPreventionToken': session.get('pve_csrf')}
     policy = read_vm_clipboard(vmid, cookies, headers, proxmox_get)
-    cluster = clipboard_cluster(session.get('pve_host', PROXMOX_HOST), session.get('pve_port', PROXMOX_PORT))
+    cluster = proxmox_cluster_key(session.get('pve_host', PROXMOX_HOST), session.get('pve_port', PROXMOX_PORT))
     result = jsonify(clipboard=clipboard_store().snapshot(cluster, vmid, policy))
     result.headers['Cache-Control'] = 'no-store'
     return result
   except (requests.RequestException, ValueError, KeyError, TypeError, StopIteration, OSError, sqlite3.Error):
     return jsonify(error='Clipboard usage is unavailable. Check VM access and persistent storage.'), 503
+
+
+@app.post('/api/admin/sign-ins/latest')
+def admin_latest_sign_ins():
+  from account_checkout import authenticate_admin
+  try:
+    authenticate_admin()
+    if request.content_length is not None and request.content_length > 1024 * 1024:
+      return jsonify(error='Sign-in lookup request is too large.'), 413
+    body = request.get_json(silent=True)
+    usernames = body.get('usernames') if isinstance(body, dict) else None
+    if (not isinstance(usernames, list) or not 1 <= len(usernames) <= 5000 or
+        any(not isinstance(name, str) or not 1 <= len(name) <= 128 or '@' not in name for name in usernames)):
+      return jsonify(error='Provide 1 to 5000 realm-qualified Proxmox usernames.'), 400
+    host, port = app.config['CHECKOUT_PROXMOX_HOST'], app.config['CHECKOUT_PROXMOX_PORT']
+    latest = SignInStore(accessforge_data_dir()).latest(proxmox_cluster_key(host, port), list(dict.fromkeys(usernames)))
+    return jsonify(cluster={'host': host, 'port': port}, latest=latest)
+  except CheckoutError as exc:
+    return jsonify(error=exc.message), exc.status
+  except (OSError, sqlite3.Error):
+    return jsonify(error='AccessForge sign-in storage is unavailable.'), 503
 
 
 @app.get('/api/admin/clipboard/status')
@@ -1686,7 +1726,7 @@ def admin_clipboard_usage():
     if not vmids or len(vmids) > 500 or any(vmid <= 0 for vmid in vmids):
       return jsonify(error='Provide 1 to 500 VM IDs'), 400
     host, port = app.config['CHECKOUT_PROXMOX_HOST'], app.config['CHECKOUT_PROXMOX_PORT']
-    cluster = clipboard_cluster(host, port)
+    cluster = proxmox_cluster_key(host, port)
     cookies = {'PVEAuthCookie': principal['ticket']}
     resources = None
     def fetch(path, **kwargs):
@@ -1962,7 +2002,7 @@ def spice_session(vmid):
       except (requests.RequestException, ValueError, KeyError, TypeError, StopIteration):
         return False
     usage_store = clipboard_store()
-    usage_cluster = clipboard_cluster(session.get('pve_host', PROXMOX_HOST), session.get('pve_port', PROXMOX_PORT))
+    usage_cluster = proxmox_cluster_key(session.get('pve_host', PROXMOX_HOST), session.get('pve_port', PROXMOX_PORT))
     def clipboard_check(events):
       try:
         current_policy = read_vm_clipboard(vmid, cookies, headers, background_get)
