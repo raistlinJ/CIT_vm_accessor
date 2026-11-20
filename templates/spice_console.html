@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>VM {{ vmid }} · AccessForge</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css', v='20261120-drawer-login') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css', v='20261120-drawer-login-row') }}">
   <script type="module" src="{{ url_for('static', filename='spice-console.js', v='20261120-drawer-login') }}"></script>
 </head>
 <body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-power-url="{{ url_for('console_power', vmid=vmid) }}" data-csrf="{{ csrf }}" data-vmid="{{ vmid }}">
@@ -18,7 +18,7 @@
       </header>
       <details id="vm-login-details" data-url="{{ url_for('vm_login_details', vmid=vmid) }}">
         <summary aria-label="Login details">Login details</summary>
-        <div class="vm-login-panel" role="region" aria-label="VM login details">
+        <div class="vm-login-panel" role="region" aria-label="VM login details" tabindex="0">
           <p role="status" hidden></p>
           <dl hidden>
             <div hidden><dt>Username</dt><dd data-credential="username"></dd></div>

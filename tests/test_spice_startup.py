@@ -98,16 +98,17 @@ def test_console_bypasses_stale_clipboard_module_and_initializes_both_drawers(le
                 password = login.locator('[data-credential="password"]')
                 assert password.text_content() == guest_password
                 expect(password.locator('em')).to_have_count(0)
+                panel = login.locator('.vm-login-panel')
                 for width in (320, 1100):
                     page.set_viewport_size({'width': width, 'height': 760})
-                    panel = login.locator('.vm-login-panel').bounding_box()
+                    panel_bounds = panel.bounding_box()
                     drawer_bounds = drawer.bounding_box()
-                    assert drawer_bounds['x'] <= panel['x']
-                    assert panel['x'] + panel['width'] <= drawer_bounds['x'] + drawer_bounds['width']
+                    assert drawer_bounds['x'] <= panel_bounds['x']
+                    assert panel_bounds['x'] + panel_bounds['width'] <= drawer_bounds['x'] + drawer_bounds['width']
                     user_bounds, password_bounds = username.bounding_box(), password.bounding_box()
-                    assert password_bounds['y'] >= user_bounds['y'] + user_bounds['height']
-                    assert password_bounds['x'] + password_bounds['width'] <= panel['x'] + panel['width']
-                    assert password.evaluate('field => field.scrollWidth <= field.clientWidth')
+                    assert user_bounds['y'] == password_bounds['y']
+                    assert user_bounds['x'] + user_bounds['width'] <= password_bounds['x']
+                assert panel.evaluate('panel => { panel.scrollLeft = panel.scrollWidth; return panel.scrollLeft > 0; }')
                 summary.press('Escape')
                 expect(password).to_be_hidden()
                 expect(password).to_be_empty()
