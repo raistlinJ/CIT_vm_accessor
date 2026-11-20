@@ -10,7 +10,9 @@ test('either limit turns off both automatic switches and displays both persisten
   const context = vm.createContext({
     connection:{clipboardReady:true,guestOwnsClipboard:true,awaitingClipboard:false},
     clipboardPolicy:{to_vm:{enabled:true,limit:20,remaining:12,used:8},from_vm:{enabled:true,limit:null,remaining:null,used:5}},
-    clipboardSendButton:box(),clipboardReceiveButton:box(),clipboardAutoTo:box(),clipboardAutoFrom:box(),
+    clipboardSend:box(),clipboardSendButton:box(),clipboardReceiveButton:box(),clipboardAutoTo:box(),clipboardAutoFrom:box(),
+    clipboardSendPending: false,
+    clipboardExceedsAllowance: () => false,
     clipboardAccess:{automaticSupported:true},clipboardReceive:box(),clipboardCopy:box(),clipboardRemaining:{},
     clipboardPolicyStatus:{dataset:{}},
     clipboardSync:{setToVM: enabled=>assert.equal(enabled,false),setFromVM: enabled=>assert.equal(enabled,false)},

@@ -160,8 +160,9 @@ test('limited VM clipboard waits for an explicit receive action', () => {
 test('client allowance counts Unicode characters and disabled directions cannot share', () => {
   const client = peer();
   client.clipboardPolicy = {to_vm: {enabled: true, limit: 2, remaining: 2}, from_vm: {enabled: false, remaining: 0}};
-  client.offerClipboard('é😀');
-  assert.throws(() => client.offerClipboard('é😀x'), /Only 2 characters/);
+  assert.equal(client.offerClipboard('é😀'), true);
+  assert.equal(client.offerClipboard('é😀x'), false);
+  assert.equal(client.sent.length, 1);
   client.inject(7, u32(0, 1));
   const sent = client.sent.length;
   client.requestClipboard();

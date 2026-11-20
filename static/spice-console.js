@@ -1,6 +1,6 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
-import { ClipboardSpiceConnection } from './spice-clipboard.js?v=20261119-clipboard-recovery';
-import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-no-help';
+import { ClipboardSpiceConnection, clipboardExceedsAllowance } from './spice-clipboard.js?v=20261119-clipboard-silent-limit';
+import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-silent-limit';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
 import { WheelAccumulator } from './spice-scroll.js?v=20261119-clipboard-no-help';
@@ -135,6 +135,7 @@ if (clipboardRemaining?.tagName === 'P') {
 }
 let clipboardPolicy = null;
 let clipboardUsageRequest = null;
+let clipboardSendPending = false;
 
 function clipboardLimited() {
   return !clipboardPolicy || Object.values(clipboardPolicy).some(rule => rule.limit !== null);
@@ -197,11 +198,17 @@ function updateClipboardAvailability() {
   clipboardPolicyStatus.dataset.blocked = String(restricted || !connection?.clipboardReady);
 }
 
+function updateClipboardSendButton() {
+  const rule = clipboardPolicy?.to_vm;
+  clipboardSendButton.disabled = clipboardSendPending || !connection?.clipboardReady || !rule?.enabled || rule.remaining === 0 ||
+    clipboardExceedsAllowance(clipboardSend.value, rule.remaining);
+}
+
 function applyClipboardPolicy() {
   const ready = Boolean(connection?.clipboardReady);
   const limited = clipboardLimited();
   const to = clipboardPolicy?.to_vm, from = clipboardPolicy?.from_vm;
-  clipboardSendButton.disabled = !ready || !to?.enabled || to.remaining === 0;
+  updateClipboardSendButton();
   if (clipboardReceiveButton) clipboardReceiveButton.disabled = !ready || !from?.enabled || from.remaining === 0 || !connection?.guestOwnsClipboard || connection?.awaitingClipboard;
   clipboardAutoTo.disabled = !ready || limited || !to?.enabled || !clipboardAccess.automaticSupported;
   clipboardAutoFrom.disabled = !ready || limited || !from?.enabled || !clipboardAccess.automaticSupported;
@@ -242,11 +249,15 @@ async function fetchClipboardUsage(request) {
     clipboardPolicy = data.clipboard;
     for (const direction of ['to_vm', 'from_vm']) {
       if (clipboardPolicy[direction].denied_at && clipboardPolicy[direction].denied_at !== previous?.[direction]?.denied_at) {
-        if (direction === 'from_vm' && connection) {
+        if (direction === 'to_vm') {
+          if (previous) showClipboardStatus('');
+          continue;
+        }
+        if (connection) {
           clearTimeout(clipboardReceiveTimer);
           connection.awaitingClipboard = false;
         }
-        showClipboardStatus(`A ${direction === 'to_vm' ? 'client → VM' : 'VM → client'} transfer exceeded the remaining allowance. Use a smaller selection. No characters were charged.`, true);
+        showClipboardStatus('A VM → client transfer exceeded the remaining allowance. Use a smaller selection. No characters were charged.', true);
       }
     }
     applyClipboardPolicy();
@@ -632,6 +643,7 @@ function showStatus(message, error = false, code = '') {
 
 function stop() {
   generation++;
+  clipboardSendPending = false;
   clipboardUsageRequest?.controller.abort();
   clipboardUsageRequest = null;
   clearTimeout(clipboardReceiveTimer);
@@ -925,6 +937,7 @@ keys.addEventListener('click', () => {
   if (connection?.inputs?.state === 'ready') sendCtrlAltDel(connection);
   screen.querySelector('canvas')?.focus();
 });
+clipboardSend.addEventListener('input', updateClipboardSendButton);
 clipboardPaste.addEventListener('click', async () => {
   const attempt = generation;
   const draft = clipboardSend.value;
@@ -938,7 +951,8 @@ clipboardPaste.addEventListener('click', async () => {
       return;
     }
     clipboardSend.value = text;
-    showClipboardStatus('Text loaded. Click Send to VM to share it.');
+    updateClipboardSendButton();
+    showClipboardStatus(clipboardSendButton.disabled ? '' : 'Text loaded. Click Send to VM to share it.');
   } catch {
     if (attempt !== generation) return;
     clipboardSend.focus();
@@ -948,20 +962,28 @@ clipboardPaste.addEventListener('click', async () => {
   }
 });
 clipboardSendButton.addEventListener('click', async () => {
+  if (clipboardSendPending) return;
   const attempt = generation;
+  clipboardSendPending = true;
   try {
     clipboardSendButton.disabled = true;
     const verified = await refreshClipboardUsage();
     if (attempt !== generation) return;
     if (!verified) throw new Error('Clipboard allowance is unavailable. Try again.');
     if (!connection) throw new Error('Connect to the VM first.');
-    connection.offerClipboard(clipboardSend.value);
+    if (!connection.offerClipboard(clipboardSend.value)) {
+      showClipboardStatus('');
+      return;
+    }
     clipboardSync.rememberHost(clipboardSend.value);
     showClipboardStatus('Click inside the VM and paste the text.');
   } catch (error) {
     if (attempt === generation) showClipboardStatus(error.message, true);
   } finally {
-    if (attempt === generation) applyClipboardPolicy();
+    if (attempt === generation) {
+      clipboardSendPending = false;
+      applyClipboardPolicy();
+    }
   }
 });
 clipboardCopy.addEventListener('click', async () => {

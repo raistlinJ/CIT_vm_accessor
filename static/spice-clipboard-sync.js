@@ -83,7 +83,7 @@ export class ClipboardSync {
       if (token.epoch !== this.epoch || token.direction !== this.toEpoch ||
           token.revision !== this.revision || !this.toVM || !this.isActive()) return;
       if (text !== this.hostText) {
-        this.offerText(text);
+        if (this.offerText(text) === false) return;
         this.rememberHost(text);
         this.onSend(text);
       }

@@ -6,6 +6,10 @@ export const MAX_CLIPBOARD_BYTES = 1024 * 1024;
 const oversizedClipboard = Symbol('oversized clipboard');
 class ClipboardPayloadError extends Error {}
 
+export function clipboardExceedsAllowance(text, remaining) {
+  return remaining !== null && text.length > remaining && Array.from(text).length > remaining;
+}
+
 // Agent messages are a byte stream inside SPICE MAIN_AGENT_DATA packets. A
 // packet may contain a partial header, a partial payload, or several messages.
 // Reassemble once into a bounded buffer rather than repeatedly copying text.
@@ -141,9 +145,7 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     if (!this.clipboardReady) throw new Error('Clipboard sharing requires a connected SPICE guest agent.');
     const rule = this.clipboardRule('to_vm');
     if (!rule.enabled) throw new Error('Client to VM clipboard access is disabled.');
-    if (rule.remaining !== null && Array.from(text).length > rule.remaining) {
-      throw new Error(`Only ${rule.remaining} characters remain for client to VM clipboard transfers.`);
-    }
+    if (clipboardExceedsAllowance(text, rule.remaining)) return false;
     if (new TextEncoder().encode(text).length > MAX_CLIPBOARD_BYTES) {
       throw new Error('Clipboard text is limited to 1 MiB. Send a smaller selection.');
     }
@@ -153,6 +155,7 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     this.onclipboard(null);
     this.send_agent_message(C.VD_AGENT_CLIPBOARD_GRAB,
       new SpiceMsgClipboardGrab(C.VD_AGENT_CLIPBOARD_UTF8_TEXT, this.agent_caps));
+    return true;
   }
 
   process_channel_message(msg) {
@@ -234,7 +237,7 @@ export class ClipboardSpiceConnection extends SpiceMainConn {
     if (kind === C.VD_AGENT_CLIPBOARD_REQUEST) {
       const rule = this.clipboardRule('to_vm');
       const available = type === C.VD_AGENT_CLIPBOARD_UTF8_TEXT && this.localClipboard !== null && rule.enabled &&
-        (rule.remaining === null || Array.from(this.localClipboard).length <= rule.remaining);
+        !clipboardExceedsAllowance(this.localClipboard, rule.remaining);
       this.send_agent_message(C.VD_AGENT_CLIPBOARD, new SpiceMsgClipboardSend(
         available ? C.VD_AGENT_CLIPBOARD_UTF8_TEXT : C.VD_AGENT_CLIPBOARD_NONE,
         available ? this.localClipboard : '', this.agent_caps));
