@@ -11,6 +11,8 @@ import requests
 import time
 import secrets
 import hmac
+import ipaddress
+import socket
 import ssl
 from flask import Flask, request, redirect, session, make_response, render_template, render_template_string, url_for, g, jsonify, send_from_directory
 from waitress import serve
@@ -1722,11 +1724,62 @@ def vm_clipboard_usage(vmid):
     return jsonify(error='Clipboard usage is unavailable. Check VM access and persistent storage.'), 503
 
 
+def resolve_proxmox_addresses(host):
+  try:
+    return {ipaddress.ip_address(host)}
+  except ValueError:
+    return {ipaddress.ip_address(address[0])
+            for _, _, _, _, address in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)}
+
+
+def sign_in_cluster_addresses(host, port, requested, ticket):
+  from account_checkout import backend_url
+
+  scopes = {proxmox_cluster_key(host, port)}
+  if requested is None:
+    return {'host': host, 'port': port}, scopes
+  requested_host = requested.get('host') if isinstance(requested, dict) else None
+  requested_port = requested.get('port') if isinstance(requested, dict) else None
+  if (not isinstance(requested_host, str) or len(requested_host) > 253 or
+      not re.fullmatch(r'[A-Za-z0-9:.][A-Za-z0-9.:\-]*', requested_host) or
+      type(requested_port) is not int or not 1 <= requested_port <= 65535):
+    raise CheckoutError('Provide a valid Proxmox host and API port.', 400)
+  if str(requested_port) != str(port):
+    raise CheckoutError('The project and AccessForge use different Proxmox API ports.', 409)
+
+  requested_scope = proxmox_cluster_key(requested_host, requested_port)
+  if requested_scope not in scopes:
+    try:
+      addresses = resolve_proxmox_addresses(requested_host)
+    except (OSError, ValueError):
+      raise CheckoutError('AccessForge could not resolve the project’s Proxmox address.', 409) from None
+    try:
+      configured = resolve_proxmox_addresses(str(host).strip('[]'))
+    except (OSError, ValueError):
+      configured = set()
+    if not addresses or not addresses.issubset(configured):
+      try:
+        result = requests.get(backend_url() + '/cluster/status', cookies={'PVEAuthCookie': ticket},
+                              verify=app.config['CHECKOUT_PROXMOX_VERIFY'], timeout=10, allow_redirects=False)
+        result.raise_for_status()
+        members = result.json()['data']
+        member_addresses = {ipaddress.ip_address(row['ip']) for row in members
+                            if isinstance(row, dict) and row.get('type') == 'node' and row.get('ip')}
+      except (requests.RequestException, KeyError, TypeError, ValueError):
+        raise CheckoutError('AccessForge could not verify the project’s Proxmox cluster membership.', 409) from None
+      configured.update(member_addresses)
+      if not addresses or not addresses.issubset(configured):
+        raise CheckoutError('The project’s Proxmox address is outside the AccessForge cluster.', 409)
+    scopes.add(requested_scope)
+    scopes.update(proxmox_cluster_key(address, port) for address in configured)
+  return {'host': requested_host, 'port': requested_port}, scopes
+
+
 @app.post('/api/admin/sign-ins/latest')
 def admin_latest_sign_ins():
   from account_checkout import authenticate_admin
   try:
-    authenticate_admin()
+    principal = authenticate_admin()
     if request.content_length is not None and request.content_length > 1024 * 1024:
       return jsonify(error='Sign-in lookup request is too large.'), 413
     body = request.get_json(silent=True)
@@ -1735,13 +1788,17 @@ def admin_latest_sign_ins():
         any(not isinstance(name, str) or not 1 <= len(name) <= 128 or '@' not in name for name in usernames)):
       return jsonify(error='Provide 1 to 5000 realm-qualified Proxmox usernames.'), 400
     host, port = app.config['CHECKOUT_PROXMOX_HOST'], app.config['CHECKOUT_PROXMOX_PORT']
-    cluster = proxmox_cluster_key(host, port)
+    cluster, scopes = sign_in_cluster_addresses(host, port, body.get('cluster'), principal['ticket'])
     accounts = list(dict.fromkeys(usernames))
     store = SignInStore(accessforge_data_dir())
-    latest = store.latest(cluster, accounts)
     observed_at = time.time()
-    active = store.active_accounts(cluster, accounts, observed_at, SIGN_IN_PRESENCE_TTL)
-    return jsonify(cluster={'host': host, 'port': port}, latest=latest, observed_at=observed_at, active=active)
+    latest = {}
+    active = set()
+    for scope in scopes:
+      for username, timestamp in store.latest(scope, accounts).items():
+        latest[username] = max(timestamp, latest.get(username, 0))
+      active.update(store.active_accounts(scope, accounts, observed_at, SIGN_IN_PRESENCE_TTL))
+    return jsonify(cluster=cluster, latest=latest, observed_at=observed_at, active=sorted(active))
   except CheckoutError as exc:
     return jsonify(error=exc.message), exc.status
   except (OSError, sqlite3.Error):

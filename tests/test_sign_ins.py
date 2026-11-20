@@ -107,3 +107,32 @@ def test_admin_lookup_requires_cluster_admin(login_client):
     with patch('account_checkout.requests.post', return_value=admin_ticket), \
          patch('account_checkout.requests.get', return_value=reply({'/': {}})):
         assert login_client.post(LOOKUP, headers=BASIC, json={'usernames': ['student@pve']}).status_code == 403
+
+
+@pytest.mark.parametrize('matching', [True, False])
+def test_admin_lookup_verifies_alternate_cluster_node(login_client, monkeypatch, matching):
+    import ipaddress
+
+    monkeypatch.setitem(main.app.config, 'CHECKOUT_PROXMOX_HOST', '192.0.2.45')
+    store = SignInStore(main.accessforge_data_dir())
+    store.record('192.0.2.45:8006', 'student@pve', 30, 10)
+    store.record('node-3.example.test:8006', 'student@pve', 40, 10)
+    store.record('192.0.2.44:8006', 'student@pve', 50, 10)
+    monkeypatch.setattr(main, 'resolve_proxmox_addresses', lambda host: {ipaddress.ip_address(
+        '192.0.2.45' if host == '192.0.2.45' else '192.0.2.44' if matching else '198.51.100.4')})
+    admin_ticket = reply({'username': 'root@pam', 'ticket': 'admin-ticket', 'CSRFPreventionToken': 'csrf'})
+    topology = reply([{'type': 'cluster', 'name': 'test'}, {'type': 'node', 'ip': '192.0.2.44'}])
+    with patch('account_checkout.requests.post', return_value=admin_ticket), \
+         patch('account_checkout.requests.get', side_effect=[reply({'/': {'Sys.Modify': 1}}), topology]) as get:
+        result = login_client.post(LOOKUP, headers=BASIC, json={
+            'usernames': ['student@pve'], 'cluster': {'host': 'node-3.example.test', 'port': 8006},
+        })
+    assert get.call_args.args == ('https://192.0.2.45:8006/api2/json/cluster/status',)
+    assert get.call_args.kwargs['cookies'] == {'PVEAuthCookie': 'admin-ticket'}
+    if matching:
+        assert result.status_code == 200
+        assert result.json['cluster'] == {'host': 'node-3.example.test', 'port': 8006}
+        assert result.json['latest'] == {'student@pve': 50}
+    else:
+        assert result.status_code == 409
+        assert 'latest' not in result.json
