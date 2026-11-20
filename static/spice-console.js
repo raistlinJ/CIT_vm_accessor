@@ -1,6 +1,6 @@
 import { sendCtrlAltDel } from './vendor/spice-html5/src/main.js';
 import { ClipboardSpiceConnection, clipboardExceedsAllowance } from './spice-clipboard.js?v=20261119-clipboard-silent-limit';
-import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-silent-limit';
+import { ClipboardSync, clipboardAccessHelp } from './spice-clipboard-sync.js?v=20261119-clipboard-actions';
 import { Constants } from './vendor/spice-html5/src/enums.js';
 import { handle_mousewheel } from './vendor/spice-html5/src/inputs.js';
 import { WheelAccumulator } from './spice-scroll.js?v=20261119-clipboard-no-help';
@@ -190,8 +190,6 @@ function updateClipboardAvailability() {
     messages.push('Sharing is unavailable until a SPICE guest agent with clipboard support is connected inside the VM.');
   } else if (available && !clipboardAccess.automaticSupported) {
     messages.push('Automatic clipboard sharing is unavailable in this browser. Use the text boxes for manual copy and paste.');
-  } else if (available && clipboardLimited()) {
-    messages.push('Automatic sharing is disabled while a character limit is configured. Use the manual clipboard buttons.');
   }
   clipboardPolicyStatus.textContent = messages.join(' ');
   clipboardPolicyStatus.hidden = messages.length === 0;
@@ -212,7 +210,6 @@ function applyClipboardPolicy() {
   if (clipboardReceiveButton) clipboardReceiveButton.disabled = !ready || !from?.enabled || from.remaining === 0 || !connection?.guestOwnsClipboard || connection?.awaitingClipboard;
   clipboardAutoTo.disabled = !ready || limited || !to?.enabled || !clipboardAccess.automaticSupported;
   clipboardAutoFrom.disabled = !ready || limited || !from?.enabled || !clipboardAccess.automaticSupported;
-  clipboardAutoTo.title = clipboardAutoFrom.title = limited ? 'Automatic sharing is disabled while a character limit is set.' : '';
   if (clipboardAutoTo.disabled) { clipboardAutoTo.checked = false; clipboardSync.setToVM(false); }
   if (clipboardAutoFrom.disabled) { clipboardAutoFrom.checked = false; clipboardSync.setFromVM(false); }
   updateClipboardSyncTimer();
@@ -308,13 +305,13 @@ const clipboardSync = new ClipboardSync({
   isActive: () => Boolean(!clipboardLimited() && connection?.clipboardReady && document.hasFocus() && !document.hidden),
   onSend(text) {
     clipboardSend.value = text;
-    showClipboardStatus('Computer clipboard sent to VM. Paste inside the VM.');
+    showClipboardStatus('Copied to the VM clipboard. Paste inside the VM.');
   },
-  onCopy() { showClipboardStatus('VM clipboard copied to your computer.'); },
+  onCopy() { showClipboardStatus('Copied to your clipboard.'); },
   onError(direction, error) {
     (direction === 'to' ? clipboardAutoTo : clipboardAutoFrom).checked = false;
     updateClipboardSyncTimer();
-    const action = direction === 'to' ? 'Auto-send to VM' : 'Auto-copy from VM';
+    const action = direction === 'to' ? 'Auto-copy to VM clipboard' : 'Auto-copy to my clipboard';
     const denied = error.name === 'NotAllowedError';
     const reason = denied ? 'Browser clipboard access was denied.' : error.message;
     showClipboardStatus(`${action} paused. ${reason} Use the manual clipboard controls or enable it again to retry.`, true);
@@ -379,7 +376,7 @@ clipboardReceiveButton?.addEventListener('click', async () => {
     if (!verified) throw new Error('Clipboard allowance is unavailable. Try again.');
     const rule = clipboardPolicy.from_vm;
     if (!rule.enabled || rule.remaining === 0) return;
-    if (!connection?.requestClipboard()) throw new Error('Copy plain text inside the VM, then try Receive from VM again.');
+    if (!connection?.requestClipboard()) throw new Error('Copy plain text inside the VM, then click Get VM text.');
     showClipboardStatus('Requesting text from the VM…');
   } catch (error) {
     if (attempt === generation) showClipboardStatus(error.message, true);
@@ -807,7 +804,7 @@ async function connect() {
         guestClipboard = text;
         clipboardReceive.value = text ?? '';
         clipboardCopy.disabled = text === null;
-        if (text !== null) showClipboardStatus('VM text received. Click Copy from VM or select and copy it below.');
+        if (text !== null) showClipboardStatus('VM text is ready to copy.');
         void clipboardSync.receiveGuest(text);
         applyClipboardPolicy();
         if (text !== null) void refreshClipboardUsage();
@@ -947,16 +944,16 @@ clipboardPaste.addEventListener('click', async () => {
     const text = await navigator.clipboard.readText();
     if (attempt !== generation) return;
     if (clipboardSend.value !== draft) {
-      showClipboardStatus('The text box changed while clipboard access was pending. Click Paste from computer again to replace it.');
+      showClipboardStatus('The text box changed while clipboard access was pending. Click Paste from my clipboard again to replace it.');
       return;
     }
     clipboardSend.value = text;
     updateClipboardSendButton();
-    showClipboardStatus(clipboardSendButton.disabled ? '' : 'Text loaded. Click Send to VM to share it.');
+    showClipboardStatus('');
   } catch {
     if (attempt !== generation) return;
     clipboardSend.focus();
-    showClipboardStatus('Browser clipboard access is blocked. Paste into the text box with Ctrl+V or ⌘V, then click Send to VM.', true);
+    showClipboardStatus('Browser clipboard access is blocked. Paste into the text box with Ctrl+V or ⌘V, then click Copy to VM clipboard.', true);
   } finally {
     if (attempt === generation) clipboardPaste.disabled = false;
   }

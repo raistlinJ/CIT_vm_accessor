@@ -9,12 +9,12 @@ export function clipboardAccessHelp({ userAgent, secure, readable, writable }) {
   };
   if (/Firefox|FxiOS/.test(userAgent)) return {
     automaticSupported: false,
-    message: 'Firefox requires a user action for clipboard access and has no always-allow clipboard setting. Use Paste from computer, then Send to VM, or Copy from VM. For automatic sharing, open this console in Chrome or Edge.',
+    message: 'Firefox requires a user action for clipboard access and has no always-allow clipboard setting. Use Paste from my clipboard, then Copy to VM clipboard, or Copy to my clipboard. For automatic sharing, open this console in Chrome or Edge.',
     url: docs,
   };
   if (/Safari/.test(userAgent) && !/Chrome|Chromium|CriOS|Edg|OPR/.test(userAgent)) return {
     automaticSupported: false,
-    message: 'Safari requires a user action for clipboard access and has no always-allow clipboard setting. Use Paste from computer, then Send to VM, or Copy from VM. For automatic sharing, open this console in Chrome or Edge.',
+    message: 'Safari requires a user action for clipboard access and has no always-allow clipboard setting. Use Paste from my clipboard, then Copy to VM clipboard, or Copy to my clipboard. For automatic sharing, open this console in Chrome or Edge.',
     url: docs,
   };
   if (!readable || !writable) return {

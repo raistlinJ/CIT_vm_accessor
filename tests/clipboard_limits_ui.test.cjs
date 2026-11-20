@@ -106,7 +106,7 @@ test('the popup distinguishes exhausted quotas, unavailable permissions and a mi
   assert.match(offline.textContent, /SPICE guest agent with clipboard support/);
 });
 
-test('allowed sharing explains browser restrictions and manual-only character limits', () => {
+test('allowed sharing explains browser restrictions without repeating the character limit', () => {
   const full = availability({to_vm: allowed, from_vm: allowed});
   assert.equal(full.textContent, '');
   assert.equal(full.hidden, true);
@@ -114,5 +114,5 @@ test('allowed sharing explains browser restrictions and manual-only character li
   const browser = availability({to_vm: allowed, from_vm: allowed}, true, false);
   assert.match(browser.textContent, /Automatic clipboard sharing is unavailable in this browser.*manual copy and paste/);
   const limited = availability({to_vm: {...allowed, limit: 10, remaining: 5}, from_vm: allowed});
-  assert.match(limited.textContent, /Automatic sharing is disabled while a character limit is configured/);
+  assert.equal(limited.hidden, true);
 });

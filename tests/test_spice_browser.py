@@ -524,22 +524,22 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     # Focusing the VM must not silently read or overwrite OS clipboard.
                     assert page.evaluate("clipboardTest.reads") == 0
                     assert page.evaluate("clipboardTest.writes") == []
-                    page.get_by_role("button", name="Copy from VM", exact=True).click()
+                    page.get_by_role("button", name="Copy to my clipboard", exact=True).click()
                     assert page.evaluate("clipboardTest.writes") == [guest_text]
                     page.evaluate("text => clipboardTest.text = text", host_text)
-                    page.get_by_role("button", name="Paste from computer", exact=True).click()
+                    page.get_by_role("button", name="Paste from my clipboard", exact=True).click()
                     expect(page.locator("#clipboard-send")).to_have_value(host_text)
-                    page.get_by_role("button", name="Send to VM", exact=True).click()
+                    page.get_by_role("button", name="Copy to VM clipboard", exact=True).click()
                     assert received_clipboards.get(timeout=5) == host_text
 
                     # Independently enabled automatic sharing works with the
                     # panel closed, without echoing guest writes back to VM.
                     page.evaluate("clipboardTest.text = 'auto host ✓'")
-                    page.get_by_role("switch", name="Auto-send to VM", exact=True).check()
+                    page.get_by_role("switch", name="Auto-copy to VM clipboard", exact=True).check()
                     assert received_clipboards.get(timeout=5) == "auto host ✓"
                     expect(page.locator("#clipboard-receive")).to_have_value(guest_text)
                     writes_before_auto = page.evaluate("clipboardTest.writes.length")
-                    page.get_by_role("switch", name="Auto-copy from VM", exact=True).check()
+                    page.get_by_role("switch", name="Auto-copy to my clipboard", exact=True).check()
                     page.wait_for_function("count => clipboardTest.writes.length > count", arg=writes_before_auto)
                     assert page.evaluate("clipboardTest.text") == guest_text
                     page.get_by_role("button", name="Close clipboard", exact=True).click()
@@ -549,39 +549,39 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     with pytest.raises(queue.Empty):
                         received_clipboards.get(timeout=1)
                     page.get_by_role("button", name="Open clipboard", exact=True).click()
-                    page.get_by_role("switch", name="Auto-send to VM", exact=True).uncheck()
-                    page.get_by_role("switch", name="Auto-copy from VM", exact=True).uncheck()
+                    page.get_by_role("switch", name="Auto-copy to VM clipboard", exact=True).uncheck()
+                    page.get_by_role("switch", name="Auto-copy to my clipboard", exact=True).uncheck()
 
                     # A blocked automatic direction switches off and leaves
                     # manual controls available, rather than retrying prompts.
                     page.evaluate("clipboardTest.denied = true")
-                    page.get_by_text("Auto-send to VM", exact=True).click()
+                    page.get_by_text("Auto-copy to VM clipboard", exact=True).click()
                     expect(page.locator("#clipboard-auto-to")).not_to_be_checked()
-                    expect(page.locator("#clipboard-status")).to_contain_text("Auto-send to VM paused")
+                    expect(page.locator("#clipboard-status")).to_contain_text("Auto-copy to VM clipboard paused")
                     expect(page.locator("#clipboard-access-help")).to_have_count(0)
                     expect(page.locator("#clipboard-status")).to_contain_text("Browser clipboard access was denied.")
-                    page.get_by_text("Auto-copy from VM", exact=True).click()
+                    page.get_by_text("Auto-copy to my clipboard", exact=True).click()
                     expect(page.locator("#clipboard-auto-from")).not_to_be_checked()
-                    expect(page.locator("#clipboard-status")).to_contain_text("Auto-copy from VM paused")
+                    expect(page.locator("#clipboard-status")).to_contain_text("Auto-copy to my clipboard paused")
 
                     # Denied API access still allows manual paste/copy via text areas.
                     page.evaluate("clipboardTest.denied = true")
-                    page.get_by_role("button", name="Paste from computer", exact=True).click()
+                    page.get_by_role("button", name="Paste from my clipboard", exact=True).click()
                     expect(page.locator("#clipboard-status")).to_contain_text("Paste into the text box")
                     page.locator("#clipboard-send").fill("manual paste\nUnicode ✓")
-                    page.get_by_role("button", name="Send to VM", exact=True).click()
+                    page.get_by_role("button", name="Copy to VM clipboard", exact=True).click()
                     assert received_clipboards.get(timeout=5) == "manual paste\nUnicode ✓"
                     expect(page.locator("#clipboard-receive")).to_have_value(guest_text)
-                    page.get_by_role("button", name="Copy from VM", exact=True).click()
+                    page.get_by_role("button", name="Copy to my clipboard", exact=True).click()
                     expect(page.locator("#clipboard-status")).to_contain_text("VM text is selected")
                     assert page.locator("#clipboard-receive").evaluate("e => e.selectionEnd - e.selectionStart") == len(guest_text.encode('utf-16-le')) // 2
 
                     # Empty text is a valid clipboard update, not a missing value.
                     page.locator("#clipboard-send").fill("")
-                    page.get_by_role("button", name="Send to VM", exact=True).click()
+                    page.get_by_role("button", name="Copy to VM clipboard", exact=True).click()
                     assert received_clipboards.get(timeout=5) == ""
                     page.locator("#clipboard-send").fill("é" * (512 * 1024 + 1))
-                    page.get_by_role("button", name="Send to VM", exact=True).click()
+                    page.get_by_role("button", name="Copy to VM clipboard", exact=True).click()
                     expect(page.locator("#clipboard-status")).to_contain_text("limited to 1 MiB")
                     expect(page.locator("#clipboard-panel")).to_have_attribute("data-error", "true")
                     page.get_by_role("button", name="Close clipboard", exact=True).click()
@@ -605,9 +605,9 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                         expect(page.locator("#clipboard-remaining")).to_contain_text("0 / 2,000")
                         expect(page.locator("#clipboard-auto-to")).to_be_disabled()
                         page.locator("#clipboard-send").fill("Text for Windows")
-                        page.get_by_role("button", name="Send to VM", exact=True).click()
+                        page.get_by_role("button", name="Copy to VM clipboard", exact=True).click()
                         assert received_clipboards.get(timeout=5) == "Text for Windows"
-                        receive = page.get_by_role("button", name="Receive from VM", exact=True)
+                        receive = page.get_by_role("button", name="Get VM text", exact=True)
                         expect(receive).to_be_enabled()
                         expect(page.locator("#clipboard-receive")).to_have_value("")
                         receive.click()
@@ -621,7 +621,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                         rows = page.locator("#clipboard-remaining tbody tr")
                         expect(rows.nth(0)).to_contain_text("16 / 2,000")
                         expect(rows.nth(1)).to_contain_text("17 / 2,000")
-                        send = page.get_by_role("button", name="Send to VM", exact=True)
+                        send = page.get_by_role("button", name="Copy to VM clipboard", exact=True)
                         page.locator("#clipboard-send").fill("😀" * 1985)
                         expect(send).to_be_disabled()
                         expect(page.locator("#clipboard-status")).not_to_contain_text("characters remain")
@@ -641,7 +641,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                     expect(page.locator("#clipboard-policy-status")).to_be_hidden()
                     expect(page.locator("#clipboard-send-button")).to_be_enabled()
                     page.evaluate("clipboardTest.pending = true")
-                    page.get_by_role("button", name="Paste from computer", exact=True).click()
+                    page.get_by_role("button", name="Paste from my clipboard", exact=True).click()
                 page.locator("canvas").evaluate("c => c.sc.ws.close()")
                 expect(page.locator("#status")).to_contain_text("Connection lost")
                 expect(page.locator("canvas")).to_have_count(0)
@@ -678,10 +678,10 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 page.locator("#clipboard-toggle").click()
                 expect(page.locator("#clipboard-access-help")).to_have_count(0)
                 expect(page.locator("#clipboard-auto-controls")).to_be_hidden()
-                expect(page.get_by_role("switch", name="Auto-send to VM", exact=True)).to_have_count(0)
-                expect(page.get_by_role("switch", name="Auto-copy from VM", exact=True)).to_have_count(0)
-                expect(page.get_by_role("button", name="Paste from computer", exact=True)).to_be_visible()
-                expect(page.get_by_role("button", name="Copy from VM", exact=True)).to_be_visible()
+                expect(page.get_by_role("switch", name="Auto-copy to VM clipboard", exact=True)).to_have_count(0)
+                expect(page.get_by_role("switch", name="Auto-copy to my clipboard", exact=True)).to_have_count(0)
+                expect(page.get_by_role("button", name="Paste from my clipboard", exact=True)).to_be_visible()
+                expect(page.get_by_role("button", name="Copy to my clipboard", exact=True)).to_be_visible()
                 page.get_by_role("button", name="Close clipboard", exact=True).click()
                 expect(page.locator("#display-notice")).to_have_text(
                     "This machine is off. Click Start VM in the controls drawer to start it.")

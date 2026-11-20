@@ -12,7 +12,7 @@ the accounting database.
 
 The clipboard panel shows remaining characters in both directions. While either
 direction has a limit, both automatic sharing switches are disabled. Limited
-VM → client transfers require **Receive from VM**, followed by **Copy from VM**.
+VM → client transfers require **Get VM text**, followed by **Copy to my clipboard**.
 Copying text inside the VM alone does not consume a limited allowance. Reusing
 text already received by the browser does not consume another allowance.
 
@@ -153,13 +153,13 @@ Use **Take screenshot** in the controls drawer to download a PNG of the VM displ
 
 Open **Clipboard** with the tab centered on the right edge, or the Clipboard button in console controls. The popout works independently of the controls drawer. **Pin** keeps it beside the VM and refits the display into the remaining space; on narrow windows it docks below the display. The pin preference is remembered in this browser. Closing the panel restores the display space; reopening restores its pinned layout. Sharing requires a running SPICE guest agent inside the VM; users do not install anything on their own computers.
 
-- **Computer → VM:** paste into the outgoing text box, or click **Paste from computer**, then **Send to VM**. Paste normally inside the guest application. Sending sets the guest clipboard; it does not simulate typing or automatically paste into the focused application.
-- **VM → computer:** copy text inside the VM. It appears in the incoming text box. Click **Copy from VM**, or select the text and copy it manually.
+- **Computer → VM:** Enter text in the outgoing text box or click **Paste from my clipboard**. Click **Copy to VM clipboard**, then paste inside the guest application.
+- **VM → computer:** copy text inside the VM. If the transfer has a character limit, click **Get VM text** to bring it into the text box. Then click **Copy to my clipboard**, or select the text and copy it manually.
 - If browser clipboard access is blocked or unavailable, the text boxes still work with normal copy/paste shortcuts. API access generally requires HTTPS and may require browser permission; embedded views can impose additional restrictions.
 - Transfers support UTF-8 text, including multiple lines, up to **1 MiB**. Images and files are not supported by this clipboard panel. Large text is reassembled across agent packets.
-- **Auto-send to VM** shares changes from your computer clipboard while the console window is active. **Auto-copy from VM** copies guest text to your computer clipboard while the window is active, or on return to it. Both switches are independent, off by default, work with the popout closed, and turn off on disconnect/reconnect or guest-agent loss. Automatic sharing updates clipboards; paste normally in the destination application.
+- **Auto-copy to VM clipboard** shares changes from your computer clipboard while the console window is active. **Auto-copy to my clipboard** copies guest text to your computer clipboard while the window is active, or on return to it. Both switches are independent, off by default, work with the popout closed, and turn off on disconnect/reconnect or guest-agent loss. Automatic sharing updates clipboards; paste normally in the destination application.
 - Automatic sharing requires Chrome or Edge with browser clipboard permission and HTTPS (or localhost). In Chrome, use the icon beside the web address → **Site settings → Clipboard → Allow**, reload the console, and re-enable the switch. For a popup without an address bar, change this permission in the main AccessForge tab on the same site. Safari and Firefox require a user action for clipboard access and have no persistent clipboard permission, so the automatic switches are hidden; use the manual controls in the pinned panel. If access is denied or unavailable, the affected switch turns off with a brief status message; manual controls remain available. Without automatic sharing enabled, focusing the VM never reads or overwrites the computer clipboard. Clipboard text is held in console memory, cleared on disconnect/reconnect, and is not saved to browser storage or logged by AccessForge.
-- If **Send to VM** stays disabled, verify the VM's SPICE agent is connected and supports clipboard sharing. No Proxmox host configuration is changed by this feature.
+- If **Copy to VM clipboard** stays disabled, verify the VM's SPICE agent is connected and supports clipboard sharing. No Proxmox host configuration is changed by this feature.
 
 ## Material categories
 
