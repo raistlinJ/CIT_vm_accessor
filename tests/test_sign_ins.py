@@ -30,6 +30,24 @@ def test_pruning_preserves_latest_per_account_and_cluster(tmp_path):
         assert db.execute('SELECT COUNT(*) FROM sign_in_events').fetchone() == (0,)
 
 
+def test_presence_expires_and_tracks_sessions_independently(tmp_path):
+    store = SignInStore(tmp_path)
+    store.record('cluster-a', 'student@pve', 100, 0, session_id='first')
+    store.record('cluster-a', 'student@pve', 120, 0, session_id='second')
+    store.record('cluster-b', 'student@pam', 120, 0, session_id='other')
+    requested = ['student@pve', 'student@pam']
+    assert store.active_accounts('cluster-a', requested, 150, 100) == ['student@pve']
+    store.end_presence('first')
+    assert not store.touch_presence('first', 150)
+    assert store.active_accounts('cluster-a', requested, 219, 100) == ['student@pve']
+    assert store.active_accounts('cluster-a', requested, 220, 100) == []
+    assert store.touch_presence('second', 220)
+    assert store.active_accounts('cluster-a', requested, 221, 100) == ['student@pve']
+    store.end_presence('second')
+    assert store.active_accounts('cluster-a', requested, 222, 100) == []
+    assert store.latest('cluster-a', requested) == {'student@pve': 120}
+
+
 @pytest.fixture
 def login_client(tmp_path, monkeypatch):
     monkeypatch.setenv('ENABLE_ACCOUNT_CHECKOUT', 'false')
@@ -55,8 +73,22 @@ def test_validated_browser_login_is_returned_by_admin_lookup(login_client):
     assert result.headers['Cache-Control'] == 'no-store'
     assert result.json['cluster'] == {'host': 'pve.example.test', 'port': '8006'}
     assert set(result.json['latest']) == {'student@pve'}
-    assert result.json['latest']['student@pve'] > 0
+    assert 0 < result.json['latest']['student@pve'] <= result.json['observed_at']
+    assert result.json['active'] == ['student@pve']
     assert 'guest-password' not in result.text and 'pve-ticket' not in result.text
+
+    presence = '/api/session/presence'
+    assert login_client.post(presence, headers={'Origin': 'https://other.example'}).status_code == 403
+    with patch.object(main, 'proxmox_get', return_value=reply({'/': {}})) as proxmox:
+        assert login_client.post(presence, headers={'Origin': 'http://localhost'}).status_code == 204
+        assert proxmox.call_args.kwargs['cookies'] == {'PVEAuthCookie': 'pve-ticket'}
+    assert login_client.get('/logout').status_code == 302
+    assert login_client.post(presence, headers={'Origin': 'http://localhost'}).status_code == 401
+    with patch('account_checkout.requests.post', return_value=admin_ticket), \
+         patch('account_checkout.requests.get', return_value=reply({'/': {'Sys.Modify': 1}})):
+        after_logout = login_client.post(LOOKUP, headers=BASIC, json=query)
+    assert after_logout.json['active'] == []
+    assert after_logout.json['latest'] == result.json['latest']
 
 
 def test_rejected_browser_login_never_creates_an_event(login_client):

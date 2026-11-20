@@ -60,6 +60,7 @@ How it works
 """
 
 MAX_VM_FILE_BYTES = 1024 * 1024 * 1024
+SIGN_IN_PRESENCE_TTL = 150
 
 PROXMOX_HOST = os.environ.get("PROXMOX_HOST", "127.0.0.1").strip()
 PROXMOX_REALM = os.environ.get("PROXMOX_REALM", "pam").strip()
@@ -631,6 +632,7 @@ TPL_BASE = """
     </div>
   </div>
   {% if checkout_enabled and session.get('pve_user') %}<script src="/static/relinquish-account.js?v=20261107-neutral-wording" defer></script>{% endif %}
+  {% if session.get('presence_id') %}<script src="{{ url_for('static', filename='session-presence.js', v='1') }}" data-url="{{ url_for('sign_in_presence') }}" defer></script>{% endif %}
   <div class="card">
     {% block content %}{% endblock %}
   </div>
@@ -673,7 +675,7 @@ def _allow_iframe(resp):
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     resp.headers['Pragma'] = 'no-cache'
     resp.headers['Expires'] = '0'
-  if request.path.startswith('/api/spice/') or request.path == '/api/admin/sign-ins/latest':
+  if request.path.startswith('/api/spice/') or request.path in ('/api/admin/sign-ins/latest', '/api/session/presence'):
     resp.headers['Cache-Control'] = 'no-store'
   return resp
 
@@ -1068,6 +1070,7 @@ def require_session(api: bool = False):
       ticket = session.get("pve_ticket")
       if ticket and not checkout_session_current(session):
         spice_bridge.revoke(session_owner(ticket))
+        end_sign_in_presence()
         session.clear()
         if api:
           return jsonify(error="Your checked-out account has been released.",redirect=url_for("session_reset",reason="invalid")),401
@@ -1092,6 +1095,7 @@ def login():
     if force:
       # Clear session & cookies to avoid stale ticket collisions
       old_domain = session.get("pve_host") or PROXMOX_HOST
+      end_sign_in_presence()
       session.clear()
       resp = make_response(render_template_string(
         TPL_LOGIN,
@@ -1160,6 +1164,7 @@ def login():
       return render_template_string(TPL_LOGIN,host=host_override,port=port_override,realm=realm_override,verify_ssl=verify_override,
                                     username=username,error="This account is disabled or awaiting checkout. Use Get access to claim an On-Demand account, or ask an administrator to enable it."),403
     # Persist minimal session state
+    end_sign_in_presence()
     session.pop("checkout_admin", None)
     session["pve_user"] = user_with_realm
     session["pve_ticket"] = ticket
@@ -1255,8 +1260,10 @@ def login():
     logger.info(f"[{req_id()}] Login successful for {user_with_realm}")
     try:
       canonical_user = data.get('username') or user_with_realm
+      presence_id = secrets.token_urlsafe(24)
       SignInStore(accessforge_data_dir()).record(proxmox_cluster_key(host_override, port_override),
-          canonical_user, time.time(), app.config['ACCESSFORGE_MAX_LOGS'])
+          canonical_user, time.time(), app.config['ACCESSFORGE_MAX_LOGS'], session_id=presence_id)
+      session['presence_id'] = presence_id
     except (OSError, sqlite3.Error):
       logger.warning('Could not save AccessForge sign-in to persistent storage.')
     return resp
@@ -1280,6 +1287,7 @@ def login():
 def logout():
     if session.get("pve_ticket"):
         spice_bridge.revoke(session_owner(session["pve_ticket"]))
+    end_sign_in_presence()
     session.clear()
     resp = make_response(redirect(url_for("login")))
     proxmox_domain = cookie_host()
@@ -1308,6 +1316,7 @@ def session_reset():
     }
     login_url = url_for("login", force=1)
     proxmox_domain = cookie_host()
+    end_sign_in_presence()
     session.clear()
     resp = make_response(render_template_string(
       TPL_SESSION_RESET,
@@ -1638,6 +1647,38 @@ def accessforge_data_dir():
   return app.config.get('CHECKOUT_DATA_DIR') or os.environ.get('CHECKOUT_DATA_DIR') or os.path.join(app.root_path, 'data')
 
 
+def end_sign_in_presence():
+  presence_id = session.pop('presence_id', None)
+  if presence_id:
+    try:
+      SignInStore(accessforge_data_dir()).end_presence(presence_id)
+    except (OSError, sqlite3.Error):
+      logger.warning('Could not clear AccessForge session presence.')
+
+
+@app.post('/api/session/presence')
+@require_session(api=True)
+def sign_in_presence():
+  if request.headers.get('Origin') != f'{request.scheme}://{request.host}':
+    return jsonify(error='Invalid request origin.'), 403
+  presence_id = session.get('presence_id')
+  if not presence_id:
+    return '', 401
+  try:
+    response = proxmox_get('/access/permissions', params={'path': '/'},
+                           cookies={'PVEAuthCookie': session['pve_ticket']}, timeout=5)
+    if response.status_code in (401, 403):
+      end_sign_in_presence()
+      return '', 401
+    if not response.ok:
+      return '', 503
+    if not SignInStore(accessforge_data_dir()).touch_presence(presence_id, time.time()):
+      return '', 401
+    return '', 204
+  except (requests.RequestException, OSError, sqlite3.Error):
+    return '', 503
+
+
 def clipboard_store():
   return ClipboardStore(accessforge_data_dir())
 
@@ -1694,8 +1735,13 @@ def admin_latest_sign_ins():
         any(not isinstance(name, str) or not 1 <= len(name) <= 128 or '@' not in name for name in usernames)):
       return jsonify(error='Provide 1 to 5000 realm-qualified Proxmox usernames.'), 400
     host, port = app.config['CHECKOUT_PROXMOX_HOST'], app.config['CHECKOUT_PROXMOX_PORT']
-    latest = SignInStore(accessforge_data_dir()).latest(proxmox_cluster_key(host, port), list(dict.fromkeys(usernames)))
-    return jsonify(cluster={'host': host, 'port': port}, latest=latest)
+    cluster = proxmox_cluster_key(host, port)
+    accounts = list(dict.fromkeys(usernames))
+    store = SignInStore(accessforge_data_dir())
+    latest = store.latest(cluster, accounts)
+    observed_at = time.time()
+    active = store.active_accounts(cluster, accounts, observed_at, SIGN_IN_PRESENCE_TTL)
+    return jsonify(cluster={'host': host, 'port': port}, latest=latest, observed_at=observed_at, active=active)
   except CheckoutError as exc:
     return jsonify(error=exc.message), exc.status
   except (OSError, sqlite3.Error):

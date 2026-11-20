@@ -291,6 +291,8 @@ The upload switch hides the upload control. The download switch hides the downlo
 
 AccessForge records successful browser sign-ins in `sign_ins.sqlite3` under `CHECKOUT_DATA_DIR`. The latest timestamp is stored per Proxmox address and realm-qualified account and survives event pruning. `ACCESSFORGE_MAX_LOGS` applies across all sign-in events on this AccessForge instance. The event history is pruned after each successful sign-in. SCE-web reads the latest timestamps through its project administrator connection.
 
+AccessForge dashboard and SPICE console pages check in every 45 seconds while a browser session is open. SCE-web displays **Currently logged in** if an account has a session that checked in within the past 150 seconds. Signing out clears that session immediately. Presence tracking starts on the next successful sign-in after upgrading.
+
 ## Permissions and security
 
 - VM listing requires `VM.Audit` on the relevant VM paths; opening consoles requires `VM.Console`.
