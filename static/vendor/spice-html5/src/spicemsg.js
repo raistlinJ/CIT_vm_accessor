@@ -276,15 +276,12 @@ SpiceMiniData.prototype =
     to_buffer : function(a, at)
     {
         at = at || 0;
-        var i;
         var dv = new DataView(a);
         dv.setUint16(at, this.type, true); at += 2;
         dv.setUint32(at, this.data ? this.data.byteLength : 0, true); at += 4;
         if (this.data && this.data.byteLength > 0)
         {
-            var u8arr = new Uint8Array(this.data);
-            for (i = 0; i < u8arr.length; i++, at++)
-                dv.setUint8(at, u8arr[i], true);
+            new Uint8Array(a, at, this.data.byteLength).set(new Uint8Array(this.data));
         }
     },
     build_msg : function(in_type,  extra)
@@ -758,9 +755,7 @@ VDAgentFileXferDataMessage.prototype =
         dv.setBigUint64(at, BigInt(this.size), true); at += 8;
         if (this.data && this.data.byteLength > 0)
         {
-            var u8arr = new Uint8Array(this.data);
-            for (var i = 0; i < u8arr.length; i++, at++)
-                dv.setUint8(at, u8arr[i]);
+            new Uint8Array(a, at, this.data.byteLength).set(new Uint8Array(this.data));
         }
     },
     buffer_size: function()

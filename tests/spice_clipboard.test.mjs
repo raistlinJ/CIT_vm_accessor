@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AgentMessageReader, ClipboardSpiceConnection, MAX_CLIPBOARD_BYTES } from '../static/spice-clipboard.js';
+import { Constants as C } from '../static/vendor/spice-html5/src/enums.js';
+import { VDAgentFileXferDataMessage } from '../static/vendor/spice-html5/src/spicemsg.js';
 
 const utf8 = new TextEncoder();
 const decode = new TextDecoder();
@@ -16,6 +18,46 @@ function concat(...chunks) {
   return result;
 }
 function agent(kind, body) { return concat(u32(1, kind, 0, 0, body.length), body); }
+
+test('batches file uploads while honoring agent credits and preserving packet boundaries', () => {
+  const client = Object.create(ClipboardSpiceConnection.prototype);
+  const writes = [];
+  let observed = 0;
+  Object.assign(client, {
+    agent_connected: true, agent_tokens: 32, agent_msg_queue: [], messages_sent: 0,
+    ws: {send: bytes => writes.push(bytes)},
+    networkObserver: {record(direction, size) { assert.equal(direction, 'sent'); observed += size; }},
+  });
+  const payload = Uint8Array.from({length: 65536}, (_, offset) => offset & 255);
+  client.send_agent_message(C.VD_AGENT_FILE_XFER_DATA, new VDAgentFileXferDataMessage(4, payload.length, payload.buffer));
+  assert.equal(client.agent_tokens, 0);
+  assert.equal(client.messages_sent, 32);
+  assert.equal(writes.length, 1);
+  assert.equal(client.agent_msg_queue.length, 1);
+
+  client.agent_tokens = 1;
+  client.send_agent_message_queue();
+  assert.equal(client.agent_tokens, 0);
+  assert.equal(client.agent_msg_queue.length, 0);
+  assert.equal(writes.length, 2);
+
+  const fragments = [];
+  for (const write of writes) {
+    const bytes = new DataView(write);
+    for (let offset = 0; offset < write.byteLength;) {
+      assert.equal(bytes.getUint16(offset, true), C.SPICE_MSGC_MAIN_AGENT_DATA);
+      const size = bytes.getUint32(offset + 2, true);
+      assert.ok(size <= C.VD_AGENT_MAX_DATA_SIZE);
+      fragments.push(new Uint8Array(write, offset + 6, size));
+      offset += 6 + size;
+    }
+  }
+  assert.equal(fragments.length, 33);
+  assert.equal(observed, writes.reduce((total, write) => total + write.byteLength, 0));
+  assert.deepEqual(concat(...fragments), agent(C.VD_AGENT_FILE_XFER_DATA,
+    concat(u32(4, payload.length, 0), payload)));
+});
+
 function peer(selection = true) {
   const client = Object.create(ClipboardSpiceConnection.prototype);
   Object.assign(client, {

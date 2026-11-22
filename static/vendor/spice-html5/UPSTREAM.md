@@ -51,6 +51,9 @@ Local changes:
   the browser's default action, including after focus leaves without a mouseover.
 - `src/spicemsg.js`: encode file-transfer names as UTF-8 and replace protocol
   newlines/NUL so non-ASCII names transfer without changing metadata fields.
+- `src/main.js`, `src/spiceconn.js`, and `src/spicemsg.js`: batch up to 32
+  agent packets in one WebSocket message and use typed array copies when
+  encoding them. Each packet still consumes one agent token.
 
 `tests/test_spice_browser.py` validates input payloads and focus recovery in
 real browsers, with both relative and absolute mouse modes.

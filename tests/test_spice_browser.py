@@ -55,6 +55,7 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
     received_inputs = queue.Queue()
     received_resizes = queue.Queue()
     received_files = queue.Queue()
+    upload_file = bytes(range(256)) * 769
     guest_file = b"guest\x00binary\xfffile"
     file_reads = []
     guest_text = "VM café — こんにちは 😀\n" * 800
@@ -171,8 +172,10 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                                     task_id, length = struct.unpack_from("<IQ", agent_body)
                                     outgoing_files[task_id].extend(agent_body[12:])
                                     assert len(agent_body) - 12 == length
-                                    received_files.put(bytes(outgoing_files.pop(task_id)))
-                                    send_agent(stream, agent_message(11, struct.pack("<II", task_id, 3)))
+                                    assert len(outgoing_files[task_id]) <= len(upload_file)
+                                    if len(outgoing_files[task_id]) == len(upload_file):
+                                        received_files.put(bytes(outgoing_files.pop(task_id)))
+                                        send_agent(stream, agent_message(11, struct.pack("<II", task_id, 3)))
                         if channel == 3 and kind == 101:
                             keyboard_received.set()
                         if channel == 3 and kind == 113:
@@ -305,9 +308,9 @@ def test_browser_renders_guest_accepts_input_and_reconnects(certificates, monkey
                 if agent_enabled:
                     expect(page.locator("#file-upload")).to_be_enabled()
                     page.locator("#file-upload").set_input_files({
-                        "name": "caf\u00e9.txt", "mimeType": "text/plain", "buffer": b"hello\x00guest",
+                        "name": "caf\u00e9.txt", "mimeType": "application/octet-stream", "buffer": upload_file,
                     })
-                    assert received_files.get(timeout=5) == b"hello\x00guest"
+                    assert received_files.get(timeout=5) == upload_file
                     expect(page.locator("#file-upload-status")).to_contain_text("Sent caf\u00e9.txt")
                 else:
                     expect(page.locator("#file-upload")).to_be_disabled()

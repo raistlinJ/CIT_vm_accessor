@@ -6,7 +6,7 @@
   <meta name="referrer" content="no-referrer">
   <title>VM {{ vmid }} · AccessForge</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='spice-console.css', v='20261120-login-badge') }}">
-  <script type="module" src="{{ url_for('static', filename='spice-console.js', v='20261120-login-badge') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='spice-console.js', v='20261121-upload-batching') }}"></script>
   {% if session.get('pve_user') %}<script src="{{ url_for('static', filename='session-presence.js', v='1') }}" data-url="{{ url_for('sign_in_presence') }}" defer></script>{% endif %}
 </head>
 <body data-session-url="{{ url_for('spice_session', vmid=vmid) }}" data-power-url="{{ url_for('console_power', vmid=vmid) }}" data-csrf="{{ csrf }}" data-vmid="{{ vmid }}">

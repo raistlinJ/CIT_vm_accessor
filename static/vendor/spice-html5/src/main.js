@@ -378,24 +378,25 @@ SpiceMainConn.prototype.stop = function(msg)
     this.extra_channels = undefined;
 }
 
-SpiceMainConn.prototype.send_agent_message_queue = function(message)
+SpiceMainConn.prototype.send_agent_message_queue = function()
 {
     if (!this.agent_connected)
         return;
 
-    if (message)
-        this.agent_msg_queue.push(message);
-
     while (this.agent_tokens > 0 && this.agent_msg_queue.length > 0)
     {
-        var mr = this.agent_msg_queue.shift();
-        this.send_msg(mr);
-        this.agent_tokens--;
+        // Batch transport writes without changing the per-packet credit limit.
+        var count = Math.min(32, this.agent_tokens, this.agent_msg_queue.length);
+        this.send_msgs(this.agent_msg_queue.splice(0, count));
+        this.agent_tokens -= count;
     }
 }
 
 SpiceMainConn.prototype.send_agent_message = function(type, message)
 {
+    if (!this.agent_connected)
+        return;
+
     var agent_data = new Messages.SpiceMsgcMainAgentData(type, message);
     var sb = 0, maxsize = Constants.VD_AGENT_MAX_DATA_SIZE - Messages.SpiceMiniData.prototype.buffer_size();
     var data = new ArrayBuffer(agent_data.buffer_size());
@@ -407,9 +408,10 @@ SpiceMainConn.prototype.send_agent_message = function(type, message)
         mr.type = Constants.SPICE_MSGC_MAIN_AGENT_DATA;
         mr.size = eb - sb;
         mr.data = data.slice(sb, eb);
-        this.send_agent_message_queue(mr);
+        this.agent_msg_queue.push(mr);
         sb = eb;
     }
+    this.send_agent_message_queue();
 }
 
 SpiceMainConn.prototype.announce_agent_capabilities = function(request)

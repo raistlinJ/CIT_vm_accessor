@@ -260,7 +260,7 @@ class SpiceBridge:
                     writer.write(data)
                     await writer.drain()
 
-            async def clipboard_frames(wire, data):
+            async def clipboard_frames(wire, data, *, batch_upload=False):
                 forward = send_browser if wire.server else send_vm
                 reimburse = send_vm if wire.server else send_browser
                 for frame, kind in wire.feed(data):
@@ -272,8 +272,13 @@ class SpiceBridge:
                         frames, credit = wire.finish(allowed)
                         if credit:
                             await reimburse(credit)
-                    for ready in frames:
-                        await forward(ready)
+                    if batch_upload and len(frames) > 1:
+                        # The inspector and clipboard gate cleared each frame.
+                        # Forward the released batch in one TLS write.
+                        await forward(b"".join(frames))
+                    else:
+                        for ready in frames:
+                            await forward(ready)
 
             async def to_browser():
                 while data := await reader.read(65536):
@@ -297,7 +302,7 @@ class SpiceBridge:
                                     raise SpicePolicyError("VM file uploads are disabled")
                                 checked_at = time.monotonic()
                         if grant.clipboard_check and inspector.channel == 1:
-                            await clipboard_frames(client_wire, frame)
+                            await clipboard_frames(client_wire, frame, batch_upload=upload)
                         else:
                             await send_vm(frame)
 

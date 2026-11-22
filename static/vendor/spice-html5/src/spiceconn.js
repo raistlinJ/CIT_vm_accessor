@@ -218,6 +218,27 @@ SpiceConn.prototype =
         this.networkObserver?.record?.('sent', mb.byteLength);
     },
 
+    send_msgs: function(messages)
+    {
+        if (messages.length === 1)
+        {
+            this.send_msg(messages[0]);
+            return;
+        }
+        var mb = new ArrayBuffer(messages.reduce((size, msg) => size + msg.buffer_size(), 0));
+        var offset = 0;
+        for (var msg of messages)
+        {
+            msg.to_buffer(mb, offset);
+            offset += msg.buffer_size();
+        }
+        this.messages_sent += messages.length;
+        DEBUG > 0 && console.log(">> batch " + this.channel_type() + " messages " + messages.length + " size " + mb.byteLength);
+        DEBUG > 2 && hexdump_buffer(mb);
+        this.ws.send(mb);
+        this.networkObserver?.record?.('sent', mb.byteLength);
+    },
+
     process_inbound: function(mb, saved_header)
     {
         DEBUG > 2 && console.log(this.type + ": processing message of size " + mb.byteLength + "; state is " + this.state);
