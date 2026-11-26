@@ -11,6 +11,7 @@ import ssl
 import time
 from contextlib import contextmanager
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from functools import wraps
 from fnmatch import fnmatchcase
 from urllib.parse import urlsplit
@@ -129,6 +130,27 @@ def smtp_settings(db):
     }
 
 
+def validated_mail_settings(current, update):
+    if not isinstance(update, dict):
+        raise CheckoutError('Provide the SMTP settings to test or save.')
+    required = {'host', 'sender', 'username', 'ssl', 'port'}
+    if not required <= update.keys() or update.keys() - required - {'password'}:
+        raise CheckoutError('Provide the SMTP host, port, sender, username and TLS mode.')
+    settings = {**current, **update}
+    for key in ('host', 'sender', 'username', 'password'):
+        value = settings[key]
+        if not isinstance(value, str) or len(value) > 1024 or any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise CheckoutError('Invalid SMTP settings.')
+    if not re.fullmatch(r'[a-zA-Z0-9.:%_-]+', settings['host']):
+        raise CheckoutError('Enter an SMTP hostname or IP address.')
+    email_address(settings['sender'])
+    if type(settings['port']) is not int or not 1 <= settings['port'] <= 65535 or type(settings['ssl']) is not bool:
+        raise CheckoutError('Enter a valid SMTP port and TLS mode.')
+    if current['password'] and 'password' not in update and any(str(settings[k]) != str(current[k]) for k in ('host', 'port', 'ssl', 'username')):
+        raise CheckoutError('Re-enter or remove the SMTP password when changing the SMTP connection.')
+    return settings
+
+
 def public_mail_settings(settings):
     return {key: value for key, value in settings.items() if key != 'password'} | {
         'password_set': bool(settings['password']),
@@ -140,11 +162,18 @@ def send_verification(email, code, project_name):
         settings = smtp_settings(db)
     if not settings['host'] or not settings['sender']:
         raise CheckoutError('Email verification is not configured. Contact an administrator.', 503)
+    body = f'Your verification code for {project_name} is {code}.\n\nIt expires in 10 minutes. If you did not request account access, ignore this message.'
+    send_checkout_email(settings, email, 'Your account verification code', body)
+
+
+def send_checkout_email(settings, recipient, subject, body):
     message = EmailMessage()
     message['From'] = settings['sender']
-    message['To'] = email
-    message['Subject'] = 'Your account verification code'
-    message.set_content(f'Your verification code for {project_name} is {code}.\n\nIt expires in 10 minutes. If you did not request account access, ignore this message.')
+    message['To'] = recipient
+    message['Subject'] = subject
+    message['Date'] = formatdate(localtime=False, usegmt=True)
+    message['Message-ID'] = make_msgid()
+    message.set_content(body)
     use_ssl = settings['ssl']
     factory = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
     try:
@@ -156,7 +185,7 @@ def send_verification(email, code, project_name):
                 mail.login(settings['username'], settings['password'])
             mail.send_message(message)
     except Exception:
-        raise CheckoutError('Could not send verification email. Please try again later.', 503) from None
+        raise CheckoutError('Could not send email. Check the SMTP connection and credentials.', 503) from None
 
 
 from cryptography.fernet import Fernet
@@ -296,21 +325,7 @@ class CheckoutStore:
             current = smtp_settings(db)
             if update is None:
                 return public_mail_settings(current)
-            required = {'host', 'sender', 'username', 'ssl', 'port'}
-            if not required <= update.keys() or update.keys() - required - {'password'}:
-                raise CheckoutError('Provide the SMTP host, port, sender, username and TLS mode.')
-            settings = {**current, **update}
-            for key in ('host', 'sender', 'username', 'password'):
-                value = settings[key]
-                if not isinstance(value, str) or len(value) > 1024 or any(ord(c) < 32 or ord(c) == 127 for c in value):
-                    raise CheckoutError('Invalid SMTP settings.')
-            if not re.fullmatch(r'[a-zA-Z0-9.:%_-]+', settings['host']):
-                raise CheckoutError('Enter an SMTP hostname or IP address.')
-            email_address(settings['sender'])
-            if type(settings['port']) is not int or not 1 <= settings['port'] <= 65535 or type(settings['ssl']) is not bool:
-                raise CheckoutError('Enter a valid SMTP port and TLS mode.')
-            if current['password'] and 'password' not in update and any(str(settings[k]) != str(current[k]) for k in ('host', 'port', 'ssl', 'username')):
-                raise CheckoutError('Re-enter or remove the SMTP password when changing the SMTP connection.')
+            settings = validated_mail_settings(current, update)
             db.execute('INSERT OR REPLACE INTO checkout_mail VALUES (1, ?)', (encrypt_str(json.dumps(settings)),))
             return public_mail_settings(settings)
 

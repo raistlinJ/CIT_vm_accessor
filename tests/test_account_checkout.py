@@ -932,3 +932,24 @@ def test_email_settings_update_verification_transport(checkout, monkeypatch):
     mail.login.assert_called_once_with('mailer', 'replacement')
     assert mail.send_message.call_args.args[0]['From'] == 'checkout@example.org'
     assert checkout.patch(path, headers=BASIC, json={**data, 'password':''}).json['password_set'] is False
+
+
+def test_mail_probe_uses_draft_and_one_recipient_without_saving(checkout, monkeypatch):
+    path = '/api/admin/checkouts/email-settings'
+    monkeypatch.setenv('CHECKOUT_SMTP_HOST', 'smtp.example.org')
+    monkeypatch.setenv('CHECKOUT_SMTP_USER', 'sender')
+    monkeypatch.setenv('CHECKOUT_SMTP_PASSWORD', 'stored-secret')
+    before = checkout.get(path, headers=BASIC).json
+    settings = {k: before[k] for k in ('host', 'username', 'ssl')}
+    settings.update(port=int(before['port']), sender='draft@example.org')
+    with patch('checkout_store.smtplib.SMTP') as transport:
+        for recipient in ('', 'first@example.org, second@example.org'):
+            assert checkout.post(path+'/test', headers=BASIC, json=dict(settings=settings, recipient=recipient)).status_code == 400
+        transport.assert_not_called()
+        result = checkout.post(path+'/test', headers=BASIC, json=dict(settings=settings, recipient='recipient@example.org'))
+        assert result.json == {'sent':True}
+        mail = transport.return_value.__enter__.return_value
+        mail.login.assert_called_once_with('sender', 'stored-secret')
+        message = mail.send_message.call_args.args[0]
+        assert str(message['To']) == 'recipient@example.org' and str(message['From']) == 'draft@example.org'
+    assert checkout.get(path, headers=BASIC).json == before

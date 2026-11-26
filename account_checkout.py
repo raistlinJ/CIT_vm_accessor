@@ -269,6 +269,29 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
         update = body(8192) if request.method == 'PATCH' else None
         return jsonify(CheckoutStore().mail_settings(update))
 
+    @bp.post('/api/admin/checkouts/email-settings/test')
+    @admin
+    def test_checkout_email(principal):
+        from email.errors import HeaderParseError
+        from email.headerregistry import Address
+        from checkout_store import send_checkout_email, smtp_settings, validated_mail_settings
+        data = body(8192)
+        recipient = data.get('recipient')
+        if not isinstance(recipient, str) or not recipient.isascii() or len(recipient) > 254:
+            raise CheckoutError('Enter one recipient email address.')
+        try:
+            email_address(recipient)
+            address = Address(addr_spec=recipient)
+        except (HeaderParseError, ValueError):
+            raise CheckoutError('Enter one recipient email address.') from None
+        if not address.username or not address.domain:
+            raise CheckoutError('Enter one recipient email address.')
+        with CheckoutStore().transaction() as db:
+            settings = validated_mail_settings(smtp_settings(db), data.get('settings'))
+        send_checkout_email(settings, address.addr_spec, 'AccessForge checkout email test',
+                            'This test message was sent from the AccessForge checkout email settings.')
+        return jsonify(sent=True)
+
     @bp.get('/api/admin/checkouts/pools')
     @admin
     def pools(principal):
