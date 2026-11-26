@@ -244,9 +244,39 @@ The supplied `deploy/proxmox.conf` requires a valid AccessForge session for `/pr
 
 ## VM file transfer
 
-Set `ENABLE_VM_FILE_UPLOAD=true` to send files from the user's browser computer to the VM, `ENABLE_VM_FILE_DOWNLOAD=true` to retrieve files from the VM, or both. Set them in Compose or the Compose `.env` file and recreate the app container. Both default to `false`; when both directions are disabled, the drawer shows a nonexpandable **File Transfer — Disabled** row. Otherwise, open the collapsible **File Transfer** section to see the allowed controls. The app container does not read files from the Proxmox host filesystem. The former `ENABLE_VM_FILE_TRANSFER` setting remains a fallback for either direction that does not have its own setting, so existing deployments keep their behavior.
+Students use AccessForge to upload local files to their assigned VMs.
+Administrators use **SCE-web → VM Manager → Guest Files → Push** for
+provisioning, copying files to several guests, or placing files at explicit
+guest paths. [SCE-web guest file transfers](https://github.com/raistlinJ/SetupCyberExercises-web#guest-file-transfers)
 
-Uploads use the existing SPICE guest-agent file transfer protocol. The agent decides where transferred files are saved in the guest; the browser shows progress and completion. Uploads are limited to 1 GiB (1,024 MiB) per file.
+### Student uploads in the SPICE console
+
+1. Open your assigned VM in AccessForge's embedded SPICE console.
+2. Open **Console controls → File Transfer** and choose files under **Send
+   files from this computer to the VM**.
+3. Keep the console connected until the status confirms the file was sent.
+   The SPICE guest agent chooses the destination in the VM. The limit is
+   1 GiB (1,024 MiB) per file.
+
+The console batches up to 32 SPICE agent packets into one WebSocket message
+when enough agent tokens are available. The bridge can write an approved
+upload batch to the guest tunnel together. In a protocol test, a 64 KiB chunk
+used two WebSocket writes for 33 SPICE packets. Actual upload time depends on
+the connection, SPICE token availability, and guest performance.
+[SPICE protocol](https://www.spice-space.org/spice-protocol.html)
+
+To deploy the update, run `docker compose up --build -d proxclient` from the
+AccessForge checkout and reopen existing SPICE consoles. Batching uses the
+existing transfer settings.
+
+### Enable console transfers
+
+Set `ENABLE_VM_FILE_UPLOAD=true` for browser uploads or
+`ENABLE_VM_FILE_DOWNLOAD=true` for downloads in Compose or the Compose `.env`
+file. Recreate `proxclient` after changing those settings. Both default to
+`false`. With both off, the drawer shows **File Transfer — Disabled**. The
+legacy `ENABLE_VM_FILE_TRANSFER` switch supplies the default for either
+direction without its own setting.
 
 Both directions also require an explicit per-VM policy in Proxmox Notes, managed by SCE-web:
 
@@ -257,6 +287,8 @@ Both directions also require an explicit per-VM policy in Proxmox Notes, managed
 Global Compose switches are the final authority: VM notes cannot enable a globally disabled direction. Missing, duplicate, malformed, or unreadable policy disables transfers. The console session response controls the popup's enabled controls. Downloads reread the policy before every file chunk. The SPICE bridge inspects client messages, checks policy before upload starts and periodically during upload traffic (a one-second recheck interval), and closes the connection if the policy denies transfer. A modified browser client cannot bypass this by re-enabling the file input. Reconnect after changing an initially disabled upload policy to enabled.
 
 SCE-web manages VM policies through its existing Proxmox connection and does not need this app's URL or contact it. Its controls and arrows show VM policy; actual transfers still require the corresponding global Compose switch here. `GET /api/file-transfer/capabilities` exposes the global upload/download booleans for diagnostics. This policy governs AccessForge transfers; grant VM-note editing only to users authorized to change the policy. Clipboard text and external clients with their own Proxmox access are separate capabilities.
+
+### Console downloads
 
 Downloads use Proxmox's QEMU guest-agent `file-read` API. Enable the QEMU guest agent in the VM's Proxmox options, install and start it inside the guest, and grant the AccessForge login file-read permission (`VM.Monitor` on Proxmox 8; `VM.GuestAgent.FileRead` or `VM.GuestAgent.Unrestricted` on Proxmox 9). Enter an absolute path *inside the guest*, such as `/home/user/report.txt` or `C:\Users\user\report.txt`. The guest agent must be able to read that file. Proxmox may run it with elevated guest privileges, so grant file-read permission only to users authorized to retrieve guest files.
 
@@ -339,6 +371,13 @@ AccessForge dashboard and SPICE console pages check in every 45 seconds while a 
 - **TLS tunnel failure:** verify API access is reaching the intended cluster and the target node's SPICE certificate matches the returned cluster CA/subject. The bridge does not bypass TLS verification.
 - **Unexpected protocol mismatch:** the client uses this message when a connection closes before the SPICE handshake finishes; it does not establish a SPICE version incompatibility. Update the bridge to include the signed routing ticket in the CONNECT `Host` header, which Proxmox requires. If the error persists, inspect app logs for `SPICE tunnel failed` or `Proxmox SPICE CONNECT rejected (HTTP ...)`. Only the HTTP status is logged, not routing tickets or response bodies.
 - **Resizing does nothing:** verify the guest SPICE agent is installed and running. AccessForge does not install guest software.
+- **Upload is disabled.** Check the global upload switch and the VM's Upload
+  policy in SCE-web. Open the embedded SPICE console and confirm the guest
+  agent is connected. Reopen the console after enabling a previously disabled
+  upload policy.
+- **Upload is slow.** Reopen the console after deploying the batching update.
+  Use **Console controls → Network Activity** to see sent throughput while
+  transferring. The counters include console traffic across all SPICE channels.
 - **Kali/Xfce receives a preferred size but stays at the old resolution:** check `xrandr` inside the guest. If the mode marked `+` matches the browser request while the connected output header still shows a different active size, the SPICE request reached the guest but its X11 session did not apply it. Some QXL versions omit the usual `*` active mode marker. `xrandr --output Virtual-1 --auto` applies the preferred size once (use the connected output name shown by `xrandr`). For automatic updates on this guest, copy the two `scripts/spice-xfce-follow-display.sh` and `scripts/install-spice-xfce-follow-display.sh` files into the guest, run `sh install-spice-xfce-follow-display.sh`, then log out and back in. The helper checks QXL's preferred mode once per second and applies it only when the preferred mode changes, so manual resolution changes are left alone until the next browser resize. This is an opt-in guest workaround; the browser cannot force Xfce to apply a mode after the guest ignores a SPICE monitor request.
 - **After migration:** click **Re-Fit Window** to look up the VM's new node.
 
@@ -351,7 +390,7 @@ python -m pytest -q
 
 The suite tests console selection, permissions, migration lookup, grant validation, and real WebSocket-to-CONNECT-to-TLS binary relay using a local simulated proxy. It does not measure real guest performance. Before rollout, test a VM on the AccessForge node, a VM on another node, keyboard/mouse input, guest resizing, reconnect after migration, noVNC fallback, and a container xterm.js session.
 
-An optional browser test runs the actual client against a simulated SPICE guest, including RSA ticket authentication, drawing, keyboard/mouse input, reconnect, and two-way clipboard transfers. Clipboard API permission outcomes are simulated so the tests do not read or modify the developer's real system clipboard:
+An optional browser test runs the actual client against a simulated SPICE guest. It covers RSA ticket authentication, drawing, keyboard and mouse input, reconnect, two-way clipboard transfers, and verifying that an upload spanning several chunks arrives intact. The test simulates clipboard permissions to keep the system clipboard untouched.
 
 ```bash
 pip install playwright

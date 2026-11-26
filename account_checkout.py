@@ -257,10 +257,17 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
     @bp.get('/api/admin/checkouts/status')
     @admin
     def admin_status(principal):
+        mail = CheckoutStore().mail_settings()
         return jsonify(service='AccessForge',checkout_api=1,administrator=principal['username'],
                        capabilities={'account_setup':True,'assignment_login_control':True,'checkout_login_scope':'accessforge'},
                        cluster={'host':app.config['CHECKOUT_PROXMOX_HOST'],'port':app.config['CHECKOUT_PROXMOX_PORT']},
-                       smtp_configured=bool(os.environ.get('CHECKOUT_SMTP_HOST') and os.environ.get('CHECKOUT_SMTP_FROM')))
+                       smtp_configured=bool(mail['host'] and mail['sender']))
+
+    @bp.route('/api/admin/checkouts/email-settings', methods=['GET', 'PATCH'])
+    @admin
+    def email_settings(principal):
+        update = body(8192) if request.method == 'PATCH' else None
+        return jsonify(CheckoutStore().mail_settings(update))
 
     @bp.get('/api/admin/checkouts/pools')
     @admin

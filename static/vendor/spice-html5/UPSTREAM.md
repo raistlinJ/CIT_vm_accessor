@@ -55,5 +55,12 @@ Local changes:
   agent packets in one WebSocket message and use typed array copies when
   encoding them. Each packet still consumes one agent token.
 
+`spice_bridge.py` also groups upload frames into a single write when the
+clipboard gate releases them together. The bridge inspects each frame and
+continues to check upload policy at transfer start and during the transfer.
+
 `tests/test_spice_browser.py` validates input payloads and focus recovery in
-real browsers, with both relative and absolute mouse modes.
+real browsers, with both relative and absolute mouse modes. It also checks
+that a file spanning several upload chunks arrives byte for byte.
+`tests/spice_clipboard.test.mjs` checks batching, packet boundaries, and token
+accounting. [SPICE protocol](https://www.spice-space.org/spice-protocol.html)

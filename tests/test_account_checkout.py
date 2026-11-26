@@ -908,3 +908,27 @@ def test_old_unassigned_session_does_not_become_valid_when_someone_checks_out(ch
     assert main.spice_cookie_owner(main.app.config['SESSION_COOKIE_NAME']+'='+cookie) is None
     assert checkout.get('/api/vms').status_code==401
     student_login(checkout)  # A fresh login binds the newly assigned lease.
+
+
+def test_email_settings_update_verification_transport(checkout, monkeypatch):
+    from checkout_store import send_verification
+    path = '/api/admin/checkouts/email-settings'
+    monkeypatch.setenv('CHECKOUT_SMTP_HOST', 'smtp.old.example')
+    monkeypatch.setenv('CHECKOUT_SMTP_PASSWORD', 'original-secret')
+    original = checkout.get(path, headers=BASIC)
+    assert original.json['host'] == 'smtp.old.example' and original.json['password_set']
+    assert 'original-secret' not in original.text
+    data = dict(host='mail.example', port=465, ssl=True, sender='sender@example.org', username='mailer')
+    assert checkout.patch(path, headers=BASIC, json=data).status_code == 400
+    saved = checkout.patch(path, headers=BASIC, json={**data, 'password':'replacement'})
+    assert saved.status_code == 200 and 'replacement' not in saved.text
+    data['sender'] = 'checkout@example.org'
+    assert checkout.patch(path, headers=BASIC, json=data).status_code == 200
+    assert checkout.get(path, headers=BASIC).json == {**data, 'password_set':True}
+    with patch('checkout_store.smtplib.SMTP_SSL') as transport:
+        send_verification('student@example.org', '1234', 'Lab')
+    mail = transport.return_value.__enter__.return_value
+    assert transport.call_args.args == ('mail.example', 465)
+    mail.login.assert_called_once_with('mailer', 'replacement')
+    assert mail.send_message.call_args.args[0]['From'] == 'checkout@example.org'
+    assert checkout.patch(path, headers=BASIC, json={**data, 'password':''}).json['password_set'] is False

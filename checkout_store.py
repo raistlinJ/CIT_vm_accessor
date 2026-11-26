@@ -114,26 +114,46 @@ def checkout_client_ip():
     return str(peer)
 
 
-def smtp_ready():
-    return bool(os.environ.get('CHECKOUT_SMTP_HOST') and os.environ.get('CHECKOUT_SMTP_FROM'))
+def smtp_settings(db):
+    row = db.execute('SELECT settings FROM checkout_mail WHERE id=1').fetchone()
+    if row:
+        return json.loads(decrypt_str(row['settings']))
+    implicit = os.environ.get('CHECKOUT_SMTP_SSL') == '1'
+    return {
+        'host': os.environ.get('CHECKOUT_SMTP_HOST', ''),
+        'port': os.environ.get('CHECKOUT_SMTP_PORT') or ('465' if implicit else '587'),
+        'sender': os.environ.get('CHECKOUT_SMTP_FROM', ''),
+        'username': os.environ.get('CHECKOUT_SMTP_USER', ''),
+        'password': os.environ.get('CHECKOUT_SMTP_PASSWORD', ''),
+        'ssl': implicit,
+    }
+
+
+def public_mail_settings(settings):
+    return {key: value for key, value in settings.items() if key != 'password'} | {
+        'password_set': bool(settings['password']),
+    }
 
 
 def send_verification(email, code, project_name):
-    if not smtp_ready():
+    with CheckoutStore().transaction() as db:
+        settings = smtp_settings(db)
+    if not settings['host'] or not settings['sender']:
         raise CheckoutError('Email verification is not configured. Contact an administrator.', 503)
     message = EmailMessage()
-    message['From'] = os.environ['CHECKOUT_SMTP_FROM']
+    message['From'] = settings['sender']
     message['To'] = email
     message['Subject'] = 'Your account verification code'
     message.set_content(f'Your verification code for {project_name} is {code}.\n\nIt expires in 10 minutes. If you did not request account access, ignore this message.')
-    use_ssl = os.environ.get('CHECKOUT_SMTP_SSL', '0') == '1'
+    use_ssl = settings['ssl']
     factory = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
     try:
-        with factory(os.environ['CHECKOUT_SMTP_HOST'], int(os.environ.get('CHECKOUT_SMTP_PORT', '465' if use_ssl else '587')), timeout=15) as mail:
+        tls = ssl.create_default_context()
+        with factory(settings['host'], int(settings['port']), timeout=15, **({'context': tls} if use_ssl else {})) as mail:
             if not use_ssl:
-                mail.starttls(context=ssl.create_default_context())
-            if os.environ.get('CHECKOUT_SMTP_USER'):
-                mail.login(os.environ['CHECKOUT_SMTP_USER'], os.environ.get('CHECKOUT_SMTP_PASSWORD', ''))
+                mail.starttls(context=tls)
+            if settings['username']:
+                mail.login(settings['username'], settings['password'])
             mail.send_message(message)
     except Exception:
         raise CheckoutError('Could not send verification email. Please try again later.', 503) from None
@@ -177,6 +197,7 @@ class CheckoutStore:
         self.key = str(current_app.secret_key)
         with self.transaction() as db:
             db.executescript('''
+                CREATE TABLE IF NOT EXISTS checkout_mail (id INTEGER PRIMARY KEY CHECK(id=1), settings TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS pools (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0,
                     verify_email INTEGER NOT NULL DEFAULT 1, secret_hash TEXT NOT NULL DEFAULT '', secret_lookup TEXT UNIQUE);
@@ -270,9 +291,33 @@ class CheckoutStore:
             raise CheckoutError('Checkout pool not found.', 404)
         return row
 
+    def mail_settings(self, update=None):
+        with self.transaction() as db:
+            current = smtp_settings(db)
+            if update is None:
+                return public_mail_settings(current)
+            required = {'host', 'sender', 'username', 'ssl', 'port'}
+            if not required <= update.keys() or update.keys() - required - {'password'}:
+                raise CheckoutError('Provide the SMTP host, port, sender, username and TLS mode.')
+            settings = {**current, **update}
+            for key in ('host', 'sender', 'username', 'password'):
+                value = settings[key]
+                if not isinstance(value, str) or len(value) > 1024 or any(ord(c) < 32 or ord(c) == 127 for c in value):
+                    raise CheckoutError('Invalid SMTP settings.')
+            if not re.fullmatch(r'[a-zA-Z0-9.:%_-]+', settings['host']):
+                raise CheckoutError('Enter an SMTP hostname or IP address.')
+            email_address(settings['sender'])
+            if type(settings['port']) is not int or not 1 <= settings['port'] <= 65535 or type(settings['ssl']) is not bool:
+                raise CheckoutError('Enter a valid SMTP port and TLS mode.')
+            if current['password'] and 'password' not in update and any(str(settings[k]) != str(current[k]) for k in ('host', 'port', 'ssl', 'username')):
+                raise CheckoutError('Re-enter or remove the SMTP password when changing the SMTP connection.')
+            db.execute('INSERT OR REPLACE INTO checkout_mail VALUES (1, ?)', (encrypt_str(json.dumps(settings)),))
+            return public_mail_settings(settings)
+
     def summary(self, pool_id):
         with self.transaction() as db:
             pool = self.pool(db, pool_id)
+            mail = smtp_settings(db)
             accounts = {r['username']: {'eligible': bool(r['eligible']), 'email': r['email'], 'name':r['name'], 'assigned_at': r['assigned_at'],
                          'checked_out_at': r['checked_out_at'], 'checkout_ip': r['checkout_ip'],
                          'relinquished_at': r['relinquished_at'], 'relinquished_ip': r['relinquished_ip'],
@@ -281,7 +326,7 @@ class CheckoutStore:
                         for r in db.execute('SELECT * FROM accounts WHERE pool_id=? ORDER BY username', (pool_id,))}
         return {'id': pool_id, 'name': pool['name'], 'enabled': bool(pool['enabled']), 'verify_email': bool(pool['verify_email']),
                 'policy': validate_checkout_policy(json.loads(pool['checkout_policy'])),
-                'secret_set': bool(pool['secret_hash']), 'smtp_configured': smtp_ready(), 'accounts': accounts,
+                'secret_set': bool(pool['secret_hash']), 'smtp_configured': bool(mail['host'] and mail['sender']), 'accounts': accounts,
                 'login_management_ready':True,'login_scope':'accessforge'}
 
     def summaries(self):
