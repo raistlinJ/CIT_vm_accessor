@@ -953,3 +953,27 @@ def test_mail_probe_uses_draft_and_one_recipient_without_saving(checkout, monkey
         message = mail.send_message.call_args.args[0]
         assert str(message['To']) == 'recipient@example.org' and str(message['From']) == 'draft@example.org'
     assert checkout.get(path, headers=BASIC).json == before
+
+
+def test_recent_history_pairs_releases_and_limits_each_account_to_eight(checkout):
+    setup_pool(checkout, names=['student01'])
+    endpoint = POOL + '/accounts/student01/history'
+    assert checkout.get(endpoint, headers=BASIC).json == {'history': []}
+    for index in range(10):
+        email = f'student{index}@example.org'
+        assert start(checkout, email, name=f'Student {index}').status_code == 200
+        if index < 9:
+            released = checkout.post(POOL, headers=BASIC, json={'action':'release','usernames':['student01']})
+            assert released.json['results'][0]['released']
+            enable = checkout.post(POOL, headers=BASIC, json={'action':'reenable_logins','accounts':[
+                {'username':'student01','password':'original-password1'}]})
+            assert enable.json['results'][0]['success']
+    assert start(checkout, 'student9@example.org', name='Student 9').status_code == 200
+    history = checkout.get(endpoint, headers=BASIC).json['history']
+    accounts = checkout.get(POOL, headers=BASIC).json['accounts']
+    assert accounts['student01@pve']['history_count'] == len(history) == 8
+    assert accounts['student02@pve']['history_count'] == 0
+    assert [row['name'] for row in history] == [f'Student {i}' for i in range(9, 1, -1)]
+    assert history[0]['relinquished_at'] is None
+    assert all(row['relinquished_at'] >= row['checked_out_at'] for row in history[1:])
+    assert checkout.get(POOL + '/accounts/student02/history', headers=BASIC).json == {'history': []}

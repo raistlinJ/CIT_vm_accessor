@@ -297,6 +297,11 @@ def register_account_checkout(app, *, host=None, port=None, realm=None, verify=N
     def pools(principal):
         return jsonify(pools=CheckoutStore().summaries())
 
+    @bp.get('/api/admin/checkouts/pools/<pool_id>/accounts/<username>/history')
+    @admin
+    def account_history(principal, pool_id, username):
+        return jsonify(history=CheckoutStore().checkout_history(pool_id, username))
+
     @bp.route('/api/admin/checkouts/pools/<pool_id>',methods=['GET','PUT','PATCH','POST'])
     @admin
     def pool_action(principal,pool_id):

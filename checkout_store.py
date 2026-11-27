@@ -259,6 +259,7 @@ class CheckoutStore:
                     db.execute(f'ALTER TABLE pools ADD COLUMN {name} TEXT')
             if 'checkout_policy' not in pool_columns:
                 db.execute("ALTER TABLE pools ADD COLUMN checkout_policy TEXT NOT NULL DEFAULT '{}'")
+            db.execute('CREATE INDEX IF NOT EXISTS checkout_account_events ON events(pool_id,username,id)')
             db.execute('CREATE INDEX IF NOT EXISTS checkout_event_policy ON events(pool_id,action,timestamp)')
             db.execute('UPDATE accounts SET release_pending=1,pending_password=NULL WHERE pending_password IS NOT NULL')
             if 'ip_address' not in {row['name'] for row in db.execute('PRAGMA table_info(events)')}:
@@ -333,7 +334,8 @@ class CheckoutStore:
         with self.transaction() as db:
             pool = self.pool(db, pool_id)
             mail = smtp_settings(db)
-            accounts = {r['username']: {'eligible': bool(r['eligible']), 'email': r['email'], 'name':r['name'], 'assigned_at': r['assigned_at'],
+            accounts = {r['username']: {'history_count': len(self._recent_history(db, pool_id, r)),
+                         'eligible': bool(r['eligible']), 'email': r['email'], 'name':r['name'], 'assigned_at': r['assigned_at'],
                          'checked_out_at': r['checked_out_at'], 'checkout_ip': r['checkout_ip'],
                          'relinquished_at': r['relinquished_at'], 'relinquished_ip': r['relinquished_ip'],
                          'login_disabled': bool(r['login_disabled'] or (r['eligible'] and not r['email'])),
@@ -343,6 +345,56 @@ class CheckoutStore:
                 'policy': validate_checkout_policy(json.loads(pool['checkout_policy'])),
                 'secret_set': bool(pool['secret_hash']), 'smtp_configured': bool(mail['host'] and mail['sender']), 'accounts': accounts,
                 'login_management_ready':True,'login_scope':'accessforge'}
+
+    def checkout_history(self, pool_id, username):
+        """Pair assignments with releases, using the active account for the open checkout."""
+        username = user_id(username)
+        with self.transaction() as db:
+            account = db.execute(
+                'SELECT username, email, name, checked_out_at, checkout_ip FROM accounts WHERE pool_id=? AND username=?',
+                (pool_id, username),
+            ).fetchone()
+            if account is None:
+                raise CheckoutError('Account is not published in this checkout pool.', 404)
+            return self._recent_history(db, pool_id, account)
+
+    @staticmethod
+    def _recent_history(db, pool_id, account):
+        history = []
+        pending = None
+        if account['email']:
+            pending = {key: account[key] for key in ('email', 'name', 'checked_out_at', 'checkout_ip')}
+            pending['relinquished_at'] = None
+        events = db.execute("""
+            SELECT action, email, name, timestamp, ip_address FROM events
+            WHERE pool_id=? AND username=? AND action IN
+                ('assigned','assignment_imported','relinquished','released_login_disabled','released_accessforge_disabled')
+            ORDER BY id DESC
+        """, (pool_id, account['username']))
+        for event in events:
+            assignment = event['action'] in ('assigned', 'assignment_imported')
+            if pending and (not assignment or event['email'] != pending['email']):
+                # Older imported assignments may have a release but no assignment event.
+                history.append(pending)
+                if len(history) == 8:
+                    break
+                pending = None
+            if assignment:
+                entry = pending or {'relinquished_at': None}
+                entry.update(email=event['email'], name=entry.get('name') or event['name'],
+                             checked_out_at=entry.get('checked_out_at') or event['timestamp'],
+                             checkout_ip=entry.get('checkout_ip') or event['ip_address'])
+                history.append(entry)
+                pending = None
+                if len(history) == 8:
+                    break
+            else:
+                pending = dict(email=event['email'], name=event['name'], checked_out_at=None,
+                               checkout_ip=None, relinquished_at=event['timestamp'])
+        else:
+            if pending:
+                history.append(pending)
+        return history
 
     def summaries(self):
         with self.transaction() as db:
@@ -389,6 +441,8 @@ class CheckoutStore:
                         if not isinstance(assigned, (int,float)) or not math.isfinite(assigned):
                             assigned = time.time()
                         db.execute('UPDATE accounts SET email=?,assigned_at=?,checked_out_at=?,lease_id=? WHERE pool_id=? AND username=?', (email, assigned, assigned, secrets.token_urlsafe(24), pool_id, username))
+                        db.execute('INSERT INTO events(pool_id,username,email,action,actor,timestamp) VALUES(?,?,?,?,?,?)',
+                                   (pool_id, username, email, 'assignment_imported', actor, assigned))
                     pending = entry.get('pending_release_password')
                     if pending is not None and (not isinstance(pending,str) or not 8 <= len(pending) <= 128):
                         raise CheckoutError('Invalid pending release credential.')
